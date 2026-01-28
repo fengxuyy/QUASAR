@@ -1,0 +1,126 @@
+# ==========================================
+# STAGE 1: Builder (Compilers & Build Tools)
+# ==========================================
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    git wget ca-certificates build-essential \
+    ninja-build autoconf pkg-config \
+    gfortran gcc g++ \
+    clang llvm lld clang-tools libomp-18-dev \
+    libc++-dev libc++abi-dev \
+    liblapack-dev liblapacke-dev libblas-dev \
+    libfftw3-dev libfftw3-mpi-dev \
+    libopenmpi-dev libscalapack-openmpi-dev \
+    libhdf5-dev \
+    libxml2-dev \
+    ocl-icd-opencl-dev opencl-headers \
+    python3-dev python3-pip python-is-python3 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install latest CMake via pip
+RUN pip3 install --no-cache-dir --break-system-packages cmake
+
+# --- Build Quantum ESPRESSO ---
+WORKDIR /build/qe
+RUN wget -q https://gitlab.com/QEF/q-e/-/archive/qe-7.5/q-e-qe-7.5.tar.gz && \
+    tar -zxf q-e-qe-7.5.tar.gz --strip-components=1 && \
+    ./configure --enable-openmp --enable-parallel || (echo "ERROR: configure failed" && cat config.log && exit 1) && \
+    make -j$(nproc) all || (echo "ERROR: make failed" && exit 1) && \
+    ls -la bin/ && \
+    test -f bin/pw.x || (echo "ERROR: pw.x not found after build" && exit 1) && \
+    strip --strip-unneeded bin/* || true && \
+    find bin/ -type l -exec sh -c 'cp -L "$1" "$1.tmp" && mv "$1.tmp" "$1"' _ {} \;
+
+# ==========================================
+# STAGE 2: Runtime (Minimal & Clean)
+# ==========================================
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/opt/qe/bin:$PATH"
+
+# Install runtime dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv python-is-python3 \
+    libgomp1 \
+    libgfortran5 \
+    liblapack3 \
+    libblas3 \
+    libfftw3-double3 \
+    libopenmpi3 \
+    openmpi-bin \
+    libhdf5-103-1 \
+    libomp5-18 \
+    libc++1 libc++abi1 \
+    ocl-icd-libopencl1 \
+    lammps \
+    openkim-models \
+    ca-certificates \
+    wget \
+    curl \
+    git && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install RASPA3 from precompiled .deb package
+RUN wget https://github.com/iRASPA/RASPA3/releases/download/v3.0.13/raspa_3.0.13_arm64_ubuntu-25.deb -O /tmp/raspa3.deb && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends /tmp/raspa3.deb && \
+    rm /tmp/raspa3.deb && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy Quantum ESPRESSO binaries (symlinks have been resolved to actual files in builder stage)
+COPY --from=builder /build/qe/bin /opt/qe/bin
+RUN test -f /opt/qe/bin/pw.x || (echo "ERROR: pw.x not found after copy" && ls -la /opt/qe/bin/ && exit 1) && \
+    chmod +x /opt/qe/bin/*
+
+WORKDIR /app
+
+RUN pip3 install --no-cache-dir --break-system-packages \
+    torch torchvision torchaudio
+
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+
+COPY bridge.py bridge_history.py ./
+COPY src/ ./src/
+
+RUN mkdir -p /workspace && \
+    chmod -R a+rX /app
+
+ENV WORKSPACE_DIR=/workspace
+ENV HOME=/workspace
+ENV TOKENIZERS_PARALLELISM=false
+ENV OMPI_ALLOW_RUN_AS_ROOT=1
+ENV OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+
+VOLUME ["/workspace"]
+
+# Install Node.js 20.x and build tools for native modules
+RUN apt-get update && apt-get install -y gnupg build-essential python3 && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && \
+    apt-get install -y nodejs && \
+    npm install -g npm@latest
+
+# Copy and build Node.js CLI
+COPY cli /app/cli
+RUN cd /app/cli && \
+    npm install && \
+    npm run build && \
+    chmod +x /app/cli/dist/cli.js && \
+    # Create symlink for easier access
+    ln -s /app/cli/dist/cli.js /usr/local/bin/quasar
+
+CMD ["quasar"]

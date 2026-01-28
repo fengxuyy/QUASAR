@@ -1,0 +1,21 @@
+# Ensure shell scripts use LF line endings (required for Linux containers)
+*.sh text eol=lf
+
+# Python files
+*.py text
+
+# Docker files
+Dockerfile text
+Dockerfile.rocm text
+docker-compose.yml text
+.dockerignore text
+
+# Documentation
+*.md text
+
+# Config files
+*.txt text
+*.json text
+*.yaml text
+*.yml text
+

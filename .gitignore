@@ -1,0 +1,31 @@
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Editor settings
+.vscode/
+.idea/
+*.swp
+
+# Environment files
+.env
+.env.*
+.venv/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Docker & Singularity
+*.sif
+*.tar
+
+.cache/
+/workspace
+/test_workspace
+/tier_1
+
+# Misc
+.DS_Store
+cli/node_modules

@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Node.js
+**/node_modules/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Environment files (will be mounted or set at runtime)
+.env
+.env.local
+
+# Workspace (will be created in container - use /workspace to match root only)
+/workspace
+
+# Documentation (large, but needed for RAG - keep it)
+# rag_documentation/
+
+# Tests
+tests/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs
+*.log
+*.out
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
