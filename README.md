@@ -2,7 +2,7 @@
     <img src="logos/logo_text_fancy.png" alt="MOF-ChemUnity Logo" width="400"/>
 </p>
 
-# Universal Autonomous System for Atomistic Research
+<h1 align="center">Universal Autonomous System for Atomistic Research</h1>
 
 A research-ready autonomous computational chemistry agentic system. QUASAR covers the full atomistic simulation pipeline with integrated tools including Quantum ESPRESSO, ASE, MACE, pymatgen, LAMMPS, and RASPA3. Currently optimised for Gemini models; other providers may not be fully functional. Broader compatibility coming in future releases.
 
@@ -139,3 +139,9 @@ singularity exec --cleanenv \
 > **Note:** Checkpoints are stored in `checkpoints.sqlite` within the workspace. Completed runs are archived to `archive/run_N/` with their checkpoint data preserved.
 
 </details>
+
+<br>
+
+### Contact & Advanced Usage
+
+For the web service and advanced use, please email j.evans@adelaide.edu.au for more information.
