@@ -4,7 +4,7 @@
 
 # Universal Autonomous System for Atomistic Research
 
-A highly flexible autonomous computational chemistry agentic system that adapts to diverse research needs. QUASAR covers the full atomistic simulation pipeline with integrated tools including Quantum ESPRESSO, ASE, MACE, pymatgen, LAMMPS, and RASPA3. Features one-step Docker deployment across different platforms, optimised to maximise hardware efficiency, with HPC Singularity support.
+A research-ready autonomous computational chemistry agentic system. QUASAR covers the full atomistic simulation pipeline with integrated tools including Quantum ESPRESSO, ASE, MACE, pymatgen, LAMMPS, and RASPA3. Currently optimised for Gemini models; other providers may not be fully functional. Broader compatibility coming in future releases.
 
 <details>
 <summary><strong>Quick Start</strong></summary>
