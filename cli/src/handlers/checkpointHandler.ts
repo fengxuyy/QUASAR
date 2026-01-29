@@ -29,13 +29,32 @@ export function buildHistoryItems(history: any): CommittedItem[] {
     
     if (planContent) {
         newItems.push({ id: 'strategist-header', type: 'agent-header', content: 'strategist', agentName: 'strategist' });
-        newItems.push({ 
-            id: 'checkpoint-history-plan', 
-            type: 'plan', 
-            content: { planContent, isPlanComplete: true, isContinuation: false, committedPlanLines: planContent.split('\n').length },
-            agentName: 'strategist'
-        });
-        newItems.push({ id: 'strategist-complete', type: 'agent-status', content: 'Created Execution Plan', agentName: 'strategist' });
+        
+        // If it's a replan, we don't show "Created Initial Plan"
+        // and we show "Created Replan" instead of "Reviewed Plan"
+        if (history.is_replan) {
+            // Then show the reviewed plan content
+            newItems.push({ 
+                id: 'checkpoint-history-plan', 
+                type: 'plan', 
+                content: { planContent, isPlanComplete: true, isContinuation: false, committedPlanLines: planContent.split('\n').length },
+                agentName: 'strategist'
+            });
+            // Finally show "Created Replan" milestone
+            newItems.push({ id: 'strategist-complete', type: 'tool', content: 'Created Replan', agentName: 'strategist' });
+        } else {
+            // Show "Created Initial Plan" milestone first (the initial plan was created before review)
+            newItems.push({ id: 'strategist-initial-complete', type: 'tool', content: 'Created Initial Plan', agentName: 'strategist' });
+            // Then show the reviewed plan content
+            newItems.push({ 
+                id: 'checkpoint-history-plan', 
+                type: 'plan', 
+                content: { planContent, isPlanComplete: true, isContinuation: false, committedPlanLines: planContent.split('\n').length },
+                agentName: 'strategist'
+            });
+            // Finally show "Reviewed Plan" milestone
+            newItems.push({ id: 'strategist-complete', type: 'tool', content: 'Reviewed Plan', agentName: 'strategist' });
+        }
     }
     
     const completedCount = history.completed_steps?.length || 0;
@@ -191,7 +210,9 @@ export function handleCheckpointInfo(ctx: CheckpointHandlerContext, payload: any
             ctx.setIsLoading(true);
             setTimeout(() => {
                 if (ctx.bridgeRef.current) {
-                    ctx.bridgeRef.current.stdin.write(JSON.stringify({ command: 'prompt', content: '', restart: true }) + "\n");
+                // IMPORTANT: restart: false to preserve checkpoint and resume from it
+                    // restart: true would delete the checkpoint!
+                    ctx.bridgeRef.current.stdin.write(JSON.stringify({ command: 'prompt', content: '', restart: false }) + "\n");
                 }
             }, 100);
         } else {

@@ -702,7 +702,6 @@ Do NOT call `{tool_name}` with the same arguments again.
                         
                         if plan:
                             send_plan_stream(content, is_complete=True, parsed_plan=plan, is_replanning=True)
-                            # Don't send "Replanning Complete" event - the plan_stream with is_complete=True already shows completion
                             send_json("task_progress", {"current": 1, "total": len(plan)})
                             
                             log_agent_header("Strategist", 0, "Replanning Complete")
@@ -710,6 +709,10 @@ Do NOT call `{tool_name}` with the same arguments again.
                             lines = formatted_plan.split('\n')
                             blockquote = '\n'.join(f"> {line}" if line.strip() else ">" for line in lines)
                             _write_to_log(f"{blockquote}\n\n")
+                            
+                            # Send events to CLI for plan box and status checkmark
+                            send_agent_event("strategist", "step_complete", "Created Replan", output=formatted_plan)
+                            send_agent_event("strategist", "complete")
                         
                         return_state = {
                             'messages': [response],

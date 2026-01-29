@@ -14,12 +14,13 @@ interface PromptInputProps {
     taskProgress?: { current: number; total: number } | null;
     checkpointPrompt?: boolean;
     completedRunPrompt?: boolean;
+    confirmDeleteArchive?: boolean;
     previousInput?: string;
     showInterruptWarning?: boolean;
     showExitWarning?: boolean;
 }
 
-const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProgress, checkpointPrompt, completedRunPrompt, previousInput, showInterruptWarning, showExitWarning }) => {
+const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProgress, checkpointPrompt, completedRunPrompt, confirmDeleteArchive, previousInput, showInterruptWarning, showExitWarning }) => {
     const [query, setQuery] = useState('');
     const [lastQuery, setLastQuery] = useState('');
     const [cursorPosition, setCursorPosition] = useState(0);
@@ -69,7 +70,7 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
         
         // Handle Enter key - submit
         if (key.return) {
-            if (query.trim()) {
+            if (query.trim() || completedRunPrompt) {
                 setLastQuery(query);
                 const submitValue = query;
                 setQuery('');
@@ -132,11 +133,13 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
     }, { isActive: !isLoading });
 
     // Determine placeholder text based on mode
-    const placeholderText = completedRunPrompt
-        ? "Previous run completed. Improve results? (yes/no)"
-        : checkpointPrompt 
-            ? "Resume from checkpoint? (yes/no)"
-            : "Type your request here...";
+    const placeholderText = confirmDeleteArchive
+        ? "⚠ This will DELETE all archives! Type 'yes' to confirm or 'no' to cancel"
+        : completedRunPrompt
+            ? "Previous results found. Enter to auto-improve (or 'no' to start fresh)"
+            : checkpointPrompt 
+                ? "Resume from checkpoint? (yes/no)"
+                : "Type your request here...";
     
     // Truncate placeholder if needed
     const truncatedPlaceholder = truncateText(placeholderText, inputTextMaxWidth);

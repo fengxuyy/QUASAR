@@ -50,6 +50,7 @@ TOOL_DISPLAY_MESSAGES = {
     'search_web': 'Searched web',
     'fetch_web_page': 'Fetched web page',
     'grep_search': 'Searched files',
+    'get_hardware_info': 'Checked Hardware',
 }
 
 
@@ -423,13 +424,14 @@ def _format_success_content(tool_name: str, tool_args: dict, content_str: str) -
     return None  # Use default content
 
 
-def extract_checkpoint_history(state_values: dict, messages: list) -> dict:
+def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bool = False) -> dict:
     """
     Extract structured history from checkpoint state for CLI display.
     
     Args:
         state_values: The checkpoint state values dict
         messages: List of messages from checkpoint
+        is_replan: Whether this run is a replan
         
     Returns:
         Dictionary with plan, completed_steps, operator/evaluator/strategist items grouped by task
@@ -438,6 +440,19 @@ def extract_checkpoint_history(state_values: dict, messages: list) -> dict:
     completed_steps = state_values.get('completed_steps', [])
     step_results = state_values.get('step_results', {})
     
+    # Primacy: 1. state_values flag, 2. is_replan argument, 3. message-based heuristic
+    replan_detected = state_values.get('is_replanning', is_replan)
+    
+    if not replan_detected:
+        # Heuristic: search messages for the auto-improvement trigger
+        AUTO_IMPROVE_SNIPPET = "Please analyze the previous run results and automatically improve the workflow"
+        for msg in messages:
+            content = _get_content(msg)
+            if AUTO_IMPROVE_SNIPPET in content:
+                replan_detected = True
+                break
+    
+    is_replan = replan_detected
     
     # Extract plans from strategist's AIMessages
     all_plans = []
@@ -629,7 +644,9 @@ def extract_checkpoint_history(state_values: dict, messages: list) -> dict:
                     ("Please review your plan above" in content and "improved version" in content) or
                     "Does the plan address all aspects" in content or
                     content == "DONE" or
-                    ("completed successfully" in content and "Please proceed" in content)
+                    ("completed successfully" in content and "Please proceed" in content) or
+                    # Skip strategist error message when user_input was empty
+                    content == "Please provide a valid input or question."
                 )
                 
                 if not should_skip:
@@ -821,6 +838,10 @@ def extract_checkpoint_history(state_values: dict, messages: list) -> dict:
             # Skip "completed successfully" messages that bridge task transition
             if "completed successfully" in content and "Please proceed" in content:
                 continue
+            
+            # Skip strategist error message when user_input was empty
+            if content == "Please provide a valid input or question.":
+                continue
 
             # Add model text item - skip for evaluator since summary is in step_results
             if not in_evaluator:
@@ -933,5 +954,6 @@ def extract_checkpoint_history(state_values: dict, messages: list) -> dict:
         "operator_items_by_task": clean_items(operator_items_by_task),
         "evaluator_items_by_task": clean_items(evaluator_items_by_task),
         "ordered_items_by_task": clean_items(ordered_items_by_task),
-        "strategist_items": clean_list(strategist_items)
+        "strategist_items": clean_list(strategist_items),
+        "is_replan": is_replan
     }

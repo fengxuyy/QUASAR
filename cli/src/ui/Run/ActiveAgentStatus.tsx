@@ -39,7 +39,10 @@ const ActiveAgentStatus: React.FC<ActiveAgentStatusProps> = ({ agent, leftMargin
     
     // Determine if this is a panel-related status that needs the triangle spinner
     // API retry always uses dots spinner instead of triangle
-    const isPanelStatus = !isApiRetrying && (
+    // "Analysing/Analyzing Request" should use dots spinner, not triangle
+    const isAnalysingRequest = agent.statusText?.toLowerCase().includes('analysing') || 
+                               agent.statusText?.toLowerCase().includes('analyzing');
+    const isPanelStatus = !isApiRetrying && !isAnalysingRequest && (
         agent.name === 'strategist' || 
         agent.name === 'evaluator' || 
         (agent.name === 'operator' && (

@@ -342,18 +342,25 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                 setCheckpointMode('auto-resume');
                 setIsLoading(true);
                 if (bridgeRef.current) {
-                    bridgeRef.current.stdin.write(JSON.stringify({ command: 'prompt', content: '', restart: true }) + "\n");
+                    // IMPORTANT: restart: false to preserve checkpoint and resume from it
+                    // restart: true would delete the checkpoint!
+                    bridgeRef.current.stdin.write(JSON.stringify({ command: 'prompt', content: '', restart: false }) + "\n");
                 }
             } else if (answer === 'no') {
+                // Clear checkpoint but keep archives - use clear_checkpoint command
+                // After clearing, bridge will check if archives exist and send appropriate response
                 process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
                 applyFreshStartState({
                     setPreviousInput, setTaskProgress, taskProgressRef, setCommittedItems,
                     setBannerCommitted, setPlanContent, setIsPlanComplete, setAgents,
                     activeFileContentRef, setSystemStatus, itemIdCounterRef
                 });
+                setParsedPlan([]);
                 setStaticKey(prev => prev + 1);
+                // Don't set checkpointMode here - let the bridge response determine it
+                // based on whether archives exist
                 if (bridgeRef.current) {
-                    bridgeRef.current.stdin.write(JSON.stringify({ command: 'fresh_start' }) + "\n");
+                    bridgeRef.current.stdin.write(JSON.stringify({ command: 'clear_checkpoint' }) + "\n");
                 }
             }
             return;
@@ -362,20 +369,42 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
         if (checkpointMode === 'completed-run-prompt') {
             const answer = input.trim().toLowerCase();
             if (answer === 'yes') {
-                if (bridgeRef.current) {
-                    bridgeRef.current.stdin.write(JSON.stringify({ command: 'archive_and_continue' }) + "\n");
-                }
+                // "yes" just transitions to normal mode to allow typing a new request
+                setCheckpointMode('normal');
+                return;
             } else if (answer === 'no') {
+                // Ask for confirmation before deleting archives
+                setCheckpointMode('confirm-delete-archive');
+                return;
+            } else {
+                // Either empty string (auto-improve) or arbitrary text
+                if (!input.trim()) {
+                    setPreviousInput("Auto-improve");
+                }
+                // Transition to normal mode and fall through to prompt submission
+                setCheckpointMode('normal');
+            }
+        }
+
+        if (checkpointMode === 'confirm-delete-archive') {
+            const answer = input.trim().toLowerCase();
+            if (answer === 'yes') {
+                // User confirmed - proceed with fresh start (deletes archives)
                 process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
                 applyFreshStartState({
                     setPreviousInput, setTaskProgress, taskProgressRef, setCommittedItems,
                     setBannerCommitted, setPlanContent, setIsPlanComplete, setAgents,
                     activeFileContentRef, setSystemStatus, itemIdCounterRef
                 });
+                setParsedPlan([]);
+                setCheckpointMode('normal');
                 setStaticKey(prev => prev + 1);
                 if (bridgeRef.current) {
                     bridgeRef.current.stdin.write(JSON.stringify({ command: 'fresh_start' }) + "\n");
                 }
+            } else {
+                // User cancelled - go back to normal mode
+                setCheckpointMode('normal');
             }
             return;
         }
@@ -442,8 +471,27 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                 });
                 
                 if (bridgeRef.current) {
-                    bridgeRef.current.kill('SIGKILL');
+                    // First, send interrupt command to kill any running subprocesses (mpirun, etc.)
+                    // This is critical because subprocesses run in their own process group and
+                    // won't be killed when we SIGKILL the bridge process.
+                    try {
+                        if (bridgeRef.current.stdin) {
+                            bridgeRef.current.stdin.write(JSON.stringify({ command: 'interrupt' }) + "\n");
+                        }
+                    } catch (e) {
+                        // Ignore write errors - bridge may already be dead
+                    }
+                    
+                    // Brief delay to allow subprocess cleanup, then kill the bridge
+                    const bridgeToKill = bridgeRef.current;
                     bridgeRef.current = null;
+                    setTimeout(() => {
+                        try {
+                            bridgeToKill.kill('SIGKILL');
+                        } catch (e) {
+                            // Ignore - process may already be dead
+                        }
+                    }, 150);
                 }
                 
                 applyInterruptResetState({
@@ -518,6 +566,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                                 taskProgress={taskProgress}
                                 checkpointPrompt={checkpointMode === 'prompt'}
                                 completedRunPrompt={checkpointMode === 'completed-run-prompt'}
+                                confirmDeleteArchive={checkpointMode === 'confirm-delete-archive'}
                                 previousInput={previousInput}
                                 showInterruptWarning={showInterruptWarning}
                                 showExitWarning={showExitWarning}

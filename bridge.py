@@ -10,14 +10,22 @@ import signal
 # Global interrupt event for coordinated interruption
 interrupt_event = threading.Event()
 
+if __name__ == "__main__":
+    # Alias this module as 'bridge' so that 'import bridge' anywhere in the application
+    # returns this same module instance with the shared interrupt_event and other state.
+    # This prevents creating a second separate instance of the bridge module.
+    sys.modules["bridge"] = sys.modules["__main__"]
+
 def _save_stats_on_interrupt(signum, frame):
-    """Signal handler to save usage stats and report on SIGINT.
+    """Signal handler to save usage stats and report on SIGINT/SIGTERM.
     
-    For graceful SIGINT, we generate the report immediately.
+    For graceful SIGINT/SIGTERM, we generate the report immediately and kill
+    any running subprocesses (like mpirun/LAMMPS) by killing their process group.
     For SIGKILL, the report is generated on next startup.
-    Also terminates any running subprocess (like mpirun/LAMMPS) by killing
-    the entire process group.
     """
+    # Signal that an interrupt has occurred so other threads/tools can stop
+    interrupt_event.set()
+    
     try:
         # FIRST: Kill any running subprocess before anything else
         # This ensures child processes (mpirun, LAMMPS, etc.) are terminated
@@ -53,8 +61,13 @@ def _save_stats_on_interrupt(signum, frame):
     # Re-raise to propagate the interrupt
     raise KeyboardInterrupt("Interrupted by SIGINT")
 
-# Register signal handler before anything else
-signal.signal(signal.SIGINT, _save_stats_on_interrupt)
+# Register signal handlers before anything else
+try:
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGINT, _save_stats_on_interrupt)
+        signal.signal(signal.SIGTERM, _save_stats_on_interrupt)
+except (ValueError, AttributeError):
+    pass  # Not in main thread or signal module issues
 
 
 # Cache stdout fd at module load time
@@ -225,12 +238,23 @@ def _read_previous_input_from_conversation():
                         user_input_lines.append(line)
             
             if user_input_lines:
-                return '\n'.join(user_input_lines).strip()
+                result = '\n'.join(user_input_lines).strip()
+                
+                # If it's the auto-improve message, return a clean label
+                from src.runner import AUTO_IMPROVE_MESSAGE
+                if result == AUTO_IMPROVE_MESSAGE:
+                    return "Auto-improve"
+                
+                return result
             
             # Fallback: try old formats for backward compatibility
             for line in lines:
                 if line.startswith("You: "):
-                    return line[5:].strip()
+                    result = line[5:].strip()
+                    from src.runner import AUTO_IMPROVE_MESSAGE
+                    if result == AUTO_IMPROVE_MESSAGE:
+                        return "Auto-improve"
+                    return result
         except Exception:
             pass
     return ""
@@ -291,54 +315,65 @@ def main():
                         "restart": restart
                     })
                 
-                send_system_status("running")
-                run_error = None
-                try:
-                    runner.process_prompt(prompt, llm, if_restart=restart)
-                except Exception as e:
-                    run_error = e
-                    tb = traceback.format_exc()
-                    send_json("error", {"message": str(e), "traceback": tb})
-                
-                send_system_status("completed")
-                
-                # usage_report.md generation moved to runner.py to ensure it is archived
-                
-                # Read and send final summary if it exists
-                # Only send if checkpoint exists (active run), otherwise completed_run_info will handle it
-                try:
-                    from src.tools.base import WORKSPACE_DIR
-                    from src.checkpoint import checkpoint_file_exists
-                    from src.results import final_results_exists_and_not_empty
+                def run_prompt_in_thread():
+                    send_system_status("running")
+                    run_error = None
+                    try:
+                        runner.process_prompt(prompt, llm, if_restart=restart)
+                    except KeyboardInterrupt:
+                         # Handled interruption
+                         send_json("done", {"status": "interrupted"})
+                         send_system_status("completed")
+                         return
+                    except Exception as e:
+                        run_error = e
+                        tb = traceback.format_exc()
+                        send_json("error", {"message": str(e), "traceback": tb})
                     
-                    # Only send final_summary if checkpoint exists (active run completion)
-                    # If no checkpoint but final_results exists, completed_run_info will send it instead
-                    has_checkpoint = checkpoint_file_exists()
-                    if has_checkpoint:
-                        summary_path = WORKSPACE_DIR / "final_results" / "summary.md"
-                        if summary_path.exists():
-                            summary_content = summary_path.read_text(encoding='utf-8')
-                            if summary_content.strip():
-                                send_json("final_summary", {"content": summary_content})
-                    # If no checkpoint but final_results exists, let completed_run_info handle it
-                    # (which is sent when CLI calls check_checkpoint)
-                except Exception:
-                    pass
-                
-                # Send appropriate done status based on whether run succeeded or errored
-                # "completed" = successful run, "error" = exception occurred
-                # Both should trigger EXIT_ON_COMPLETION, but "interrupted" should not
-                if run_error:
-                    send_json("done", {"status": "error"})
-                else:
-                    send_json("done", {"status": "completed"})
-                
-                if _HAS_DEBUG_LOGGER:
-                    log_custom("BRIDGE", "Prompt command completed")
+                    send_system_status("completed")
+                    
+                    # usage_report.md generation moved to runner.py to ensure it is archived
+                    
+                    # Read and send final summary if it exists
+                    # Only send if checkpoint exists (active run), otherwise completed_run_info will handle it
+                    try:
+                        from src.tools.base import WORKSPACE_DIR
+                        from src.checkpoint import checkpoint_file_exists
+                        from src.results import final_results_exists_and_not_empty
+                        
+                        # Only send final_summary if checkpoint exists (active run completion)
+                        # If no checkpoint but final_results exists, completed_run_info will send it instead
+                        has_checkpoint = checkpoint_file_exists()
+                        if has_checkpoint:
+                            summary_path = WORKSPACE_DIR / "final_results" / "summary.md"
+                            if summary_path.exists():
+                                summary_content = summary_path.read_text(encoding='utf-8')
+                                if summary_content.strip():
+                                    send_json("final_summary", {"content": summary_content})
+                        # If no checkpoint but final_results exists, let completed_run_info handle it
+                        # (which is sent when CLI calls check_checkpoint)
+                    except Exception:
+                        pass
+                    
+                    # Send appropriate done status based on whether run succeeded or errored
+                    # "completed" = successful run, "error" = exception occurred
+                    # Both should trigger EXIT_ON_COMPLETION, but "interrupted" should not
+                    if run_error:
+                        send_json("done", {"status": "error"})
+                    else:
+                        send_json("done", {"status": "completed"})
+                    
+                    if _HAS_DEBUG_LOGGER:
+                        log_custom("BRIDGE", "Prompt command completed")
+
+                # Start execution in a separate thread so main loop remains responsive to interrupts
+                exec_thread = threading.Thread(target=run_prompt_in_thread)
+                exec_thread.daemon = True
+                exec_thread.start()
                 
             elif command == "check_checkpoint":
                 from src.checkpoint import checkpoint_file_exists, get_thread_config, create_checkpoint_infrastructure
-                from src.results import final_results_exists_and_not_empty
+                from src.results import final_results_exists_and_not_empty, archive_exists_without_checkpoint
                 from src.tools.base import WORKSPACE_DIR
                 from src.graph import build_graph
                 from bridge_history import extract_checkpoint_history
@@ -370,7 +405,9 @@ def main():
                         state = graph.get_state(config)
                         
                         if state and state.values:
-                            history = extract_checkpoint_history(state.values, state.values.get('messages', []))
+                            # Use is_replanning from state (most reliable)
+                            is_replan = state.values.get('is_replanning', False)
+                            history = extract_checkpoint_history(state.values, state.values.get('messages', []), is_replan=is_replan)
                     except Exception:
                         traceback.print_exc()
                 
@@ -380,10 +417,38 @@ def main():
                     "history": history
                 })
                 
-                # Check for completed run state (no checkpoint but final_results exists)
-                if not exists and final_results_exists_and_not_empty():
+                # Check for completed run state (no checkpoint but archive with runs exists)
+                # Note: Use archive_exists_without_checkpoint() instead of final_results_exists_and_not_empty()
+                # because after a run completes, final_results is moved to archive/run_N/
+                if not exists and (archive_exists_without_checkpoint() or final_results_exists_and_not_empty()):
                     summary_content = ""
                     summary_path = WORKSPACE_DIR / "final_results" / "summary.md"
+                    
+                    # If local summary doesn't exist, check the latest archive
+                    if not summary_path.exists():
+                        try:
+                            archive_dir = WORKSPACE_DIR / "archive"
+                            if archive_dir.exists():
+                                max_run_num = 0
+                                latest_run_dir = None
+                                
+                                for item in archive_dir.iterdir():
+                                    if item.is_dir() and item.name.startswith("run_"):
+                                        try:
+                                            run_num = int(item.name.split("_", 1)[1])
+                                            if run_num > max_run_num:
+                                                max_run_num = run_num
+                                                latest_run_dir = item
+                                        except (ValueError, IndexError):
+                                            continue
+                                
+                                if latest_run_dir:
+                                    archive_summary = latest_run_dir / "final_results" / "summary.md"
+                                    if archive_summary.exists():
+                                        summary_path = archive_summary
+                        except Exception:
+                            pass
+
                     if summary_path.exists():
                         try:
                             summary_content = summary_path.read_text(encoding='utf-8')
@@ -399,7 +464,7 @@ def main():
                     })
                 
             elif command == "fresh_start":
-                # Clean workspace for fresh start
+                # Clean workspace for fresh start (deletes archives too)
                 from src.results import cleanup_workspace_for_fresh_start
                 from src.checkpoint import delete_checkpoint
                 
@@ -409,6 +474,54 @@ def main():
                     send_json("fresh_start_complete", {"success": True})
                 except Exception as e:
                     send_json("fresh_start_complete", {"success": False, "error": str(e)})
+                
+            elif command == "clear_checkpoint":
+                # Clear checkpoint and workspace but keep archives
+                from src.results import cleanup_workspace_keep_archive, archive_exists_without_checkpoint
+                from src.checkpoint import delete_checkpoint
+                from src.tools.base import WORKSPACE_DIR
+                
+                try:
+                    cleanup_workspace_keep_archive()
+                    delete_checkpoint()
+                    
+                    # Check if archives exist - if so, show completed_run_info prompt
+                    if archive_exists_without_checkpoint():
+                        # Get summary from latest archive
+                        summary_content = ""
+                        try:
+                            archive_dir = WORKSPACE_DIR / "archive"
+                            if archive_dir.exists():
+                                max_run_num = 0
+                                latest_run_dir = None
+                                
+                                for item in archive_dir.iterdir():
+                                    if item.is_dir() and item.name.startswith("run_"):
+                                        try:
+                                            run_num = int(item.name.split("_", 1)[1])
+                                            if run_num > max_run_num:
+                                                max_run_num = run_num
+                                                latest_run_dir = item
+                                        except (ValueError, IndexError):
+                                            continue
+                                
+                                if latest_run_dir:
+                                    archive_summary = latest_run_dir / "final_results" / "summary.md"
+                                    if archive_summary.exists():
+                                        summary_content = archive_summary.read_text(encoding='utf-8')
+                        except Exception:
+                            pass
+                        
+                        send_json("completed_run_info", {
+                            "exists": True,
+                            "summary": summary_content,
+                            "previous_input": ""
+                        })
+                    else:
+                        # No archives - just confirm checkpoint cleared
+                        send_json("clear_checkpoint_complete", {"success": True})
+                except Exception as e:
+                    send_json("clear_checkpoint_complete", {"success": False, "error": str(e)})
                 
             elif command == "archive_and_continue":
                 # Archive current workspace (move to archive/run_N) and prepare for improvement
@@ -423,7 +536,20 @@ def main():
             elif command == "interrupt":
                 interrupt_event.set()
                 
-                # Save usage stats and generate report BEFORE sending SIGINT
+                # FIRST: Kill any running subprocess immediately
+                # This is critical because the CLI may send SIGKILL right after this,
+                # and we need to ensure child processes (mpirun, LAMMPS, etc.) are terminated
+                # before the bridge process dies.
+                try:
+                    from src.tools.execution import interrupt_running_execution, has_running_process
+                    if has_running_process():
+                        interrupt_running_execution()
+                except Exception as e:
+                    if _HAS_DEBUG_LOGGER:
+                        log_custom("BRIDGE", f"Failed to kill subprocess on interrupt: {e}")
+                
+                # Report generation and stats saving
+                # We do this here to ensure immediate feedback even if worker thread is slow to stop
                 try:
                     from src.usage_tracker import save_stats_to_checkpoint, generate_report, set_run_status, end_run
                     from src.tools.base import LOGS_DIR
@@ -449,7 +575,6 @@ def main():
                         log_custom("BRIDGE", f"Failed to save stats on interrupt: {e}")
                 
                 send_json("interrupt_acknowledged", {"success": True})
-                os.kill(os.getpid(), signal.SIGINT)
                 
             elif command == "exit":
                 break

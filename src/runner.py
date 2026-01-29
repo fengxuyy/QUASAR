@@ -157,16 +157,18 @@ def process_prompt(user_input: str, llm, if_restart: bool = False) -> bool:
         log_graph_stream_start(inputs if inputs else {})
         
         # Send initial strategist status immediately so UI shows feedback before LLM starts
-        try:
-            import bridge
-            archive_dir = WORKSPACE_DIR / "archive"
-            is_replanning = archive_dir.exists() and archive_dir.is_dir()
-            status_text = "Replanning" if is_replanning else "Analysing Request"
-            # Send both start (to activate indicator) and update (to show status text in log)
-            bridge.send_agent_event("strategist", "start", status_text)
-            bridge.send_agent_event("strategist", "update", status_text)
-        except ImportError:
-            pass  # Not running in bridge mode
+        # Only send if NOT resuming from checkpoint (strategist is already complete in that case)
+        if not has_history:
+            try:
+                import bridge
+                archive_dir = WORKSPACE_DIR / "archive"
+                is_replanning = archive_dir.exists() and archive_dir.is_dir()
+                status_text = "Replanning" if is_replanning else "Analysing Request"
+                # Send both start (to activate indicator) and update (to show status text in log)
+                bridge.send_agent_event("strategist", "start", status_text)
+                bridge.send_agent_event("strategist", "update", status_text)
+            except ImportError:
+                pass  # Not running in bridge mode
         
         # Execute graph stream
         iterator = graph.stream(inputs, config=config) if inputs else graph.stream(None, config=config)

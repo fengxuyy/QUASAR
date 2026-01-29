@@ -40,5 +40,5 @@ export interface FileContent {
     content: string;
 }
 
-export type CheckpointMode = 'checking' | 'prompt' | 'normal' | 'error' | 'auto-resume' | 'completed-run-prompt';
+export type CheckpointMode = 'checking' | 'prompt' | 'normal' | 'error' | 'auto-resume' | 'completed-run-prompt' | 'confirm-delete-archive';
 export type SystemStatus = 'idle' | 'running' | 'completed';

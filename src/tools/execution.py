@@ -232,6 +232,43 @@ def execute_python(
         
         # Poll until process completes or check-in interval reached
         while True:
+            # Check for external interrupt (e.g. from web UI)
+            try:
+                import bridge
+                if bridge.interrupt_event.is_set():
+                    # Kill process and return interrupted result
+                    if _process_pgid is not None:
+                        try:
+                            # Send SIGTERM to entire process group
+                            os.killpg(_process_pgid, signal.SIGTERM)
+                            
+                            # Brief wait to allow graceful termination
+                            # We can't wait too long as responsiveness is key
+                            time.sleep(1)
+                            
+                            try:
+                                # Force kill if still running
+                                os.killpg(_process_pgid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                        except (ProcessLookupError, PermissionError):
+                            pass
+                    
+                    # Collect partial result with interrupted flag
+                    result = _collect_execution_result(process, script_path, files_before, was_interrupted=True)
+                    
+                    # Clean up global state
+                    _running_process = None
+                    _process_pgid = None
+                    _process_start_time = None
+                    _process_script_path = None
+                    _process_files_before = None
+                    
+                    return result
+
+            except ImportError:
+                 pass
+
             # Check if process has completed
             poll_result = process.poll()
             if poll_result is not None:

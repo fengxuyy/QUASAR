@@ -504,9 +504,14 @@ Do NOT call `{tool_name}` with the same arguments again.
         if response is None or (not full_content.strip() and not tool_calls):
             _write_to_log("\n---\n\n**[OPERATOR] Warning:**\n\n> Received empty response from LLM. Prompting to retry...\n\n")
             error_msg = "Error: You sent an empty response. Please retry your last step or provide a status update."
+            
+            # Update messages with warning and log it to input_messages.md
+            updated_messages = current_task_messages + [HumanMessage(content=error_msg)]
+            _write_input_messages(updated_messages, "OPERATOR", current_task_index)
+            
             update = {
                 'messages': [HumanMessage(content=error_msg)],
-                'current_task_messages': current_task_messages + [HumanMessage(content=error_msg)]
+                'current_task_messages': updated_messages
             }
             if initial_files is not None:
                 update["files_at_task_start"] = initial_files

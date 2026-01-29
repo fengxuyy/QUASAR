@@ -74,9 +74,9 @@ def final_results_exists_and_not_empty():
         return False
 
 
-def cleanup_workspace_for_fresh_start():
-    """Delete everything in workspace except docs and dotfiles.
-    This includes clearing everything except docs and the archive folder.
+def cleanup_workspace_keep_archive():
+    """Delete everything in workspace except docs, archive, and dotfiles.
+    This clears current results and checkpoints but preserves archived runs.
     Also explicitly deletes checkpoint_settings.json.
     """
     # Explicitly delete checkpoint_settings.json if it exists
@@ -92,8 +92,42 @@ def cleanup_workspace_for_fresh_start():
         # Skip dot-files/folders
         if item.name.startswith("."):
             continue
-        # Only skip docs and archive for fresh start
+        # Skip docs and archive - only delete current workspace files
         if item.name in ("docs", "archive"):
+            continue
+            
+        try:
+            if item.is_dir():
+                shutil.rmtree(str(item))
+            else:
+                item.unlink()
+        except (OSError, PermissionError) as e:
+            log_custom("RESULTS", f"Warning: Could not remove {item.name}", {"error": str(e)})
+            
+    # Ensure logs directory exists after cleanup
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def cleanup_workspace_for_fresh_start():
+    """Delete everything in workspace except docs and dotfiles.
+    This includes clearing all results, archives, and checkpoint files.
+    Also explicitly deletes checkpoint_settings.json.
+    """
+    # Explicitly delete checkpoint_settings.json if it exists
+    checkpoint_settings_path = WORKSPACE_DIR / "checkpoint_settings.json"
+    if checkpoint_settings_path.exists():
+        try:
+            checkpoint_settings_path.unlink()
+            log_custom("RESULTS", f"Deleted: {checkpoint_settings_path}")
+        except (OSError, PermissionError) as e:
+            log_custom("RESULTS", f"Warning: Could not delete {checkpoint_settings_path}", {"error": str(e)})
+    
+    for item in WORKSPACE_DIR.iterdir():
+        # Skip dot-files/folders
+        if item.name.startswith("."):
+            continue
+        # Only skip docs for fresh start - delete everything else including archive
+        if item.name == "docs":
             continue
             
         try:

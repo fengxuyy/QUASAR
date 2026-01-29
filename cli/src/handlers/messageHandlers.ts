@@ -153,13 +153,43 @@ export function handleAgentEventMessage(ctx: MessageHandlerContext, payload: any
         
         ctx.setCommittedItems(prev => {
             const items = ctx.ensureHeader(prev, agent, currentTaskNum);
-            return [...items, { 
+            
+            const newToolItem = { 
                 id: ctx.genUniqueId(`${agent}-tool`), 
-                type: 'tool', 
+                type: 'tool' as const, 
                 content: agentStatusText, 
                 agentName: agent,
                 isError: toolIsError
-            }];
+            };
+            
+            // Special case: "Reviewed Plan" or "Created Replan" should add the plan box BEFORE the milestone
+            // Order: "Created Initial Plan" -> plan box -> "Reviewed Plan"
+            if (agent === 'strategist' && (agentStatusText === 'Reviewed Plan' || agentStatusText === 'Created Replan')) {
+                // Check if plan box already exists (e.g., from checkpoint history)
+                const hasPlan = items.some(item => 
+                    item.id === 'execution-plan-complete' || 
+                    item.id === 'checkpoint-history-plan' ||
+                    (item.type === 'plan' && item.agentName === 'strategist')
+                );
+                
+                if (!hasPlan && payload.output) {
+                    // Create plan box from the output content
+                    const planContent = payload.output;
+                    const planItem = {
+                        id: 'execution-plan-complete',
+                        type: 'plan' as const,
+                        content: { 
+                            planContent: planContent, 
+                            isPlanComplete: true, 
+                            isContinuation: false 
+                        },
+                        agentName: 'strategist'
+                    };
+                    return [...items, planItem, newToolItem];
+                }
+            }
+            
+            return [...items, newToolItem];
         });
     } else if (event === 'log') {
         ctx.setCommittedItems(prev => {
@@ -176,11 +206,15 @@ export function handleAgentEventMessage(ctx: MessageHandlerContext, payload: any
     } else if (event === 'start') {
         ctx.setCommittedItems(prev => ctx.ensureHeader(prev, agent, currentTaskNum));
     } else if (event === 'complete') {
-        ctx.setCommittedItems(prev => {
-            const items = ctx.ensureHeader(prev, agent, currentTaskNum);
-            const statusType = agent === 'evaluator' ? 'evaluator-status' : 'agent-status';
-            return [...items, { id: ctx.genUniqueId(`${agent}-complete`), type: statusType, content: agentStatusText, agentName: agent }];
-        });
+        // Only add agent-status item if there's actual status text
+        // (strategist sends empty completion event to mark state transition)
+        if (agentStatusText && agentStatusText.trim()) {
+            ctx.setCommittedItems(prev => {
+                const items = ctx.ensureHeader(prev, agent, currentTaskNum);
+                const statusType = agent === 'evaluator' ? 'evaluator-status' : 'agent-status';
+                return [...items, { id: ctx.genUniqueId(`${agent}-complete`), type: statusType, content: agentStatusText, agentName: agent }];
+            });
+        }
     }
     
     // Update agents list
@@ -213,33 +247,8 @@ export function handlePlanStreamMessage(ctx: MessageHandlerContext, payload: any
     ctx.setPlanContent(newPlanContent);
     ctx.setIsPlanComplete(isPlanDone);
     
-    if (isPlanDone && (parsedPlan?.length > 0 || newPlanContent.trim())) {
-        const displayContent = parsedPlan && parsedPlan.length > 0
-            ? parsedPlan.join('\n\n')
-            : newPlanContent;
-        
-        ctx.setCommittedItems(prev => {
-            const items = ctx.ensureHeader(prev, 'strategist', undefined);
-            
-            const hasPlan = items.some(item => 
-                item.id === 'execution-plan-complete' || 
-                item.id === 'checkpoint-history-plan' ||
-                (item.type === 'plan' && item.agentName === 'strategist')
-            );
-            if (hasPlan) return items;
-            
-            return [...items, {
-                id: 'execution-plan-complete',
-                type: 'plan' as const,
-                content: { 
-                    planContent: displayContent, 
-                    isPlanComplete: true, 
-                    isContinuation: false 
-                },
-                agentName: 'strategist'
-            }];
-        });
-    }
+    // Note: Plan box is added from step_complete "Reviewed Plan" event, not here
+    // This ensures proper ordering: "Created Initial Plan" -> plan box -> "Reviewed Plan"
 }
 
 /** Handle task progress updates */
@@ -317,7 +326,16 @@ export function handleArchiveCompleteMessage(ctx: MessageHandlerContext, payload
 
 /** Handle fresh start complete */
 export function handleFreshStartCompleteMessage(ctx: MessageHandlerContext, payload: any): void {
-    if (payload?.success) ctx.setCheckpointMode('normal');
+    // Fresh start complete - workspace AND archives are cleaned
+    // Don't re-check for checkpoints - user wants a completely fresh start
+    // The checkpointMode should already be set to 'normal' in Run.tsx
+}
+
+/** Handle clear checkpoint complete (keeps archives) */
+export function handleClearCheckpointCompleteMessage(ctx: MessageHandlerContext, payload: any): void {
+    // Checkpoint cleared, no archives exist
+    // Set to normal mode so user can start a new request
+    ctx.setCheckpointMode('normal');
 }
 
 /** Handle final summary */
@@ -419,6 +437,7 @@ export function createMessageHandler(ctx: MessageHandlerContext) {
                 break;
             case 'checkpoint_info':
                 ctx.setShowMainUI(true);
+                ctx.setIsSystemReady(true);
                 ctx.handleCheckpointInfo(msg.payload);
                 break;
             case 'completed_run_info':
@@ -429,6 +448,9 @@ export function createMessageHandler(ctx: MessageHandlerContext) {
                 break;
             case 'fresh_start_complete':
                 handleFreshStartCompleteMessage(ctx, msg.payload);
+                break;
+            case 'clear_checkpoint_complete':
+                handleClearCheckpointCompleteMessage(ctx, msg.payload);
                 break;
             case 'final_summary':
                 handleFinalSummaryMessage(ctx, msg.payload);

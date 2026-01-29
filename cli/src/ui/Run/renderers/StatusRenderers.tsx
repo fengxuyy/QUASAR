@@ -67,6 +67,9 @@ export function ToolRenderer({ content, agentName, isError, id, leftMargin, term
     let icon: string;
     let displayContent = content;
     
+    // "Reviewed Plan" and "Created Replan" should show with triangle (like current status indicator)
+    const isReviewedPlan = content === 'Reviewed Plan' || content === 'Created Replan';
+    
     if (isError && isExecuteTool) {
         toolColor = 'red';
         icon = '▲';
@@ -74,7 +77,7 @@ export function ToolRenderer({ content, agentName, isError, id, leftMargin, term
     } else if (isError) {
         toolColor = 'red';
         icon = '✗';
-    } else if (isPanelTool || isExecuteTool) {
+    } else if (isPanelTool || isExecuteTool || isReviewedPlan) {
         toolColor = 'cyan';
         icon = '▲';
     } else {
