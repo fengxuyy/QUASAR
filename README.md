@@ -9,13 +9,22 @@ A research-ready autonomous computational chemistry agentic system. QUASAR cover
 <details>
 <summary><strong>Quick Start</strong></summary>
 
-### 1. Run via Docker
+### 1. Install Docker
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux).
+
+### 2. Pull the Image
+Get the latest version from [Docker Hub](https://hub.docker.com/r/fengxuyang/quasar):
+```bash
+docker pull fengxuyang/quasar:<tag>
+```
+
+### 3. Run via Docker
 
 #### **Option A: CLI**
 ```bash
 docker run --rm \
   -v "<workspace_path>:/workspace" \
-  fengxuyang/quasar-chem:<tag> quasar
+  fengxuyang/quasar:<tag> quasar
 ```
 
 #### **Option B: Batch Mode (Headless)**
@@ -26,11 +35,11 @@ docker run --rm \
   -e MODEL=<model_name> \
   -v "<workspace_path>:/workspace" \
   --home "<workspace_path>:/workspace" \
-  fengxuyang/quasar-chem:<tag> \
+  fengxuyang/quasar:<tag> \
   quasar "Calculate the band structure of silicon"
 ```
 
-### 2. HPC Singularity
+### 4. HPC Singularity
 
 #### **Option A: CLI (Interactive)**
 ```bash
