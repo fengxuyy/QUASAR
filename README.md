@@ -154,3 +154,11 @@ singularity exec --cleanenv \
 ### Contact & Advanced Usage
 
 For the web service and advanced use, please email j.evans@adelaide.edu.au for more information.
+
+<br>
+
+### Citation
+
+If you use QUASAR in your research, please cite the following paper:
+
+Yang, Fengxu, and Jack D. Evans. “QUASAR: A Universal Autonomous System for Atomistic Simulation and a Benchmark of Its Capabilities.” arXiv:2602.00185. Preprint, arXiv, January 30, 2026. https://doi.org/10.48550/arXiv.2602.00185.
