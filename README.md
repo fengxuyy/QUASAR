@@ -22,9 +22,11 @@ docker pull fengxuyang/quasar:<tag>
 
 #### **Option A: CLI**
 ```bash
-docker run --rm \
-  -v "<workspace_path>:/workspace" \
-  fengxuyang/quasar:<tag> quasar
+docker run -it --rm \
+  -e MODEL_API_KEY=<api_key> \
+  -e MODEL=<model_name> \   
+  -v "<workspace_path>:/workspace" fengxuyang/quasar:<tag> \    
+  quasar     
 ```
 
 #### **Option B: Batch Mode (Headless)**
@@ -34,7 +36,6 @@ docker run --rm \
   -e MODEL_API_KEY=<api_key> \
   -e MODEL=<model_name> \
   -v "<workspace_path>:/workspace" \
-  --home "<workspace_path>:/workspace" \
   fengxuyang/quasar:<tag> \
   quasar "Calculate the band structure of silicon"
 ```
