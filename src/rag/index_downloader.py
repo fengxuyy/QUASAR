@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional, Callable
 
 # HuggingFace Hub configuration
-HF_REPO_ID = "fengxuyoung/quasar-rag"
+HF_REPO_ID = "fengxuyy/quasar-rag"
 HF_FILENAME = "rag_index.tar.gz"
 INDEX_VERSION = "1.0.0"
 
