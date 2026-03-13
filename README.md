@@ -108,7 +108,7 @@ Configure the system via environment variables (Web and CLI):
 | :--- | :--- | :--- |
 | `MODEL_API_KEY` | **Required.** Your API key (Gemini, Claude, OpenAI, etc.). | - |
 | `MODEL` | **Required.** Model name. | - |
-| `ACCURACY` | `eco` (fast/balanced) or `pro` (maximum rigor). | `pro` |
+| `ACCURACY` | `eco` (fast/balanced) or `pro` (maximum rigor). | `eco` |
 | `GRANULARITY` | Workflow task breakdown level (`low`, `medium`, `high`). | `medium` |
 | `ENABLE_RAG` | Enable/disable documentation search. | `true` |
 | `IF_RESTART` | Resume from the last checkpoint. | `false` |

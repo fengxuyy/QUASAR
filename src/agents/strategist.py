@@ -51,6 +51,7 @@ VALID_GRANULARITY_LEVELS = {"low", "medium", "high"}
 DEFAULT_GRANULARITY_LEVEL = "medium"
 
 VALID_ACCURACY_MODES = {"eco", "pro"}
+DEFAULT_ACCURACY_MODE = "eco"
 
 # Regex patterns for parsing plan tasks
 TASK_PATTERNS = [
@@ -174,13 +175,12 @@ def _get_granularity_level():
 
 
 def _get_accuracy_mode():
-    """Get and validate accuracy mode from environment. Required."""
-    mode = os.getenv("ACCURACY")
-    if not mode:
-        raise ValueError("ACCURACY environment variable is required. Valid values: 'eco' or 'pro'")
+    """Get and validate accuracy mode from environment."""
+    mode = os.getenv("ACCURACY", DEFAULT_ACCURACY_MODE)
     mode = mode.lower()
     if mode not in VALID_ACCURACY_MODES:
-        raise ValueError(f"Invalid ACCURACY '{mode}'. Valid values: {VALID_ACCURACY_MODES}")
+        log_custom("STRATEGIST", f"Warning: Invalid ACCURACY '{mode}', defaulting to '{DEFAULT_ACCURACY_MODE}'")
+        return DEFAULT_ACCURACY_MODE
     return mode
 
 

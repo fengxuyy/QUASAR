@@ -306,8 +306,7 @@ def main():
             
             from src.rag import initialize_embeddings, initialize_rag
             from src.tools.base import WORKSPACE_DIR
-            
-            status_tracker("Loading Model...")
+
             # Pass status_tracker to initialization functions
             # Note: The function signature updates for initialize_embeddings and initialize_rag will be done in subsequent steps
             initialize_embeddings(workspace_dir=WORKSPACE_DIR, status_tracker=status_tracker)
@@ -315,8 +314,6 @@ def main():
             send_json("rag_status", {"status": "done", "message": "Initialized QUASAR RAG System"})
         except Exception as e:
             send_json("rag_status", {"status": "error", "message": str(e)})
-
-    send_json("system_ready", {})
 
     send_json("system_ready", {})
 

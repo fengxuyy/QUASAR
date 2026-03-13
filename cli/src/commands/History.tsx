@@ -77,7 +77,8 @@ except Exception as e:
     print(json.dumps({"ok": False, "error": str(e), "traceback": traceback.format_exc()}))
 `;
 
-    const result = spawnSync('python3', ['-c', script], {
+    const pythonBin = process.env.QUASAR_PYTHON_PATH || 'python3';
+    const result = spawnSync(pythonBin, ['-c', script], {
         cwd: path.dirname(bridgePath),
         env: { ...process.env },
         encoding: 'utf-8'

@@ -45,7 +45,8 @@ export function useBridge({ onMessage, onError, restartCounter }: BridgeOptions)
             return;
         }
 
-        const child = spawn('python3', [bridgePath], {
+        const pythonBin = process.env.QUASAR_PYTHON_PATH || 'python3';
+        const child = spawn(pythonBin, [bridgePath], {
             cwd: path.dirname(bridgePath),
             stdio: ['pipe', 'pipe', 'inherit'],
             env: {

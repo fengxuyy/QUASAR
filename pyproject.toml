@@ -1,0 +1,99 @@
+[build-system]
+requires = ["hatchling>=1.26.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "quasar-core"
+version = "0.1.0"
+description = "QUASAR: Quantum Universal Autonomous System for Atomistic Research"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Fengxu Yang" },
+  { name = "Jack Evans" },
+]
+keywords = ["computational chemistry", "autonomous agent", "DFT", "molecular dynamics", "materials science"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "langchain>=1.0.2",
+  "langchain-openai>=1.0.0",
+  "langchain-google-genai>=1.0.0",
+  "langchain-anthropic>=1.0.0",
+  "langchain-xai>=1.0.0",
+  "google-genai>=0.2.0",
+  "langgraph>=1.0.1",
+  "langgraph-checkpoint-sqlite>=1.0.0",
+  "python-dotenv>=1.2.1",
+  "chromadb>=0.4.0",
+  "langchain-chroma>=0.1.0",
+  "langchain-community>=0.0.20",
+  "langchain-text-splitters>=0.2.0",
+  "langchain-huggingface>=0.0.3",
+  "sentence-transformers>=2.2.0",
+  "ddgs>=0.1.0",
+  "pymatgen>=2025.10.7",
+  "mp-api>=0.45.13",
+  "ase>=3.26.0",
+  "mace-torch>=0.3.14",
+  "lxml>=6.0.2",
+  "numpy>=1.26.0,<2.0",
+  "beautifulsoup4>=4.12.0",
+  "requests>=2.31.0",
+  "matplotlib",
+  "pandas",
+  "seaborn",
+  "pypdf>=4.0.0",
+  "pysocks",
+  "psutil",
+]
+
+[project.scripts]
+quasar = "quasar_launcher:main"
+
+[project.urls]
+Homepage = "https://github.com/fengxuyang/QUASAR"
+"Bug Tracker" = "https://github.com/fengxuyang/QUASAR/issues"
+Paper = "https://arxiv.org/abs/2602.00185"
+
+# ---------------------------------------------------------------------------
+# Wheel: include the Python backend, bridge scripts, launcher, and the
+# pre-built Node frontend bundle (quasar_node/ produced by build_frontend.sh)
+# ---------------------------------------------------------------------------
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"bridge.py"         = "bridge.py"
+"bridge_history.py" = "bridge_history.py"
+"quasar_launcher.py" = "quasar_launcher.py"
+"quasar_node"       = "quasar_node"
+
+# ---------------------------------------------------------------------------
+# SDist: include everything needed to rebuild from source (Node src + scripts)
+# ---------------------------------------------------------------------------
+[tool.hatch.build.targets.sdist]
+include = [
+  "src",
+  "bridge.py",
+  "bridge_history.py",
+  "quasar_launcher.py",
+  "quasar_node",
+  "cli",
+  "scripts",
+  "requirements.txt",
+  "README.md",
+  "pyproject.toml",
+]
+
+[tool.hatch.build.targets.sdist.force-include]
+"quasar_node" = "quasar_node"

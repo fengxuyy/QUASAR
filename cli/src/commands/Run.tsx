@@ -96,6 +96,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
     const [staticKey, setStaticKey] = useState(0);
     const bridgeRef = useRef<any>(null);
     const bridgeStdoutBufferRef = useRef<string>('');
+    const bridgeStderrBufferRef = useRef<string>('');
     const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const [bridgeRestartCounter, setBridgeRestartCounter] = useState(0);
     
@@ -273,9 +274,10 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             return;
         }
 
-        const child = spawn('python3', [bridgePath], {
+        const pythonBin = process.env.QUASAR_PYTHON_PATH || 'python3';
+        const child = spawn(pythonBin, [bridgePath], {
             cwd: path.dirname(bridgePath),
-            stdio: ['pipe', 'pipe', 'inherit'],
+            stdio: ['pipe', 'pipe', 'pipe'],
             env: { ...process.env, SKIP_RAG: bridgeRestartCounter > 0 ? 'true' : 'false' }
         });
 
@@ -330,6 +332,18 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                 try {
                     handleBridgeMessage(JSON.parse(line));
                 } catch (e) {}
+            }
+        });
+
+        child.stderr.on('data', (data) => {
+            bridgeStderrBufferRef.current += data.toString();
+            const lines = bridgeStderrBufferRef.current.split('\n');
+            bridgeStderrBufferRef.current = lines.pop() || '';
+
+            for (const rawLine of lines) {
+                const line = rawLine.trim();
+                if (!line) continue;
+                setMessages(prev => [...prev, { role: 'system', content: `Bridge stderr: ${line}` }]);
             }
         });
 
