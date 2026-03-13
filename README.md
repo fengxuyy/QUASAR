@@ -2,7 +2,7 @@
     <img src="logos/logo_text_fancy.png" alt="MOF-ChemUnity Logo" width="400"/>
 </p>
 
-<h1 align="center">Universal Autonomous System for Atomistic Research</h1>
+<h1 align="center">Quantum Universal Autonomous System for Atomistic Research</h1>
 
 A research-ready autonomous computational chemistry agentic system. QUASAR covers the full atomistic simulation pipeline with integrated tools including Density Functional Theory (DFT), Machine Learning Potentials (MLP), Molecular Dynamics (MD), and Grand Canonical Monte Carlo (GCMC), allowing scientists to rapidly iterate on hypotheses, explore large design spaces, and accelerate the discovery of novel materials and phenomena.
 
