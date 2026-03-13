@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional, Callable
 
 # HuggingFace Hub configuration
-HF_REPO_ID = "fengxuyy/quasar-rag"
+HF_REPO_ID = "fengxuyy/quasar-dev"
 HF_FILENAME = "rag_index.tar.gz"
 INDEX_VERSION = "1.0.0"
 
@@ -113,11 +113,13 @@ def download_index(
         # Try using huggingface_hub first
         try:
             from huggingface_hub import hf_hub_download
+            token = os.environ.get("HF_TOKEN")
             
             archive_path = hf_hub_download(
                 repo_id=HF_REPO_ID,
                 filename=HF_FILENAME,
-                repo_type="dataset"
+                repo_type="dataset",
+                token=token
             )
             
             if status_tracker:
@@ -133,11 +135,13 @@ def download_index(
             import requests
             
             url = f"https://huggingface.co/datasets/{HF_REPO_ID}/resolve/main/{HF_FILENAME}"
+            token = os.environ.get("HF_TOKEN")
+            headers = {"Authorization": f"Bearer {token}"} if token else None
             
             if status_tracker:
                 status_tracker("Downloading RAG index (this may take a few minutes)...")
             
-            response = requests.get(url, stream=True, timeout=300)
+            response = requests.get(url, headers=headers, stream=True, timeout=300)
             response.raise_for_status()
             
             if status_tracker:

@@ -21,6 +21,7 @@ export interface CommittedItem {
     content: any;
     agentName?: string;
     isError?: boolean;  // For styling tool messages red on error
+    taskNum?: number;
 }
 
 export interface RagStatusInfo {

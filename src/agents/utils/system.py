@@ -4,6 +4,7 @@ System information utilities for CPU, GPU, and Slurm detection.
 
 import os
 import subprocess
+import time
 import platform
 from collections import Counter
 
@@ -19,6 +20,8 @@ def get_usable_physical_cores() -> int:
     Returns:
         Number of usable physical cores, or None if unavailable.
     """
+
+
     system = platform.system()
     
     # Get the baseline from psutil (Works on Windows/Mac/Linux)
@@ -140,6 +143,145 @@ def get_hardware_info() -> str:
     cpu_info = get_cpu_info()
     gpu_info = get_gpu_info()
     return f"{cpu_info}\n{gpu_info}"
+
+
+def get_resource_usage(pid: int = None) -> str:
+    """Get live resource usage metrics for monitoring running processes.
+    
+    Args:
+        pid: Optional process ID to monitor. When provided, reports CPU and memory
+             usage for that specific process and all its children (e.g. MPI ranks).
+             When None, reports system-wide CPU/RAM only.
+    
+    Collects:
+    - Process-specific CPU% and RSS memory (when pid is provided)
+    - System-wide CPU and RAM (always)
+    - GPU utilization and VRAM (if CUDA or ROCm GPUs are available)
+    
+    Returns a formatted string like:
+        Process CPU: 780% (across 8 processes) | Process RAM: 12.4 GB
+        System CPU: 87% | System RAM: 14.2/31.9 GB (45%)
+        GPU 0: 92% util | VRAM: 35.1/40.0 GB (88%)
+    """
+    lines = []
+    
+    # Process-specific metrics (when pid is provided)
+    if pid is not None:
+        try:
+            parent = psutil.Process(pid)
+            # Collect the process tree (parent + all children including MPI ranks)
+            all_procs = [parent] + parent.children(recursive=True)
+            
+            # Prime cpu_percent for all processes (first call always returns 0)
+            for p in all_procs:
+                try:
+                    p.cpu_percent()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            
+            # Brief interval for meaningful CPU measurement
+            time.sleep(0.5)
+            
+            # Collect per-process values
+            proc_details = []
+            total_cpu = 0.0
+            total_rss = 0
+            for p in all_procs:
+                try:
+                    cpu = p.cpu_percent()
+                    mem_info = p.memory_info()
+                    rss = mem_info.rss
+                    name = p.name()
+                    p_pid = p.pid
+                    total_cpu += cpu
+                    total_rss += rss
+                    rss_mb = rss / (1024 ** 2)
+                    proc_details.append(
+                        f"  PID {p_pid} ({name}): CPU {cpu:.0f}% | RSS {rss_mb:.0f} MB"
+                    )
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            
+            alive_count = len(proc_details)
+            rss_gb = total_rss / (1024 ** 3)
+            
+            if proc_details:
+                lines.append(f"Execution Process Tree ({alive_count} process{'es' if alive_count != 1 else ''}):")
+                lines.extend(proc_details)
+                lines.append(
+                    f"  Total: CPU {total_cpu:.0f}% | RAM {rss_gb:.1f} GB"
+                )
+            else:
+                lines.append("Process: N/A (no active processes found)")
+        except psutil.NoSuchProcess:
+            lines.append("Process: N/A (process ended)")
+        except Exception:
+            lines.append("Process: N/A")
+    
+    # System-wide CPU and RAM (always included for context)
+    try:
+        cpu_percent = psutil.cpu_percent(interval=0.5)
+        mem = psutil.virtual_memory()
+        mem_used_gb = mem.used / (1024 ** 3)
+        mem_total_gb = mem.total / (1024 ** 3)
+        lines.append(
+            f"System CPU: {cpu_percent:.0f}% | System RAM: {mem_used_gb:.1f}/{mem_total_gb:.1f} GB ({mem.percent:.0f}%)"
+        )
+    except Exception:
+        lines.append("System CPU: N/A | System RAM: N/A")
+    
+    # GPU utilization & VRAM — try CUDA (nvidia-smi) first, then ROCm
+    gpu_found = False
+    
+    # CUDA
+    try:
+        result = subprocess.run(
+            [
+                'nvidia-smi',
+                '--query-gpu=index,utilization.gpu,memory.used,memory.total',
+                '--format=csv,noheader,nounits'
+            ],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            for row in result.stdout.strip().split('\n'):
+                parts = [p.strip() for p in row.split(',')]
+                if len(parts) == 4:
+                    idx, util, mem_used, mem_total = parts
+                    try:
+                        mem_used_f = float(mem_used) / 1024  # MiB -> GiB
+                        mem_total_f = float(mem_total) / 1024
+                        mem_pct = (float(mem_used) / float(mem_total) * 100) if float(mem_total) > 0 else 0
+                        lines.append(
+                            f"GPU {idx}: {util}% util | VRAM: {mem_used_f:.1f}/{mem_total_f:.1f} GB ({mem_pct:.0f}%)"
+                        )
+                    except (ValueError, ZeroDivisionError):
+                        lines.append(f"GPU {idx}: {util}% util | VRAM: {mem_used}/{mem_total} MiB")
+                    gpu_found = True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    except Exception:
+        pass
+    
+    # ROCm
+    if not gpu_found:
+        try:
+            result = subprocess.run(
+                ['rocm-smi', '--showuse', '--showmeminfo', 'vram'],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                lines.append(f"GPU (ROCm): see rocm-smi for details")
+                gpu_found = True
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        except Exception:
+            pass
+    
+    if not gpu_found:
+        lines.append("GPU: N/A")
+    
+    return "\n".join(lines)
 
 
 def _get_gpu_info() -> str:

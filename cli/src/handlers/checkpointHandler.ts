@@ -4,6 +4,7 @@
  */
 import type { CommittedItem, TaskProgress, CheckpointMode } from '../hooks/types.js';
 import { cleanTaskDescription } from '../utils/stateHelpers.js';
+import { normalizePlanText } from '../utils/planParsing.js';
 
 export interface CheckpointHandlerContext {
     setParsedPlan: (plan: string[]) => void;
@@ -14,6 +15,10 @@ export interface CheckpointHandlerContext {
     setPreviousInput: (input: string) => void;
     setIsLoading: (loading: boolean) => void;
     bridgeRef: React.MutableRefObject<any>;
+    /** Set to true when the evaluator was actively running at checkpoint time, so
+     *  handleSystemStatusMessage can pre-populate the agents list instead of leaving
+     *  the dynamic section blank during the evaluator's LLM inference gap. */
+    resumingWithEvaluatorRef: React.MutableRefObject<boolean>;
 }
 
 /**
@@ -22,37 +27,56 @@ export interface CheckpointHandlerContext {
 export function buildHistoryItems(history: any): CommittedItem[] {
     const newItems: CommittedItem[] = [];
     
+    const addPlanItem = (id: string, planText: string) => {
+        newItems.push({
+            id,
+            type: 'plan',
+            content: {
+                planContent: planText,
+                isPlanComplete: true,
+                isContinuation: false,
+                committedPlanLines: planText.split('\n').length
+            },
+            agentName: 'strategist'
+        });
+    };
+
     // Build plan items
-    const planContent = (history.plan?.length > 0)
+    const finalPlanRaw = (history.plan?.length > 0)
         ? history.plan.join('\n\n')
         : (history.full_plan_text || '');
+    const initialPlanRaw = history.initial_plan_text || '';
+    const finalPlanContent = normalizePlanText(finalPlanRaw);
+    const initialPlanContent = normalizePlanText(initialPlanRaw);
     
-    if (planContent) {
+    if (finalPlanContent || initialPlanContent) {
         newItems.push({ id: 'strategist-header', type: 'agent-header', content: 'strategist', agentName: 'strategist' });
         
-        // If it's a replan, we don't show "Created Initial Plan"
-        // and we show "Created Replan" instead of "Reviewed Plan"
         if (history.is_replan) {
-            // Then show the reviewed plan content
-            newItems.push({ 
-                id: 'checkpoint-history-plan', 
-                type: 'plan', 
-                content: { planContent, isPlanComplete: true, isContinuation: false, committedPlanLines: planContent.split('\n').length },
-                agentName: 'strategist'
-            });
-            // Finally show "Created Replan" milestone
-            newItems.push({ id: 'strategist-complete', type: 'tool', content: 'Created Replan', agentName: 'strategist' });
+            if (initialPlanContent) {
+                newItems.push({ id: 'strategist-initial-complete', type: 'tool', content: 'Created Initial Replan', agentName: 'strategist' });
+            }
+
+            // Show only the reviewed plan. If final equals initial, use whichever is available.
+            if (finalPlanContent) {
+                addPlanItem('checkpoint-history-plan', finalPlanContent);
+            } else if (initialPlanContent) {
+                addPlanItem('checkpoint-history-plan', initialPlanContent);
+            }
+
+            newItems.push({ id: 'strategist-complete', type: 'tool', content: 'Reviewed Replan', agentName: 'strategist' });
         } else {
-            // Show "Created Initial Plan" milestone first (the initial plan was created before review)
-            newItems.push({ id: 'strategist-initial-complete', type: 'tool', content: 'Created Initial Plan', agentName: 'strategist' });
-            // Then show the reviewed plan content
-            newItems.push({ 
-                id: 'checkpoint-history-plan', 
-                type: 'plan', 
-                content: { planContent, isPlanComplete: true, isContinuation: false, committedPlanLines: planContent.split('\n').length },
-                agentName: 'strategist'
-            });
-            // Finally show "Reviewed Plan" milestone
+            if (initialPlanContent) {
+                newItems.push({ id: 'strategist-initial-complete', type: 'tool', content: 'Created Initial Plan', agentName: 'strategist' });
+            }
+
+            // Show only the reviewed plan. If final equals initial, use whichever is available.
+            if (finalPlanContent) {
+                addPlanItem('checkpoint-history-plan', finalPlanContent);
+            } else if (initialPlanContent) {
+                addPlanItem('checkpoint-history-plan', initialPlanContent);
+            }
+
             newItems.push({ id: 'strategist-complete', type: 'tool', content: 'Reviewed Plan', agentName: 'strategist' });
         }
     }
@@ -64,7 +88,8 @@ export function buildHistoryItems(history: any): CommittedItem[] {
         const taskNum = i + 1;
         newItems.push({ id: `operator-header-task${taskNum}-history`, type: 'agent-header', content: 'operator', agentName: 'operator' });
         
-        // Inject Active Task Panel for history items
+        // For completed tasks, keep only a compact header panel in restore view.
+        // Full step-by-step details are available via `quasar history`.
         if (history.plan && history.plan.length >= taskNum) {
             const rawTask = history.plan[i];
             if (rawTask) {
@@ -78,39 +103,10 @@ export function buildHistoryItems(history: any): CommittedItem[] {
             }
         }
         
-        // Operator items
-        const opItems = history.operator_items_by_task?.[String(i)] || [];
-        for (let j = 0; j < opItems.length; j++) {
-            const item = opItems[j];
-            newItems.push({ 
-                id: `operator-item-task${taskNum}-${j}-history`, 
-                type: item.type as any, 
-                content: item.content, 
-                agentName: 'operator',
-                isError: item.isError
-            });
-        }
-        
-        newItems.push({ id: `evaluator-header-task${taskNum}-history`, type: 'evaluator-header', content: 'evaluator', agentName: 'evaluator' });
-        
-        // Evaluator items
-        const evalItems = history.evaluator_items_by_task?.[String(i)] || [];
-        for (let j = 0; j < evalItems.length; j++) {
-            const item = evalItems[j];
-            newItems.push({ 
-                id: `evaluator-item-task${taskNum}-${j}-history`, 
-                type: item.type as any, 
-                content: item.content, 
-                agentName: 'evaluator' 
-            });
-        }
-        
         const summary = history.step_results?.[String(i)];
         if (summary) {
             newItems.push({ id: `evaluation-summary-task${taskNum}-history`, type: 'evaluation-summary', content: summary, agentName: 'evaluator' });
         }
-        
-        newItems.push({ id: `evaluator-status-task${taskNum}-history`, type: 'evaluator-status', content: 'Evaluation Passed', agentName: 'evaluator' });
     }
     
     // Build remaining (in-progress) task items
@@ -195,6 +191,16 @@ export function handleCheckpointInfo(ctx: CheckpointHandlerContext, payload: any
             const newItems = buildHistoryItems(history);
             return [...prev, ...newItems];
         });
+
+        // If the evaluator had already made tool calls at checkpoint time it was
+        // actively running.  Flag this so handleSystemStatusMessage can restore
+        // the evaluator spinner immediately after clearing agents on resume,
+        // bridging the gap during the evaluator's silent LLM-inference phase.
+        const completedCount = history.completed_steps?.length || 0;
+        const remainingEvalItems = history.evaluator_items_by_task?.[String(completedCount)] || [];
+        if (remainingEvalItems.length > 0) {
+            ctx.resumingWithEvaluatorRef.current = true;
+        }
         
         if (history.current_task && history.total_tasks) {
             const progress = { current: history.current_task, total: history.total_tasks };

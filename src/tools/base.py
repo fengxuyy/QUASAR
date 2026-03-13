@@ -18,6 +18,7 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 MULTIMODAL_MODELS = {
     "gemini-2.5-pro",
     "gemini-2.5-flash",
+    "gemini-3.1-pro-preview",
     "gemini-3-pro-preview",
     "gemini-3-flash-preview",
     "gpt-5.1",
@@ -127,26 +128,11 @@ def truncate_content(content: str, max_length: int = MAX_OUTPUT_CHARS, truncatio
     return content[:max_length] + truncation_msg
 
 
-def _find_number_ranges(numbers: List[int]) -> List[tuple[int, int]]:
-    """Find consecutive ranges in a sorted list of numbers."""
-    if not numbers:
-        return []
-    
-    numbers = sorted(numbers)
-    ranges = []
-    start = prev = numbers[0]
-    
-    for num in numbers[1:]:
-        if num != prev + 1:
-            ranges.append((start, prev))
-            start = num
-        prev = num
-    ranges.append((start, prev))
-    return ranges
 
 
-def format_file_list(files: List[str], max_files_per_dir: int = 10) -> str:
-    """Format a list of files smartly, collapsing large numbered sequences.
+
+def format_file_list(files: List[str], max_files_per_dir: int = 5) -> str:
+    """Format a list of files smartly, collapsing large directories.
     
     Args:
         files: List of file paths (relative strings)
@@ -174,39 +160,12 @@ def format_file_list(files: List[str], max_files_per_dir: int = 10) -> str:
         if len(filenames) <= max_files_per_dir:
             for fname in filenames:
                 output_lines.append(f"- `{prefix}{fname}`")
-            continue
-        
-        # Too many files - try to collapse patterns
-        patterns = defaultdict(list)
-        others = []
-        
-        for fname in filenames:
-            match = re.match(r'^(.*?)(\d+)(\.[^.]+)$', fname)
-            if match:
-                prefix_part, num, suffix = match.groups()
-                patterns[(prefix_part, suffix)].append(int(num))
-            else:
-                others.append(fname)
-        
-        # Process patterns
-        for (f_prefix, f_suffix), numbers in patterns.items():
-            if len(numbers) > 1:
-                ranges = _find_number_ranges(numbers)
-                range_strs = [f"{s}" if s == e else f"{s}-{e}" for s, e in ranges]
-                range_txt = ",".join(range_strs)
-                output_lines.append(f"- `{prefix}{f_prefix}[{range_txt}]{f_suffix}` ({len(numbers)} files)")
-            else:
-                others.append(f"{f_prefix}{numbers[0]}{f_suffix}")
-        
-        # Process remaining files
-        others.sort()
-        if len(others) > max_files_per_dir:
-            for fname in others[:max_files_per_dir]:
-                output_lines.append(f"- `{prefix}{fname}`")
-            output_lines.append(f"  ... and {len(others) - max_files_per_dir} more files in {dirname or 'root'}/")
         else:
-            for fname in others:
-                output_lines.append(f"- `{prefix}{fname}`")
+            # Too many files - just print the directory name
+            if dirname:
+                output_lines.append(f"- `{dirname}`")
+            else:
+                output_lines.append(f"- `[workspace root] ({len(filenames)} files)`")
     
     return "\n".join(output_lines)
 

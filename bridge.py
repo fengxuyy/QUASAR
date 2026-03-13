@@ -180,6 +180,7 @@ def send_thought_stream(agent: str, content: str, is_complete: bool = False):
 from dotenv import load_dotenv
 load_dotenv()
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 os.environ["TQDM_DISABLE"] = "1"
@@ -187,7 +188,7 @@ os.environ["TERM"] = "xterm-256color"
 
 # --- Import System ---
 from src import runner
-from src.llm_config import initialize_llm
+from src.llm_config import initialize_llm, initialize_llm_for_agent
 from src.usage_tracker import generate_report, reset as reset_usage_tracker
 from src.tools.base import LOGS_DIR
 
@@ -265,7 +266,28 @@ def main():
     
     try:
         llm, model_name = initialize_llm()
-        send_json("init", {"model": model_name})
+        
+        # Initialize per-agent LLM overrides (falls back to primary if not configured)
+        strategist_llm, strategist_model = initialize_llm_for_agent("strategist", llm, model_name)
+        operator_llm, operator_model = initialize_llm_for_agent("operator", llm, model_name)
+        evaluator_llm, evaluator_model = initialize_llm_for_agent("evaluator", llm, model_name)
+        
+        agent_llms = {
+            "strategist": strategist_llm,
+            "operator": operator_llm,
+            "evaluator": evaluator_llm,
+        }
+        
+        # Report model info including any per-agent overrides
+        model_info = {"model": model_name}
+        if strategist_model != model_name:
+            model_info["strategist_model"] = strategist_model
+        if operator_model != model_name:
+            model_info["operator_model"] = operator_model
+        if evaluator_model != model_name:
+            model_info["evaluator_model"] = evaluator_model
+        
+        send_json("init", model_info)
     except Exception as e:
         send_json("error", {"message": str(e)})
         return
@@ -296,6 +318,9 @@ def main():
 
     send_json("system_ready", {})
 
+    send_json("system_ready", {})
+
+    exec_thread = None
     while True:
         try:
             line = sys.stdin.readline()
@@ -319,12 +344,20 @@ def main():
                     send_system_status("running")
                     run_error = None
                     try:
-                        runner.process_prompt(prompt, llm, if_restart=restart)
+                        runner.process_prompt(prompt, llm, if_restart=restart, agent_llms=agent_llms)
                     except KeyboardInterrupt:
                          # Handled interruption
                          send_json("done", {"status": "interrupted"})
                          send_system_status("completed")
                          return
+                    except RuntimeError as e:
+                        if "cannot schedule new futures" in str(e):
+                             # This happens when interpreter is shutting down, treat as interrupt
+                             send_json("done", {"status": "interrupted"})
+                             send_system_status("completed")
+                             return
+                        # Re-raise other RuntimeErrors
+                        raise e
                     except Exception as e:
                         run_error = e
                         tb = traceback.format_exc()
@@ -584,6 +617,12 @@ def main():
         except KeyboardInterrupt:
             # Stats already saved by signal handler, just send done and exit
             send_json("done", {"status": "interrupted"})
+            
+            # Wait for execution thread to finish/cleanup if it's running
+            # This prevents premature interpreter shutdown while thread is still active
+            if exec_thread and exec_thread.is_alive():
+                 exec_thread.join(timeout=3.0)
+            
             break
         except Exception as e:
             tb = traceback.format_exc()

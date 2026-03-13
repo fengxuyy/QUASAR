@@ -19,6 +19,7 @@ interface BridgeResult {
 
 export function useBridge({ onMessage, onError, restartCounter }: BridgeOptions): BridgeResult {
     const bridgeRef = useRef<ChildProcess | null>(null);
+    const stdoutBufferRef = useRef<string>('');
 
     useEffect(() => {
         // Try multiple paths for bridge.py
@@ -56,14 +57,17 @@ export function useBridge({ onMessage, onError, restartCounter }: BridgeOptions)
         bridgeRef.current = child;
 
         child.stdout.on('data', (data) => {
-            const lines = data.toString().split('\n');
+            stdoutBufferRef.current += data.toString();
+            const lines = stdoutBufferRef.current.split('\n');
+            stdoutBufferRef.current = lines.pop() || '';
+
             for (const line of lines) {
                 if (!line.trim()) continue;
                 try {
                     const msg = JSON.parse(line);
                     onMessage(msg);
                 } catch (e) {
-                    // Ignore partial lines or non-json
+                    // Ignore malformed JSON frames
                 }
             }
         });

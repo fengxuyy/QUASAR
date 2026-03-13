@@ -467,3 +467,114 @@ print("Process finished (unexpectedly)")
         # 5. Verify
         assert "interrupted" in final_output.lower()
         assert not has_running_process()
+
+class TestPsutilTerminationLogic:
+    """Rigorous tests specifically for the psutil process tree termination."""
+
+    @patch('src.tools.execution.psutil')
+    @patch('src.tools.execution.os.killpg')
+    def test_kill_process_and_children_graceful_success(self, mock_killpg, mock_psutil):
+        """Test that graceful SIGTERM terminates process and children cleanly."""
+        from src.tools.execution import _kill_process_and_children
+        import psutil
+        
+        mock_process = MagicMock()
+        mock_process.pid = 1000
+        
+        mock_parent = MagicMock()
+        mock_child1 = MagicMock()
+        mock_child2 = MagicMock()
+        mock_parent.children.return_value = [mock_child1, mock_child2]
+        
+        # Make them appear not running after wait (simulating graceful exit)
+        mock_parent.is_running.return_value = False
+        mock_child1.is_running.return_value = False
+        mock_child2.is_running.return_value = False
+        
+        mock_psutil.Process.return_value = mock_parent
+        mock_psutil.NoSuchProcess = psutil.NoSuchProcess
+        
+        # Execute
+        _kill_process_and_children(mock_process, pgid=2000)
+        
+        # Verify psutil tree extraction
+        mock_psutil.Process.assert_called_with(1000)
+        mock_parent.children.assert_called_with(recursive=True)
+        
+        # Verify SIGTERM sent via psutil
+        mock_parent.terminate.assert_called_once()
+        mock_child1.terminate.assert_called_once()
+        mock_child2.terminate.assert_called_once()
+        
+        # Verify SIGTERM sent to process group
+        mock_killpg.assert_any_call(2000, signal.SIGTERM)
+        
+        # Verify psutil wait is called on the set of processes
+        mock_psutil.wait_procs.assert_called_once()
+        
+        # Verify SIGKILL was NOT necessary for these psutil processes
+        mock_parent.kill.assert_not_called()
+        mock_child1.kill.assert_not_called()
+        mock_child2.kill.assert_not_called()
+
+        # OS SIGKILL to process group is always called as a fallback in the current code
+        mock_killpg.assert_any_call(2000, signal.SIGKILL)
+        
+        # Verify subprocess wait is called
+        mock_process.wait.assert_called_with(timeout=1.0)
+        
+    @patch('src.tools.execution.psutil')
+    @patch('src.tools.execution.os.killpg')
+    def test_kill_process_and_children_force_kill(self, mock_killpg, mock_psutil):
+        """Test that SIGKILL is used when children refuse to die gracefully."""
+        from src.tools.execution import _kill_process_and_children
+        import psutil
+        
+        mock_process = MagicMock()
+        mock_process.pid = 1000
+        
+        mock_parent = MagicMock()
+        mock_child = MagicMock()
+        mock_parent.children.return_value = [mock_child]
+        
+        # Simulate stubborn processes (still running after wait)
+        mock_parent.is_running.return_value = True
+        mock_child.is_running.return_value = True
+        
+        mock_psutil.Process.return_value = mock_parent
+        mock_psutil.NoSuchProcess = psutil.NoSuchProcess
+        
+        # Execute
+        _kill_process_and_children(mock_process, pgid=2000)
+                
+        # Verify SIGTERM was attempted first
+        mock_parent.terminate.assert_called_once()
+        mock_child.terminate.assert_called_once()
+        
+        # Verify SIGKILL was required and sent
+        mock_parent.kill.assert_called_once()
+        mock_child.kill.assert_called_once()
+        
+        # Both SIGTERM and SIGKILL sent to pgid
+        mock_killpg.assert_any_call(2000, signal.SIGTERM)
+        mock_killpg.assert_any_call(2000, signal.SIGKILL)
+
+    @patch('src.tools.execution.psutil')
+    @patch('src.tools.execution.os.killpg')
+    def test_kill_process_and_children_no_such_process(self, mock_killpg, mock_psutil):
+        """Test resilience when process disappears before we can kill it."""
+        from src.tools.execution import _kill_process_and_children
+        import psutil
+        
+        mock_process = MagicMock()
+        mock_process.pid = 9999
+        
+        # Process already gone
+        mock_psutil.Process.side_effect = psutil.NoSuchProcess(pid=9999)
+        mock_psutil.NoSuchProcess = psutil.NoSuchProcess
+        
+        # Execute (should not raise exception)
+        _kill_process_and_children(mock_process, pgid=None)
+        
+        # Should cleanly exit without errors
+        mock_killpg.assert_not_called()

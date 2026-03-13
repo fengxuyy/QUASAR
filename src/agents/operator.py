@@ -9,11 +9,12 @@ from pathlib import Path
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, ToolMessage
 from ..debug_logger import log_operator_start, log_exception, log_custom
 from ..pending_execution import save_pending_execution, load_pending_execution, clear_pending_execution
+from ..usage_tracker import was_hardware_changed_on_resume, get_previous_hardware_signature
 from .utils import update_operator_status, TOOL_STATUS_MESSAGES
 
 from ..state import State
+from ..tools.rag_tools import query_rag
 from ..tools import (
-    query_rag,
     read_file,
     write_file,
     edit_file,
@@ -56,6 +57,7 @@ from .utils import (
     APIConnectionError,
     extract_tool_call_info,
     extract_target_name,
+    get_execute_python_status,
     extract_project_request,
     format_plan,
     format_history,
@@ -142,7 +144,7 @@ def operator_node(state: State, llm_with_tools, all_tools) -> State:
     formatted_plan = format_plan(plan)
     formatted_history = format_history(step_results, completed_steps)
     messages = state.get('messages', [])
-    project_request = extract_project_request(messages)
+    project_request = state.get('user_input', '') or extract_project_request(messages)
     write_execution_log(project_request, formatted_plan, formatted_history)
     
     initial_files = None
@@ -214,8 +216,8 @@ def operator_node(state: State, llm_with_tools, all_tools) -> State:
 You are responsible for fulfilling high-level scientific objectives in computational chemistry with rigor, accuracy, and reproducibility.
 
 ### 1. Operational Environment & Resources
-**Simulation Engines:** `mace` (ML Potential), `quantum-espresso` (DFT), `raspa3` (GCMC), `lammps` (MD).
-**Python Stack:** `pymatgen`, `ase`, `matplotlib`, `seaborn`, `pandas`.
+* **Simulation Engines:** `mace` (MLFF), `quantum-espresso` (DFT), `lammps` (MD), `raspa3` (GCMC/MD).
+* **Python Stack:** `pymatgen`, `ase`, `matplotlib`/`seaborn`, `pandas`.
 **Data Access:**
 * **Local Filesystem:** read/write access.
 * **Remote:** `wget`/`curl` for external files{pmg_mapi_available}
@@ -223,6 +225,7 @@ You are responsible for fulfilling high-level scientific objectives in computati
 * **Pre-provided QE Pseudopotentials:** `./docs/q-e/SSSP` and `./docs/q-e/PseudoDojo`.
     * Must use **SSSP** for PBE calculations.
     * Must use **PseudoDojo** for hybrid calculations (e.g., HSE06/PBE0).
+* **Pre-provided MACE models:** `./docs/mace/models`.
 
 ### 2. Tool Protocols & Information Hierarchy
 IF (syntax AND physics are known with high confidence)
@@ -247,8 +250,7 @@ Apply parallelization intelligently based on the software and your specific calc
     * **RASPA3:**
         * **Core Configure:** Single-core executable. To utilize multiple cores, write Python scripts using `multiprocessing` or `concurrent.futures` to run distinct simulations (e.g., different pressure points) simultaneously
         * **Execution:** Run via `raspa3` command in python for the folder containing the required input files.
-    * **Quantum ESPRESSO & LAMMPS:** When running multiple independent calculations (e.g., different structures, compositions, or parameters), Python `multiprocessing` or `concurrent.futures` can be employed to execute jobs concurrently across available resources. Always optimize MPI and OpenMP settings first then consider job concurrency.
-
+        
 IMPORTANT: Always use `get_hardware_info` function to check available cores before running simulations. Avoid hard-coding core counts; ensure the parallelization strategy scales dynamically with the detected hardware. Do NOT attempt to detect hardware using Python code (e.g., multiprocessing.cpu_count(), os.cpu_count(), psutil) - these return incorrect values in containerized/Slurm environments. ONLY use the `get_hardware_info` tool.
 
 ### 4. Execution Rules (CRITICAL)
@@ -263,11 +265,13 @@ IMPORTANT: Always use `get_hardware_info` function to check available cores befo
     - RASPA3: restart files are written automatically.
 
 3. **Hard Constraints:** 
-    - Focus solely on the `## CURRENT TASK` and execute all actions within a dedicated folder named `task_N` for that task.
+    - Focus solely on the `## CURRENT TASK` and execute all actions within a dedicated folder named `task_N` for that task unless the task specifies a different folder.
     - Once the designated task is finished, you MUST call the `complete_task` tool to officially mark it as complete.
     - Do NOT use `pymatgen` or `ase` wrappers such as `ase.calculators.espresso` for running qe or lammps calculations. You must generate input files in their native format.
     - Concurrent Jobs x MPI_ranks x OMP_NUM_THREADS <= Total Physical cores.
-    - Remove outdated or failed scripts and any crash-generated output related to this task.
+    - Remove outdated or failed scripts, as well as any temporary files (e.g., DFT restart files) after the task is completed.
+    - Do NOT run commands in the background (no `&`, `nohup`, or `subprocess.Popen`). Always execute synchronously (e.g., `subprocess.run`) so `execute_python` owns the process and captures output.
+    - NEVER kill generic processes like `python` (e.g. via `pkill python` or `killall python`), as this will forcefully terminate the agent framework computing your actions and permanently break the system. Only target specific, individual process IDs or explicitly named non-python executable processes (like `pw.x`).
 
 4. **Golden Rules:**
     - A simulation completion does not mean the outputs are correct, always verify the output quality
@@ -292,10 +296,8 @@ IMPORTANT: Always use `get_hardware_info` function to check available cores befo
             )
             tool_msg = ToolMessage(
                 content="""The Python execution was forcefully terminated (e.g., SIGKILL, timeout). Partial output may exist. Inspect the output: 
-- If the output is invalid, fix the script and rerun.
+- Carefully review the output and determine if the calculation was successful or not. If the output is invalid, fix the script and rerun.
 - If valid partial data is present, resume execution from the last checkpoint rather than restarting from scratch.
-- Before resuming, you MUST verify using `get_hardware_info` to ensure the hardware configuration has not changed since the interruption.
-
 Restart mechanisms:
 1. **Quantum ESPRESSO**:
 Ensure restart_mode = 'restart' is set in the &CONTROL section of the input file to allow continuation. If not, update the input file accordingly and re-execute the calculation.
@@ -319,11 +321,42 @@ Review the restart instructions at `./docs/RASPA3/docs/manual/restart.md` and re
             if not last_ai_msg or getattr(last_ai_msg, 'tool_calls', None) != [tool_call]:
                 current_task_messages.append(ai_msg)
                 current_task_messages.append(tool_msg)
-                _write_input_messages(current_task_messages, "OPERATOR", current_task_index)
                 log_custom("OPERATOR", "Injected interrupted execution messages", {"tool_call_id": tool_call['id']})
             
             # Clear the pending execution file
             clear_pending_execution()
+        
+        # Notify the LLM if hardware changed since the interrupted run
+        if was_hardware_changed_on_resume():
+            prev_hw = get_previous_hardware_signature()
+            from .utils.system import get_hardware_info as _get_hw_str
+            current_hw_str = _get_hw_str()
+            if prev_hw:
+                prev_hw_str = (
+                    f"- CPU: {prev_hw.get('cpu_model', 'N/A')}\n"
+                    f"- Physical cores: {prev_hw.get('cpu_cores', 'N/A')}\n"
+                    f"- GPU: {prev_hw.get('gpu_info', 'N/A')}"
+                )
+            else:
+                prev_hw_str = "Unknown (not recorded)"
+            hw_change_notice = (
+                "SYSTEM NOTICE: Hardware configuration has changed since the previous interrupted run.\n\n"
+                f"Previous hardware:\n{prev_hw_str}\n\n"
+                f"Current hardware:\n{current_hw_str}\n\n"
+                "You MUST recalibrate all parallelism settings (MPI ranks, OMP_NUM_THREADS, concurrent jobs, "
+                "batch sizes, memory limits, etc.) to match the current hardware before resuming or restarting "
+                "any calculations."
+            )
+            already_has_hw_notice = any(
+                isinstance(m, HumanMessage) and "Hardware configuration has changed" in getattr(m, "content", "")
+                for m in current_task_messages
+            )
+            if not already_has_hw_notice:
+                current_task_messages.append(HumanMessage(content=hw_change_notice))
+                log_custom("OPERATOR", "Injected hardware change notice", {
+                    "prev_cpu_cores": prev_hw.get('cpu_cores') if prev_hw else None,
+                    "prev_gpu": prev_hw.get('gpu_info') if prev_hw else None,
+                })
         
         # Check for repeated identical tool calls (infinite loop detection)
         repeated_tool = detect_repeated_tool_calls(current_task_messages)
@@ -350,6 +383,9 @@ Do NOT call `{tool_name}` with the same arguments again.
     
     _update_operator_status = update_operator_status
     
+    # Write the exact messages being sent to the LLM before the call
+    _write_input_messages(current_task_messages, "OPERATOR", current_task_index)
+    
     try:
         response = None
         full_content = ""
@@ -372,7 +408,7 @@ Do NOT call `{tool_name}` with the same arguments again.
         while retry_count <= MAX_RETRIES:
             try:
                 if retry_count > 0:
-                    retry_msg = f"Retrying ({retry_count}/{MAX_RETRIES})..."
+                    retry_msg = f"Retrying ({retry_count}/{MAX_RETRIES})"
                     send_agent_event("operator", "update", retry_msg)
 
                 saw_tool_calls = False
@@ -402,7 +438,8 @@ Do NOT call `{tool_name}` with the same arguments again.
                     
                     full_content, tool_calls, response, was_stopped_early = stream_with_token_tracking(
                         llm_with_tools, current_task_messages, on_content=on_content, on_thought=on_thought,
-                        detect_repetition=True  # Auto-stop on repetitive output
+                        detect_repetition=True,  # Auto-stop on repetitive output
+                        agent_name='operator'
                     )
                     
                     if was_stopped_early:
@@ -450,7 +487,7 @@ Do NOT call `{tool_name}` with the same arguments again.
                     if "empty" in error_msg_str.lower() or "must contain" in error_msg_str.lower():
                         retry_count += 1
                         _write_to_log(f"\n[OPERATOR] Empty response from LLM: {error_msg_str}. Retrying ({retry_count}/{MAX_RETRIES})...\n")
-                        send_agent_event("operator", "update", "Empty response, retrying...")
+                        send_agent_event("operator", "update", "Empty response, retrying")
                         if retry_count > MAX_RETRIES:
                             # Return error to prompt retry
                             _write_to_log("\n[OPERATOR] Max retries exceeded for empty response.\n")
@@ -569,6 +606,7 @@ Do NOT call `{tool_name}` with the same arguments again.
                 
                 if tool_name == 'execute_python' and tool:
                     target_name = extract_target_name(tool_name, tool_args) if tool_args else None
+                    executing_status = get_execute_python_status(tool_args) if tool_args else "Executing"
                     
                     # Save pending execution state in case of SIGKILL
                     save_pending_execution(
@@ -597,14 +635,22 @@ Do NOT call `{tool_name}` with the same arguments again.
                         checkin_msg = f"\n[OPERATOR] Python script has been running for {elapsed_display}. Prompting for continue/interrupt decision.\n"
                         _write_to_log(checkin_msg)
                         
+                        # Get resource usage from check-in result
+                        resource_usage = result.get('resource_usage', 'N/A')
+                        
                         # Create check-in prompt for LLM
                         checkin_prompt = f"""The Python script `{os.path.basename(file_path_display)}` has been running for {elapsed_display}.
+
+**Current Resource Usage:**
+{resource_usage}
 
 Use the `read_file`, `grep_search` and `list_directory` tools to review the current outputs for the script and evaluate the simulation status:
 
 1. Convergence/Progress: Is the simulation actually moving toward a valid and stable termination?
 
 2. Anomalies: Are there any unexpected values or warnings that contradict the simulation's goals?
+
+3. Resource Health: Is the system actively computing (high CPU/GPU utilisation suggests healthy progress) or idle (low utilisation may indicate the process is stuck or waiting)?
 
 Based on this assessment, determine whether execution should proceed or be terminated.
 
@@ -654,7 +700,8 @@ After you have performed the internal assessment, you must submit a decision by 
                                 
                                 _, decision_tool_calls, decision_response, _ = stream_with_token_tracking(
                                     checkin_llm, checkin_messages, on_content=on_checkin_content,
-                                    detect_repetition=False
+                                    detect_repetition=False,
+                                    agent_name='operator'
                                 )
                                 
                                 # Handle empty response - default to continue
@@ -701,7 +748,7 @@ After you have performed the internal assessment, you must submit a decision by 
                                         elif dtc_name in checkin_tool_map:
                                             # Execute filesystem tool
                                             _write_to_log(f"\n[OPERATOR] Check-in: Executing {dtc_name}...\n")
-                                            send_agent_event("operator", "update", f"Inspecting files ({dtc_name})...")
+                                            _update_operator_status(dtc_name, dtc_args if isinstance(dtc_args, dict) else {}, is_complete=False)
                                             
                                             try:
                                                 tool_func = checkin_tool_map[dtc_name]
@@ -715,6 +762,7 @@ After you have performed the internal assessment, you must submit a decision by 
                                                     tool_call_id=dtc_id
                                                 ))
                                                 _write_to_log(f"\n[OPERATOR] Check-in {dtc_name} result:\n{str(tool_result)[:2000]}\n")
+                                                _update_operator_status(dtc_name, dtc_args if isinstance(dtc_args, dict) else {}, is_complete=True, tool_result=str(tool_result))
                                             except Exception as tool_err:
                                                 error_result = f"Error executing {dtc_name}: {str(tool_err)}"
                                                 checkin_tool_messages.append(ToolMessage(
@@ -722,6 +770,7 @@ After you have performed the internal assessment, you must submit a decision by 
                                                     tool_call_id=dtc_id
                                                 ))
                                                 _write_to_log(f"\n[OPERATOR] Check-in {dtc_name} error: {str(tool_err)}\n")
+                                                _update_operator_status(dtc_name, dtc_args if isinstance(dtc_args, dict) else {}, is_complete=True, tool_result=error_result)
                                     
                                     # Add tool messages to conversation
                                     if checkin_tool_messages:
@@ -737,37 +786,46 @@ After you have performed the internal assessment, you must submit a decision by 
                                 _write_to_log(f"\n[OPERATOR] Check-in max iterations ({max_checkin_iterations}) reached, defaulting to continue.\n")
                                 should_continue = True
                             
+                            # Always persist the check-in interaction to operator history
+                            current_task_messages = current_task_messages + [checkin_human_msg]
+                            for msg in checkin_messages[len(current_task_messages):]:
+                                current_task_messages = current_task_messages + [msg]
+                            _write_input_messages(current_task_messages, "OPERATOR", current_task_index)
+
                             if should_continue:
-                                send_agent_event("operator", "update", "Continuing execution...")
-                                send_agent_event("operator", "update", f"Executing {target_name or 'script'}...")
+                                send_agent_event("operator", "update", "Continuing execution")
+                                send_agent_event("operator", "update", executing_status)
                                 result = resume_execution()
                             else:
-                                # Persist the check-in interaction to operator history
-                                # Add the check-in prompt as HumanMessage
-                                current_task_messages = current_task_messages + [checkin_human_msg]
-                                
-                                # Add all intermediate messages from check-in (AI responses and tool results)
-                                for msg in checkin_messages[len(current_task_messages):]:
-                                    current_task_messages = current_task_messages + [msg]
-                                
-                                # Log the updated messages
-                                _write_input_messages(current_task_messages, "OPERATOR", current_task_index)
-                                
                                 result = interrupt_running_execution()
                                 
                         except (StreamingTimeoutError, ValueError) as e:
                             # Default to continue on any error/timeout (including empty response errors)
                             error_msg = str(e)
                             _write_to_log(f"\n[OPERATOR] Check-in decision error: {error_msg}. Defaulting to continue.\n")
-                            send_agent_event("operator", "update", f"Check-in error ({error_msg[:50]}...), continuing execution...")
-                            send_agent_event("operator", "update", f"Executing {target_name or 'script'}...")
+                            
+                            # Log whatever check-in history we gathered so far before the exception
+                            current_task_messages = current_task_messages + [checkin_human_msg]
+                            for msg in checkin_messages[len(current_task_messages):]:
+                                current_task_messages = current_task_messages + [msg]
+                            _write_input_messages(current_task_messages, "OPERATOR", current_task_index)
+
+                            send_agent_event("operator", "update", f"Check-in error ({error_msg[:50]}), continuing execution")
+                            send_agent_event("operator", "update", executing_status)
                             result = resume_execution()
                         except Exception as e:
                             # Catch-all for any other exceptions
                             error_msg = str(e)
                             _write_to_log(f"\n[OPERATOR] Unexpected check-in error: {error_msg}. Defaulting to continue.\n")
-                            send_agent_event("operator", "update", f"Unexpected error, continuing execution...")
-                            send_agent_event("operator", "update", f"Executing {target_name or 'script'}...")
+                            
+                            # Log whatever check-in history we gathered so far before the exception
+                            current_task_messages = current_task_messages + [checkin_human_msg]
+                            for msg in checkin_messages[len(current_task_messages):]:
+                                current_task_messages = current_task_messages + [msg]
+                            _write_input_messages(current_task_messages, "OPERATOR", current_task_index)
+
+                            send_agent_event("operator", "update", f"Unexpected error, continuing execution")
+                            send_agent_event("operator", "update", executing_status)
                             result = resume_execution()
                     
                     # Clear pending execution after completion

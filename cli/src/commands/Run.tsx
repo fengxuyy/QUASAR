@@ -3,7 +3,7 @@
  * Refactored to use extracted hooks and modules
  */
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Box, useApp, useStdout, Static, useInput } from 'ink';
+import { Box, Text, useApp, useStdout, Static, useInput } from 'ink';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
@@ -12,6 +12,7 @@ import fs from 'fs';
 import PromptInput from '../ui/PromptInput.js';
 import Banner from '../ui/Banner.js';
 import { RagStatus, ActiveAgentStatus, StaticItemRenderer } from '../ui/Run/index.js';
+import TriangleSpinner from '../ui/Run/TriangleSpinner.js';
 
 // Hooks and Types
 import { 
@@ -25,8 +26,9 @@ import {
 } from '../hooks/types.js';
 
 // Utils
-import { generateUniqueId } from '../utils/helpers.js';
+import { generateUniqueId, truncateText } from '../utils/helpers.js';
 import { cleanTaskDescription, applyFreshStartState, applyInterruptResetState } from '../utils/stateHelpers.js';
+import { INDENT_AGENT } from '../utils/constants.js';
 
 // Handlers
 import { createMessageHandler, type MessageHandlerContext } from '../handlers/messageHandlers.js';
@@ -76,6 +78,10 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
     
     const [checkpointMode, setCheckpointMode] = useState<CheckpointMode>('checking');
     const [previousInput, setPreviousInput] = useState<string>('');
+    const [isPeriodicCheckinActive, setIsPeriodicCheckinActiveState] = useState(false);
+    const [periodicCheckinToolCall, setPeriodicCheckinToolCall] = useState<{ content: string; isError: boolean } | null>(null);
+    const isPeriodicCheckinActiveRef = useRef(false);
+    const resumingWithEvaluatorRef = useRef(false);
     
     const [escPressedOnce, setEscPressedOnce] = useState(false);
     const [showInterruptWarning, setShowInterruptWarning] = useState(false);
@@ -89,6 +95,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
     const [resizeCounter, setResizeCounter] = useState(0);
     const [staticKey, setStaticKey] = useState(0);
     const bridgeRef = useRef<any>(null);
+    const bridgeStdoutBufferRef = useRef<string>('');
     const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const [bridgeRestartCounter, setBridgeRestartCounter] = useState(0);
     
@@ -97,6 +104,11 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
     const [parsedPlan, setParsedPlan] = useState<string[]>([]);
     const parsedPlanRef = useRef<string[]>([]);
 
+    const setIsPeriodicCheckinActive = useCallback((active: boolean) => {
+        isPeriodicCheckinActiveRef.current = active;
+        setIsPeriodicCheckinActiveState(active);
+    }, []);
+
     // ========== HELPERS ==========
     const genUniqueId = useCallback((prefix: string) => 
         generateUniqueId(prefix, itemIdCounterRef), []);
@@ -104,13 +116,14 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
     const ensureHeader = useCallback((items: CommittedItem[], agentName: string, taskNum?: number): CommittedItem[] => {
         if (agentName === 'operator' && taskNum !== undefined) {
             const headerId = `${agentName}-header-task${taskNum}`;
-            if (items.some(item => item.id === headerId)) return items;
+            // Checkpoint restore uses "*-history" suffix IDs; treat those as existing too.
+            if (items.some(item => item.id === headerId || item.id.startsWith(`${headerId}-`))) return items;
             
             const lastItem = items[items.length - 1];
             if (lastItem && lastItem.agentName === 'operator' && taskNum == 1) return items;
             if (taskNum == 1 && items.some(item => item.id === `${agentName}-header`)) return items;
             
-            const newItems: CommittedItem[] = [...items, { id: headerId, type: 'agent-header', content: agentName, agentName }];
+            const newItems: CommittedItem[] = [...items, { id: headerId, type: 'agent-header', content: agentName, agentName, taskNum }];
             
             if (parsedPlanRef.current && parsedPlanRef.current.length >= taskNum) {
                 const rawTask = parsedPlanRef.current[taskNum - 1];
@@ -120,7 +133,8 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                         id: `${agentName}-task-panel-${taskNum}`,
                         type: 'active-task-panel', 
                         content: { description: cleanDescription, taskNum },
-                        agentName
+                        agentName,
+                        taskNum
                     });
                 }
             }
@@ -135,7 +149,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             
             if (!evaluatorHeaderForThisTask) {
                 const headerId = taskNum ? `evaluator-header-task${taskNum}` : `evaluator-header-${Date.now()}`;
-                return [...items, { id: headerId, type: 'evaluator-header', content: agentName, agentName }];
+                return [...items, { id: headerId, type: 'evaluator-header', content: agentName, agentName, taskNum }];
             }
             return items;
         }
@@ -159,7 +173,8 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             setCheckpointMode,
             setPreviousInput,
             setIsLoading,
-            bridgeRef
+            bridgeRef,
+            resumingWithEvaluatorRef
         }, payload);
     }, []);
 
@@ -287,26 +302,29 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             setPreviousInput,
             setShowMainUI,
             setParsedPlan,
+            setIsPeriodicCheckinActive,
+            setPeriodicCheckinToolCall,
             ragStatusRef,
             bridgeRef,
             taskProgressRef,
             activeFileContentRef,
             lastCodeResultIsErrorRef,
             isInterruptedRef,
+            isPeriodicCheckinActiveRef,
+            resumingWithEvaluatorRef,
             ensureHeader,
             genUniqueId,
             handleCheckpointInfo,
-            exitIfDirectArgs: () => {
-                if (directArgsUsed) {
-                    setTimeout(() => exit(), 500);
-                }
-            }
+            setStaticKey,
         };
         
         const handleBridgeMessage = createMessageHandler(ctx);
 
         child.stdout.on('data', (data) => {
-            const lines = data.toString().split('\n');
+            bridgeStdoutBufferRef.current += data.toString();
+            const lines = bridgeStdoutBufferRef.current.split('\n');
+            bridgeStdoutBufferRef.current = lines.pop() || '';
+
             for (const line of lines) {
                 if (!line.trim()) continue;
                 try {
@@ -357,6 +375,8 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                 });
                 setParsedPlan([]);
                 setStaticKey(prev => prev + 1);
+                setIsPeriodicCheckinActive(false);
+                setPeriodicCheckinToolCall(null);
                 // Don't set checkpointMode here - let the bridge response determine it
                 // based on whether archives exist
                 if (bridgeRef.current) {
@@ -399,6 +419,8 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                 setParsedPlan([]);
                 setCheckpointMode('normal');
                 setStaticKey(prev => prev + 1);
+                setIsPeriodicCheckinActive(false);
+                setPeriodicCheckinToolCall(null);
                 if (bridgeRef.current) {
                     bridgeRef.current.stdin.write(JSON.stringify({ command: 'fresh_start' }) + "\n");
                 }
@@ -499,6 +521,8 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                     setCheckpointMode, setSystemStatus, setAgents, setPlanContent,
                     setIsPlanComplete, setTaskProgress, isInterruptedRef
                 });
+                setIsPeriodicCheckinActive(false);
+                setPeriodicCheckinToolCall(null);
                 setBridgeRestartCounter(prev => prev + 1);
             } else {
                 setEscPressedOnce(true);
@@ -515,6 +539,9 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
     // ========== DERIVED STATE ==========
     const activeAgents = agents.filter(a => a.status === 'active');
     const evaluatorAgent = agents.find(a => a.name === 'evaluator');
+    const showPeriodicCheckinStatus = isPeriodicCheckinActive;
+    const periodicCheckinStatusText = periodicCheckinToolCall?.content || 'Awaiting Decision';
+    const periodicCheckinStatusIsError = periodicCheckinToolCall?.isError ?? false;
 
     const staticItems = useMemo(() => 
         committedItems.map(item => ({ ...item, _resizeKey: `${item.id}-r${resizeCounter}` })),
@@ -548,13 +575,43 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             {showMainUI && (
                 <>
                     {/* Active agent statuses */}
-                    {activeAgents.filter(a => a.name !== 'evaluator' && !(a.name === 'operator' && evaluatorAgent?.status === 'active')).map(agent => (
+                    {activeAgents.filter(a =>
+                        a.name !== 'evaluator' &&
+                        !(a.name === 'operator' && evaluatorAgent?.status === 'active') &&
+                        // During periodic check-ins, transient status should replace
+                        // the operator run-status row instead of rendering as a second line.
+                        !(a.name === 'operator' && showPeriodicCheckinStatus)
+                    ).map(agent => (
                         <ActiveAgentStatus key={`active-${agent.name}`} agent={agent} leftMargin={leftMargin} />
                     ))}
 
                     {/* Active evaluator */}
                     {evaluatorAgent?.status === 'active' && (
                         <ActiveAgentStatus agent={evaluatorAgent} leftMargin={leftMargin} isEvaluator />
+                    )}
+
+                    {/* Transient check-in status (overwrites in place, not committed) */}
+                    {showPeriodicCheckinStatus && (
+                        <Box marginLeft={leftMargin + INDENT_AGENT} paddingX={1}>
+                            <Text>
+                                <Text color={periodicCheckinStatusIsError ? 'red' : 'gray'}>L </Text>
+                                {periodicCheckinToolCall ? (
+                                    <Text color={periodicCheckinStatusIsError ? 'red' : 'green'} bold>
+                                        {periodicCheckinStatusIsError ? '✗' : '✓'}{' '}
+                                        {truncateText(periodicCheckinStatusText, Math.max(20, terminalWidth - leftMargin - 10))}
+                                    </Text>
+                                ) : (
+                                    <>
+                                        <Text color="cyan">
+                                            <TriangleSpinner />{' '}
+                                        </Text>
+                                        <Text color="cyan" bold>
+                                            {truncateText(periodicCheckinStatusText, Math.max(20, terminalWidth - leftMargin - 10))}
+                                        </Text>
+                                    </>
+                                )}
+                            </Text>
+                        </Box>
                     )}
 
                     {/* Input Area */}

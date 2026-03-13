@@ -105,6 +105,7 @@ ENV OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
 
 VOLUME ["/workspace"]
 
+
 # Install Node.js 20.x and build tools for native modules
 RUN apt-get update && apt-get install -y gnupg build-essential python3 && \
     mkdir -p /etc/apt/keyrings && \
@@ -122,5 +123,6 @@ RUN cd /app/cli && \
     chmod +x /app/cli/dist/cli.js && \
     # Create symlink for easier access
     ln -s /app/cli/dist/cli.js /usr/local/bin/quasar
+
 
 CMD ["quasar"]

@@ -39,7 +39,7 @@ interface StaticItemRendererProps {
  */
 const StaticItemRenderer: React.FC<StaticItemRendererProps> = ({ item, leftMargin, terminalWidth, availableWidth }) => {
     const key = item._resizeKey || item.id;
-    
+
     switch (item.type) {
         case 'banner':
             return (

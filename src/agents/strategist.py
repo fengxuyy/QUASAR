@@ -10,6 +10,7 @@ from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, Tool
 from langchain_openai import ChatOpenAI
 
 from ..state import State, create_initial_state
+from langchain_core.tools import tool
 from ..tools import WORKSPACE_DIR, LOGS_DIR, read_file, list_directory, analyze_image, search_web, fetch_web_page, grep_search
 from ..tools.base import get_all_files
 from .utils import (
@@ -194,8 +195,9 @@ def _create_empty_plan_state(error_msg="Received empty response from strategist.
 
 
 # Wrapper for strategist to exclude docs folder
+@tool
 def _list_directory_no_docs(directory_path: str = ".", pattern: str = "*") -> str:
-    """List files and directories, excluding the docs folder."""
+    """List files and directories in the workspace, excluding the docs folder."""
     return list_directory.invoke({"directory_path": directory_path, "pattern": pattern, "exclude_docs": True})
 
 
@@ -386,7 +388,7 @@ You must strictly follow the **accuracy mode** which determines the computationa
 
 * **pro (High Accuracy):** "Publication-Grade Precision"
     * **Strategy:** Prioritizes physical rigor and strict numerical convergence. This mode aims to minimize approximations, ensuring results meet the standards required for peer-reviewed research and formal documentation.
-    
+
 * **eco (Balanced Speed/Accuracy):** "Efficient Discovery"
     * **Strategy:** Optimizes the balance between predictive accuracy and resource consumption. Utilizes validated approximations to maintain qualitative trends and reliable quantitative estimates without redundant overhead.
     
@@ -426,12 +428,12 @@ Create a concise list of high-level scientific tasks that captures the essential
    </PLAN>
    ```
    - And state each task as:
-   ### **Task X:** [Primary Action — Scientific Objective]
+   ### **Task X:** [Primary Action (the scientific objective)]
    **Guidance:** [Senior-level scientific insights in executing the task with exceptional intelligence, precision, and foresight. This encompasses a robust methodology, critical key points, and supplementary insights vital for attaining the objective while proactively mitigating risks of failure]
 
 2. **End-of-Workflow Requirement:**  
    - The final task should aggregate results, create plots if necessary, and write a summary analysis (`summary.md`).  
-   - Explicitly direct the Operator to save valuable results and plots, must explicitly inform the Operator to name the summary file `summary.md` into the `final_results/` directory under `workspace/`.
+   - All final outputs, including the `summary.md` file and any generated plots, must be saved in a directory named `final_results` located in the root directory.
 
 3. **Computational Efficiency:** 
     - Prioritize reduced computational cost (e.g., minimal unit cells, lower cutoffs for initial screening) when they do not compromise result accuracy.
@@ -481,7 +483,8 @@ def _self_review_plan(initial_plan_content, messages, llm, is_replanning):
         send_thought_stream("strategist", accumulated_thoughts, is_complete=False)
     
     content, _, _, _ = stream_with_token_tracking(
-        llm, review_messages, on_content=on_content, on_thought=on_thought
+        llm, review_messages, on_content=on_content, on_thought=on_thought,
+        agent_name='strategist'
     )
     
     if accumulated_thoughts:
@@ -638,7 +641,8 @@ You are the lead computational senior chemist designing a computational research
                             send_thought_stream("strategist", accumulated_thoughts, is_complete=False)
                         
                         full_content, tool_calls, _, _ = stream_with_token_tracking(
-                            llm_with_tools, messages, on_content=on_content, on_thought=on_thought
+                            llm_with_tools, messages, on_content=on_content, on_thought=on_thought,
+                            agent_name='strategist'
                         )
                         
                         if accumulated_thoughts:
@@ -696,30 +700,26 @@ Do NOT call `{tool_name}` with the same arguments again.
                     send_plan_stream(content, is_complete=False, is_replanning=is_replanning)
                     
                     if is_replanning:
-                        # In replanning mode, extract plan directly (no review phase)
-                        plan = _extract_plan_from_content(content)
-                        log_strategist_plan_extracted(plan, content)
+                        # In replanning mode, store content for review phase (same as standard)
+                        initial_plan = _extract_plan_from_content(content)
+                        log_custom("STRATEGIST", "Initial replan generated with tools, checkpoint for review phase")
                         
-                        if plan:
-                            send_plan_stream(content, is_complete=True, parsed_plan=plan, is_replanning=True)
-                            send_json("task_progress", {"current": 1, "total": len(plan)})
-                            
-                            log_agent_header("Strategist", 0, "Replanning Complete")
-                            formatted_plan = "\n".join(plan)
-                            lines = formatted_plan.split('\n')
+                        send_plan_stream(content, is_complete=True, parsed_plan=initial_plan if initial_plan else None, is_replanning=True)
+                        if initial_plan:
+                            log_agent_header("Strategist", 0, "Initial Replan")
+                            formatted_initial_plan = "\n".join(initial_plan)
+                            lines = formatted_initial_plan.split('\n')
                             blockquote = '\n'.join(f"> {line}" if line.strip() else ">" for line in lines)
                             _write_to_log(f"{blockquote}\n\n")
                             
-                            # Send events to CLI for plan box and status checkmark
-                            send_agent_event("strategist", "step_complete", "Created Replan", output=formatted_plan)
-                            send_agent_event("strategist", "complete")
+                            send_agent_event("strategist", "step_complete", "Created Initial Replan", output=formatted_initial_plan)
                         
                         return_state = {
-                            'messages': [response],
-                            'plan': plan,
+                            'messages': messages,
+                            'plan': [],  # Plan not yet finalized - goes to review
                             'completed_steps': [],
                             'step_results': {},
-                            'initial_plan_content': '',  # Not needed in replanning
+                            'initial_plan_content': content,  # Store for review phase
                             'is_replanning': True,
                         }
                         log_strategist_return(return_state)
@@ -766,7 +766,8 @@ Do NOT call `{tool_name}` with the same arguments again.
 
                     try:
                         content, _, _, _ = stream_with_token_tracking(
-                            llm, messages, on_content=on_content, on_thought=on_thought
+                            llm, messages, on_content=on_content, on_thought=on_thought,
+                            agent_name='strategist'
                         )
                     except Exception as e:
                         # Re-raise API connection errors so they reach the retry logic
@@ -886,9 +887,11 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
     """Strategist review node - performs self-review of the initial plan.
     
     Takes initial_plan_content from state and generates an improved plan.
-    Only called in standard mode (not replanning).
+    Called in both standard and replanning modes.
     """
     from ..debug_logger import log_custom
+    
+    is_replanning = state.get('is_replanning', False)
     
     initial_plan_content = state.get('initial_plan_content', '')
     
@@ -925,7 +928,7 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
             initial_plan_content=initial_plan_content,
             messages=messages,
             llm=llm,
-            is_replanning=False
+            is_replanning=is_replanning
         )
         
         # Extract final plan from improved content
@@ -933,22 +936,23 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
         log_strategist_plan_extracted(plan, improved_content)
         
         if plan:
+            review_label = "Reviewed Replan" if is_replanning else "Reviewed Plan"
             events_to_send = [
                 {"type": "plan_stream", "is_complete": True},
-                {"type": "agent_event", "agent": "strategist", "event": "complete", "status": "Reviewed Plan"},
+                {"type": "agent_event", "agent": "strategist", "event": "complete", "status": review_label},
                 {"type": "task_progress", "current": 1, "total": len(plan)}
             ]
             log_strategist_events_sent(events_to_send)
             
-            send_plan_stream(improved_content, is_complete=True, parsed_plan=plan)
+            send_plan_stream(improved_content, is_complete=True, parsed_plan=plan, is_replanning=is_replanning)
             
-            log_agent_header("Strategist", 0, "Reviewed Plan")
+            log_agent_header("Strategist", 0, review_label)
             formatted_plan = "\n".join(plan)
             lines = formatted_plan.split('\n')
             blockquote = '\n'.join(f"> {line}" if line.strip() else ">" for line in lines)
             _write_to_log(f"{blockquote}\n\n")
             
-            send_agent_event("strategist", "step_complete", "Reviewed Plan", output=formatted_plan)  # For execution history
+            send_agent_event("strategist", "step_complete", review_label, output=formatted_plan)  # For execution history
             send_agent_event("strategist", "complete")  # For agent state transition (empty status avoids duplicate log)
             send_json("task_progress", {"current": 1, "total": len(plan)})
         
@@ -969,7 +973,7 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
             'completed_steps': [],
             'step_results': {},
             'initial_plan_content': '',  # Clear, no longer needed
-            'is_replanning': False,
+            'is_replanning': is_replanning,
         }
         
         log_strategist_return(return_state)
@@ -992,7 +996,7 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
             'completed_steps': [],
             'step_results': {},
             'initial_plan_content': '',
-            'is_replanning': False,
+            'is_replanning': is_replanning,
         }
         log_strategist_return(return_state)
         return return_state

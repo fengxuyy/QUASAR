@@ -3,10 +3,8 @@
  */
 import React from 'react';
 import { Box, Text } from 'ink';
-import Spinner from 'ink-spinner';
 import type { RagStatusInfo } from '../../hooks/types.js';
-
-const SpinnerComponent = Spinner as any;
+import DotsSpinner from './DotsSpinner.js';
 
 interface RagStatusProps {
     ragStatus: RagStatusInfo;
@@ -22,7 +20,7 @@ const RagStatus: React.FC<RagStatusProps> = ({ ragStatus, leftMargin }) => {
                 ) : ragStatus.status === 'error' ? (
                     <Text color="red" bold>✗ </Text>
                 ) : (
-                    <Text color="cyan"><SpinnerComponent type="dots" /> </Text>
+                    <Text color="cyan"><DotsSpinner /> </Text>
                 )}
                 <Text color="cyan" bold>{ragStatus.message}</Text>
             </Box>

@@ -149,7 +149,7 @@ def evaluator_setup_node(state: State, llm_with_tools=None) -> State:
     evaluation_attempts = state.get('evaluation_attempts', 0)
     messages = state.get('messages', [])
     
-    project_request = extract_project_request(messages)
+    project_request = state.get('user_input', '') or extract_project_request(messages)
     formatted_plan = format_plan(plan)
     formatted_history = format_history(step_results, completed_steps)
     
@@ -350,7 +350,8 @@ Do NOT call `{tool_name}` with the same arguments again.
             send_thought_stream("evaluator", accumulated_thoughts, is_complete=False)
         
         full_content, tool_calls, _, _ = stream_with_token_tracking(
-            llm_with_tools, evaluation_messages, on_content=on_content, on_thought=on_thought
+            llm_with_tools, evaluation_messages, on_content=on_content, on_thought=on_thought,
+            agent_name='evaluator'
         )
         
         # Send completion signal for text streaming
@@ -454,7 +455,7 @@ Do NOT call `{tool_name}` with the same arguments again.
             summary = evaluation_decision['summary']
             
             messages_list = state.get('messages', [])
-            project_request = extract_project_request(messages_list)
+            project_request = state.get('user_input', '') or extract_project_request(messages_list)
             formatted_plan = format_plan(plan)
             
             if status == "pass":

@@ -117,9 +117,12 @@ export function runHeadless(prompt: string, flags: any): void {
     });
 
     let runCompleted = false;
+    let stdoutBuffer = '';
 
     child.stdout.on('data', (data) => {
-        const lines = data.toString().split('\n');
+        stdoutBuffer += data.toString();
+        const lines = stdoutBuffer.split('\n');
+        stdoutBuffer = lines.pop() || '';
         for (const line of lines) {
             if (!line.trim()) continue;
             try {
@@ -156,10 +159,7 @@ export function runHeadless(prompt: string, flags: any): void {
                             // stdin might already be closed
                         }
                         child.stdin.end();
-                        // Exit after a brief delay to allow cleanup
-                        setTimeout(() => {
-                            process.exit(0);
-                        }, 100);
+
                     }
                 } else if (msg.type === 'error') {
                     printError(msg.payload?.message || 'Unknown error');

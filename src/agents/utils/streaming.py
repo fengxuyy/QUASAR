@@ -233,6 +233,7 @@ def stream_with_token_tracking(
     on_thought: Optional[Callable[[str], None]] = None,
     detect_repetition: bool = False,
     repetition_config: Optional[dict] = None,
+    agent_name: str = "",
 ) -> tuple:
     """Stream LLM response with proper chunk accumulation for token tracking.
     
@@ -350,7 +351,8 @@ def stream_with_token_tracking(
             output_tokens = getattr(usage, 'output_tokens', 0)
         record_api_call(
             input_tokens=input_tokens,
-            output_tokens=output_tokens
+            output_tokens=output_tokens,
+            agent_name=agent_name
         )
     
     # Convert accumulated tool calls to list format

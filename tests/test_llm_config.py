@@ -121,3 +121,36 @@ class TestInitializeLLM:
                 api_key="test-key",
                 base_url="http://localhost:8000"
             )
+
+
+class TestInitializeLLMForAgent:
+    """Test per-agent LLM initialization in the free tier."""
+    
+    def test_always_returns_fallback(self):
+        """In the free tier, should always return the fallback regardless of env vars."""
+        from src.llm_config import initialize_llm_for_agent
+        
+        mock_primary_llm = MagicMock()
+        primary_model = "primary-model"
+        
+        # Test with no env vars
+        with patch.dict(os.environ, {}, clear=True):
+            llm, model = initialize_llm_for_agent("strategist", mock_primary_llm, primary_model)
+            assert llm is mock_primary_llm
+            assert model == primary_model
+            
+        # Test with agent-specific env vars set - should still return primary
+        with patch.dict(os.environ, {
+            "STRATEGIST_MODEL": "gemini-2.5-flash",
+            "STRATEGIST_MODEL_API_KEY": "agent-key",
+            "OPERATOR_MODEL": "claude-sonnet-4"
+        }, clear=True):
+            # Check strategist
+            llm, model = initialize_llm_for_agent("strategist", mock_primary_llm, primary_model)
+            assert llm is mock_primary_llm
+            assert model == primary_model
+            
+            # Check operator
+            llm, model = initialize_llm_for_agent("operator", mock_primary_llm, primary_model)
+            assert llm is mock_primary_llm
+            assert model == primary_model

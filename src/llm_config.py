@@ -76,3 +76,40 @@ def initialize_llm():
     llm = ChatOpenAI(model=model, api_key=api_key, base_url=base_url)
     return llm, model
 
+
+def _create_llm_for_model(model: str, api_key: str, base_url: str = None):
+    """Create an LLM instance for a given model name, api key, and optional base URL."""
+    provider = _infer_provider_from_model(model)
+    
+    if provider == "gemini":
+        return ChatGoogleGenerativeAI(
+            model=model,
+            google_api_key=api_key,
+            include_thoughts=True,
+        )
+    
+    if provider == "claude":
+        return ChatAnthropic(model=model, api_key=api_key, temperature=0.7)
+    
+    if provider == "grok":
+        return ChatXAI(model=model, xai_api_key=api_key)
+    
+    if provider == "openai":
+        return ChatOpenAI(model=model, api_key=api_key, stream_usage=True)
+    
+    # custom_openai
+    if not base_url:
+        raise ValueError(
+            f"API base URL is required for custom OpenAI-compatible model '{model}'. "
+            "Set the appropriate API_BASE_URL environment variable."
+        )
+    return ChatOpenAI(model=model, api_key=api_key, base_url=base_url)
+
+
+def initialize_llm_for_agent(agent_name: str, fallback_llm=None, fallback_model_name=None):
+    """Initialize an LLM for a specific agent.
+    
+    In the free tier version, per-agent model configuration is disabled.
+    All agents use the primary model.
+    """
+    return fallback_llm, fallback_model_name

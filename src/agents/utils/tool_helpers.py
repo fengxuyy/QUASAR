@@ -34,7 +34,7 @@ TOOL_STATUS_MESSAGES = {
     'search_web': ('Searching web', 'Searched web'),
     'fetch_web_page': ('Fetching web page', 'Fetched web page'),
     'execute_python': ('Executing', 'Executed'),
-    'grep_search': ('Searching files', 'Searched files'),
+    'grep_search': ('Grepping files', 'Grepped files'),
     'get_hardware_info': ('Checking Hardware', 'Checked Hardware'),
     'complete_task': ('Evaluating Task Completion', 'Evaluating Task Completion'),
 }
@@ -79,7 +79,16 @@ def extract_target_name(tool_name: str, tool_args: dict) -> Optional[str]:
     if key and key in tool_args:
         target = tool_args[key]
         if isinstance(target, (str, Path)):
-            return os.path.basename(str(target))
+            target_str = str(target).strip()
+            # Strip leading "./" for cleaner display
+            if target_str.startswith('./'):
+                target_str = target_str[2:]
+            # For absolute paths fall back to basename — relative paths are kept as-is
+            # so that files in subdirectories (e.g. "results/analysis.py") can be
+            # matched exactly in the workspace file tree rather than ambiguously by name.
+            if os.path.isabs(target_str):
+                return os.path.basename(target_str)
+            return target_str or os.path.basename(str(target))
     
     # Handle default values for tools with optional path arguments
     if tool_name == 'list_directory' and 'directory_path' not in tool_args:
@@ -117,6 +126,42 @@ def extract_target_name(tool_name: str, tool_args: dict) -> Optional[str]:
         return None
     
     return None
+
+
+def get_execute_python_status(tool_args: dict) -> str:
+    """Compute the 'Executing …' status label for an execute_python call.
+
+    Mirrors the logic in _handle_execute_python_status so that the label shown
+    during check-in resumption is identical to the one shown at initial launch.
+    """
+    if not isinstance(tool_args, dict):
+        return "Executing"
+
+    file_path = tool_args.get('file_path', '')
+    code = tool_args.get('code', '')
+    trial_timeout = tool_args.get('timeout', None)
+
+    timeout_display = ""
+    if trial_timeout is not None:
+        try:
+            timeout_val = float(trial_timeout)
+            if timeout_val > 0:
+                if float(timeout_val).is_integer():
+                    timeout_display = f" (timeout {int(timeout_val)} min)"
+                else:
+                    timeout_display = f" (timeout {timeout_val:.1f} min)"
+        except (TypeError, ValueError):
+            pass
+
+    if file_path:
+        return f"Executing {os.path.basename(file_path)}{timeout_display}"
+    if code:
+        first_line = code.strip().split('\n')[0]
+        code_preview = first_line[:50]
+        if len(first_line) > 50 or '\n' in code.strip():
+            code_preview += "..."
+        return f"Executing {code_preview}{timeout_display}"
+    return f"Executing{timeout_display}"
 
 
 def extract_analyze_image_output(result: str) -> str:
@@ -208,7 +253,7 @@ def _handle_read_file_status(agent: str, tool_args: Dict[str, Any], target_name:
             send_agent_event(agent, "step_complete", "Failed to read file", is_error=True, output=error_output)
             send_agent_event(agent, "update", idle_status)
         else:
-            send_agent_event(agent, "update", "Reading file...")
+            send_agent_event(agent, "update", "Reading file")
         return
     
     # Priority: if_pdf > keyword > first_lines > last_lines > default
@@ -222,7 +267,7 @@ def _handle_read_file_status(agent: str, tool_args: Dict[str, Any], target_name:
         else:
             base_complete = f"Read PDF {file_name}"
     elif keyword:
-        base_status = f"Searching {keyword} in {file_name}"
+        base_status = f"Reading {file_name} (searching for {keyword})"
         # Extract match count from tool result for completion message
         match_count = None
         if is_complete and tool_result and isinstance(tool_result, str):
@@ -238,9 +283,9 @@ def _handle_read_file_status(agent: str, tool_args: Dict[str, Any], target_name:
                 base_complete = f"{keyword} not found in {file_name}"
         elif match_count:
             match_word = "match" if match_count == 1 else "matches"
-            base_complete = f"Searched {keyword} in {file_name} ({match_count} {match_word})"
+            base_complete = f"Read {file_name} ({keyword}: {match_count} {match_word})"
         else:
-            base_complete = f"Searched {keyword} in {file_name}"
+            base_complete = f"Read {file_name} ({keyword})"
     elif first_lines:
         base_status = f"Reading {file_name} L1-{first_lines}"
         if is_error:
@@ -333,6 +378,15 @@ def _handle_search_web_status(agent: str, tool_args: Dict[str, Any], is_complete
     
     idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
     if is_complete:
+        # Build output: include the search results
+        output = ""
+        if tool_result and isinstance(tool_result, str):
+            # Truncate if too long for display
+            truncated_result = tool_result[:5000] if len(tool_result) > 5000 else tool_result
+            if len(tool_result) > 5000:
+                truncated_result += "\n\n... [Results truncated for display]"
+            output = truncated_result
+        
         if is_error:
             if "No results found" in (tool_result or ''):
                 msg = f"No results for {display_query}"
@@ -343,7 +397,7 @@ def _handle_search_web_status(agent: str, tool_args: Dict[str, Any], is_complete
             msg = f"Searched {display_query} ({result_count} {result_word})"
         else:
             msg = f"Searched {display_query}"
-        send_agent_event(agent, "step_complete", msg, is_error=is_error)
+        send_agent_event(agent, "step_complete", msg, is_error=is_error, output=output)
         send_agent_event(agent, "update", idle_status)
     else:
         send_agent_event(agent, "update", f"Searching {display_query}")
@@ -379,6 +433,15 @@ def _handle_fetch_web_page_status(agent: str, tool_args: Dict[str, Any], is_comp
     
     idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
     if is_complete:
+        # Build output: include the fetched page content
+        output = ""
+        if tool_result and isinstance(tool_result, str):
+            # Truncate if too long for display
+            truncated_result = tool_result[:10000] if len(tool_result) > 10000 else tool_result
+            if len(tool_result) > 10000:
+                truncated_result += "\n\n... [Content truncated for display]"
+            output = truncated_result
+        
         if is_error:
             # Extract specific error type
             if "Invalid URL" in (tool_result or ''):
@@ -397,7 +460,7 @@ def _handle_fetch_web_page_status(agent: str, tool_args: Dict[str, Any], is_comp
                     msg = f"Fetched {display_url} ({content_length // 1000}k chars)"
             else:
                 msg = f"Fetched {display_url}"
-        send_agent_event(agent, "step_complete", msg, is_error=is_error)
+        send_agent_event(agent, "step_complete", msg, is_error=is_error, output=output)
         send_agent_event(agent, "update", idle_status)
     else:
         send_agent_event(agent, "update", f"Fetching {display_url}")
@@ -407,12 +470,25 @@ def _handle_execute_python_status(agent: str, tool_args: Dict[str, Any], is_comp
     """Handle execute_python status updates."""
     file_path = tool_args.get('file_path') if isinstance(tool_args, dict) else None
     code = tool_args.get('code') if isinstance(tool_args, dict) else None
+    trial_timeout = tool_args.get('trial_timeout') if isinstance(tool_args, dict) else None
+
+    timeout_display = ""
+    if trial_timeout is not None:
+        try:
+            timeout_value = float(trial_timeout)
+            if timeout_value > 0:
+                if timeout_value.is_integer():
+                    timeout_display = f" (timeout {int(timeout_value)} min)"
+                else:
+                    timeout_display = f" (timeout {timeout_value:.1f} min)"
+        except (TypeError, ValueError):
+            pass
     
     if file_path:
         # Case 1 & 3: file_path provided (with or without code)
         file_name = os.path.basename(file_path)
-        base_status = f"Executing {file_name}"
-        base_complete = f"Executed {file_name}"
+        base_status = f"Executing {file_name}{timeout_display}"
+        base_complete = f"Executed {file_name}{timeout_display}"
     elif code:
         # Case 2: Only code provided - show truncated code preview
         # Get first line or first 50 chars, whichever is shorter
@@ -420,11 +496,11 @@ def _handle_execute_python_status(agent: str, tool_args: Dict[str, Any], is_comp
         code_preview = first_line[:50]
         if len(first_line) > 50 or '\n' in code.strip():
             code_preview += "..."
-        base_status = f"Executing {code_preview}"
-        base_complete = f"Executed {code_preview}"
+        base_status = f"Executing {code_preview}{timeout_display}"
+        base_complete = f"Executed {code_preview}{timeout_display}"
     else:
-        base_status = "Executing"
-        base_complete = "Executed"
+        base_status = f"Executing{timeout_display}"
+        base_complete = f"Executed{timeout_display}"
     
     idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
     if is_complete:
@@ -455,7 +531,13 @@ def _handle_execute_python_status(agent: str, tool_args: Dict[str, Any], is_comp
         send_agent_event(agent, "step_complete", base_complete, is_error=is_error, output=output)
         send_agent_event(agent, "update", idle_status)
     else:
-        send_agent_event(agent, "update", base_status + "...")
+        # Build output for executing state: show the code being executed
+        executing_output = ""
+        if code and not file_path:
+            # Show full code for inline execution during execution
+            executing_output = f"**Code:**\n```python\n{code}\n```"
+        
+        send_agent_event(agent, "update", base_status, output=executing_output)
 
 
 def _handle_write_file_status(agent: str, tool_args: Dict[str, Any], is_complete: bool) -> None:
@@ -476,7 +558,7 @@ def _handle_write_file_status(agent: str, tool_args: Dict[str, Any], is_complete
         send_agent_event(agent, "step_complete", base_complete, output=output)
         send_agent_event(agent, "update", idle_status)
     else:
-        send_agent_event(agent, "update", base_status + "...")
+        send_agent_event(agent, "update", base_status)
 
 
 def _handle_edit_file_status(agent: str, tool_args: Dict[str, Any], is_complete: bool, tool_result: Optional[str] = None) -> None:
@@ -521,7 +603,7 @@ def _handle_edit_file_status(agent: str, tool_args: Dict[str, Any], is_complete:
         send_agent_event(agent, "step_complete", base_complete, is_error=is_error, output=output)
         send_agent_event(agent, "update", idle_status)
     else:
-        send_agent_event(agent, "update", base_status + "...")
+        send_agent_event(agent, "update", base_status)
 
 
 def _handle_list_directory_status(agent: str, tool_args: Dict[str, Any], is_complete: bool, tool_result: Optional[str] = None) -> None:
@@ -627,25 +709,39 @@ def _handle_grep_search_status(agent: str, tool_args: Dict[str, Any], is_complet
     
     idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
     if is_complete:
+        # Build output: include the grep results for collapsible display
+        output = ""
+        if tool_result and isinstance(tool_result, str):
+            truncated_result = tool_result[:5000] if len(tool_result) > 5000 else tool_result
+            if len(tool_result) > 5000:
+                truncated_result += "\n\n... [Results truncated for display]"
+            output = truncated_result
+
         if is_error:
             if "timed out" in (tool_result or '').lower():
-                msg = f"Search timed out for {display_pattern}"
+                msg = f"Grep timed out for {display_pattern}"
             elif "no matches found" in (tool_result or '').lower():
                 msg = f"No matches for {display_pattern}{dir_suffix}"
             elif "does not exist" in (tool_result or '').lower() or "not a directory" in (tool_result or '').lower():
                 msg = f"Directory not found{dir_suffix}"
             else:
-                msg = f"Search failed for {display_pattern}"
+                msg = f"Grep failed for {display_pattern}"
         elif match_count is not None:
             match_word = "match" if match_count == 1 else "matches"
             truncated_text = " (truncated)" if is_truncated else ""
-            msg = f"Searched files {display_pattern}{dir_suffix} ({match_count} {match_word}{truncated_text})"
+            msg = f"Grepped files {display_pattern}{dir_suffix} ({match_count} {match_word}{truncated_text})"
         else:
-            msg = f"Searched files {display_pattern}{dir_suffix}"
-        send_agent_event(agent, "step_complete", msg, is_error=is_error)
+            msg = f"Grepped files {display_pattern}{dir_suffix}"
+        send_agent_event(agent, "step_complete", msg, is_error=is_error, output=output)
         send_agent_event(agent, "update", idle_status)
     else:
-        send_agent_event(agent, "update", f"Searching files {display_pattern}{dir_suffix}")
+        # Show pattern in collapsible section during execution
+        executing_output = ""
+        if pattern:
+            executing_output = f"**Pattern:** `{pattern}`"
+            if directory_path and directory_path != '.':
+                executing_output += f"\n\n**Directory:** `{directory_path}`"
+        send_agent_event(agent, "update", f"Grepping files {display_pattern}{dir_suffix}", output=executing_output)
 
 
 def _handle_get_hardware_info_status(agent: str, is_complete: bool, tool_result: Optional[str] = None) -> None:
@@ -835,7 +931,7 @@ def format_tool_status(
             'analyze_image': 'Analyze Image Failed',
             'search_web': 'Search Web Failed',
             'fetch_web_page': 'Fetch Web Page Failed',
-            'grep_search': 'Search Files Failed',
+            'grep_search': 'Grep Files Failed',
             'get_hardware_info': 'Hardware Check Failed',
         }
         return tool_error_names.get(tool_name, f"{tool_name} Failed"), is_error

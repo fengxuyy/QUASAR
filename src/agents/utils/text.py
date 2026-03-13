@@ -85,7 +85,9 @@ def _get_message_type(msg):
 def extract_project_request(messages: List) -> str:
     """Extract project request from messages.
     
-    Looks for the first user message with non-empty content.
+    Searches backwards to find the most recent user message with non-empty content.
+    This ensures the current run's request is returned even when messages accumulate
+    across multiple runs.
     
     Args:
         messages: List of messages (can be dict or message objects)
@@ -93,7 +95,7 @@ def extract_project_request(messages: List) -> str:
     Returns:
         str: The project request content, or empty string if not found
     """
-    for msg in messages:
+    for msg in reversed(messages):
         if isinstance(msg, dict):
             if msg.get('role') == 'user':
                 content = msg.get('content', '')

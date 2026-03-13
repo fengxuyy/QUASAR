@@ -114,6 +114,7 @@ RUN apt-get update && apt-get install -y gnupg build-essential python3 && \
     apt-get install -y nodejs && \
     npm install -g npm@latest
 
+
 # Copy and build Node.js CLI
 COPY cli /app/cli
 RUN cd /app/cli && \
@@ -123,4 +124,6 @@ RUN cd /app/cli && \
     # Create symlink for easier access
     ln -s /app/cli/dist/cli.js /usr/local/bin/quasar
 
+
 CMD ["quasar"]
+

@@ -3,6 +3,7 @@ import { Text, Box } from 'ink';
 import Run from './commands/Run.js';
 import Config from './commands/Config.js';
 import Checkpoint from './commands/Checkpoint.js';
+import History from './commands/History.js';
 import Info from './commands/Info.js';
 import Banner from './ui/Banner.js';
 
@@ -30,6 +31,8 @@ const App: React.FC<AppProps> = ({ command, args, flags }) => {
 			return <Config args={args} />;
 		case 'checkpoint':
 			return <Checkpoint args={args} />;
+		case 'history':
+			return <History args={args} />;
 		case 'info':
 			return <Info />;
 		case 'version':

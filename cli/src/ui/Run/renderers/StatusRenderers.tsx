@@ -26,7 +26,7 @@ interface AgentHeaderRendererProps extends BaseRendererProps {
  */
 export function AgentHeaderRenderer({ agentName, id, leftMargin }: AgentHeaderRendererProps): React.ReactElement {
     return (
-        <Box key={id} marginLeft={leftMargin} paddingX={1} marginTop={1}>
+        <Box key={id} marginLeft={leftMargin} marginTop={1}>
             <Text>{chalk.ansi256(99).bold(`¤ ${capitalizeFirst(agentName)}`)}</Text>
         </Box>
     );
@@ -67,8 +67,13 @@ export function ToolRenderer({ content, agentName, isError, id, leftMargin, term
     let icon: string;
     let displayContent = content;
     
-    // "Reviewed Plan" and "Created Replan" should show with triangle (like current status indicator)
-    const isReviewedPlan = content === 'Reviewed Plan' || content === 'Created Replan';
+    // Plan/replan milestone statuses should use the triangle indicator.
+    const isReviewedPlan =
+        content === 'Created Initial Plan' ||
+        content === 'Reviewed Plan' ||
+        content === 'Reviewed Replan' ||
+        content === 'Created Replan' ||
+        content === 'Created Initial Replan';
     
     if (isError && isExecuteTool) {
         toolColor = 'red';

@@ -93,7 +93,7 @@ export function PlanPanel({ planContent, isPlanComplete, isContinuation, id, lef
     const { top: topBorder, bottom: bottomBorder } = createPanelBorders('Execution Plan', planPanelWidth);
     
     return (
-        <Box key={id} marginLeft={leftMargin + INDENT_AGENT - 1} paddingX={1} flexDirection="column">
+        <Box key={id} marginLeft={leftMargin + INDENT_AGENT - 1} paddingX={1} flexDirection="column" marginTop={1}>
             {!isContinuation && <Text color="cyan">{topBorder}</Text>}
             {allProcessedLines.map((line, idx) => (
                 <Text key={idx}>
@@ -128,11 +128,14 @@ export function EvaluationSummaryPanel({ content, id, leftMargin, terminalWidth,
         if (line.includes('New Files Created for Task')) break;
         filteredLines.push(line);
     }
+    while (filteredLines.length > 0 && filteredLines[filteredLines.length - 1].trim() === '') {
+        filteredLines.pop();
+    }
     
     const processedSummaryLines = processLinesForPanel(filteredLines, summaryContentWidth, false);
     
     return (
-        <Box key={id} marginLeft={leftMargin + INDENT_EVALUATOR - 1} paddingX={1} flexDirection="column" marginTop={1}>
+        <Box key={id} marginLeft={leftMargin + INDENT_EVALUATOR - 1} paddingX={1} flexDirection="column">
             <Text color="cyan">{summaryTopBorder}</Text>
             {processedSummaryLines.map((line, idx) => (
                 <Text key={idx}>

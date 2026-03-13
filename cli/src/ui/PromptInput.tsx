@@ -1,11 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useStdout, useInput } from 'ink';
 import { truncateText } from '../utils/helpers.js';
+import { registerAnimationSubscriber } from './animationTick.js';
 
 // Star spinner frames (from cli-spinners)
 const STAR_SPINNER = {
     interval: 70,
     frames: ["\u2736", "\u2738", "\u2739", "\u273a", "\u2739", "\u2737"]
+};
+
+/**
+ * Self-contained spinner so its rapid state updates don't cause the parent
+ * PromptInput (and the shortcuts bar) to re-render and flash on every tick.
+ */
+const StarSpinner: React.FC<{ isLoading: boolean }> = ({ isLoading }) => {
+    const [frame, setFrame] = useState(0);
+
+    useEffect(() => {
+        if (!isLoading) {
+            setFrame(0);
+            return;
+        }
+        const advance = () => setFrame(prev => (prev + 1) % STAR_SPINNER.frames.length);
+        return registerAnimationSubscriber(advance);
+    }, [isLoading]);
+
+    const icon = isLoading ? STAR_SPINNER.frames[frame] : '✴';
+    return <Text color="cyan" bold>{icon} </Text>;
 };
 
 interface PromptInputProps {
@@ -24,26 +45,8 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
     const [query, setQuery] = useState('');
     const [lastQuery, setLastQuery] = useState('');
     const [cursorPosition, setCursorPosition] = useState(0);
-    const [spinnerFrame, setSpinnerFrame] = useState(0);
     const { stdout } = useStdout();
     const terminalWidth = stdout?.columns || 100;
-
-    // Star spinner animation when loading
-    useEffect(() => {
-        if (!isLoading) {
-            setSpinnerFrame(0);
-            return;
-        }
-        
-        const timer = setInterval(() => {
-            setSpinnerFrame(prev => (prev + 1) % STAR_SPINNER.frames.length);
-        }, STAR_SPINNER.interval);
-        
-        return () => clearInterval(timer);
-    }, [isLoading]);
-
-    // Get current spinner icon
-    const starIcon = isLoading ? STAR_SPINNER.frames[spinnerFrame] : '✴';
 
     // Available width (terminal - margin for border/padding)
     const availableWidth = Math.max(20, terminalWidth - 14);
@@ -156,7 +159,7 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
             <Box width={bannerBoxWidth} paddingX={1} justifyContent="space-between">
                 <Box>
                     <Text>
-                        <Text color="cyan" bold>{starIcon} </Text>
+                        <StarSpinner isLoading={isLoading} />
                         {isLoading ? (
                             <Text>{truncatedLoadingText}</Text>
                         ) : (

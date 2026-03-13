@@ -41,12 +41,29 @@ class UsageStats:
     
     # Hardware signature for detecting environment changes
     hardware_signature: Optional[dict] = None
+    
+    # Per-agent token tracking: {agent_name: {api_request_count, input_tokens, output_tokens, model_name}}
+    per_agent_stats: dict = field(default_factory=dict)
 
 
 
 # Global tracker instance with thread-safe operations
 _tracker: UsageStats = UsageStats()
 _lock = Lock()
+
+# Tracks whether hardware changed when resuming from a checkpoint
+_hardware_changed_on_resume: bool = False
+_previous_hardware_signature: Optional[dict] = None
+
+
+def was_hardware_changed_on_resume() -> bool:
+    """Return True if hardware changed between the interrupted run and this resume."""
+    return _hardware_changed_on_resume
+
+
+def get_previous_hardware_signature() -> Optional[dict]:
+    """Return the hardware signature from the interrupted run, or None if unchanged."""
+    return _previous_hardware_signature
 
 
 def start_run(model_name: str = "", preserve_start_time: bool = False) -> None:
@@ -159,7 +176,7 @@ def set_run_status(status: str) -> None:
         _tracker.run_status = status
 
 
-def record_api_call(input_tokens: int = 0, output_tokens: int = 0) -> None:
+def record_api_call(input_tokens: int = 0, output_tokens: int = 0, agent_name: str = "") -> None:
     """Record an API call with token counts.
     
     Automatically persists stats to checkpoint after recording to ensure
@@ -168,12 +185,33 @@ def record_api_call(input_tokens: int = 0, output_tokens: int = 0) -> None:
     Args:
         input_tokens: Number of input/prompt tokens
         output_tokens: Number of output/completion tokens
+        agent_name: Optional agent name for per-agent tracking (e.g., 'strategist', 'operator', 'evaluator')
     """
     global _tracker
     with _lock:
         _tracker.api_request_count += 1
         _tracker.input_tokens += input_tokens
         _tracker.output_tokens += output_tokens
+        
+        # Track per-agent stats if agent_name is provided
+        if agent_name:
+            if agent_name not in _tracker.per_agent_stats:
+                _tracker.per_agent_stats[agent_name] = {
+                    'api_request_count': 0,
+                    'input_tokens': 0,
+                    'output_tokens': 0,
+                    'model_name': '',
+                }
+            agent_stats = _tracker.per_agent_stats[agent_name]
+            agent_stats['api_request_count'] += 1
+            agent_stats['input_tokens'] += input_tokens
+            agent_stats['output_tokens'] += output_tokens
+            
+            # Set model name from env var if not already set
+            if not agent_stats['model_name']:
+                import os
+                agent_model = os.getenv(f"{agent_name.upper()}_MODEL", '')
+                agent_stats['model_name'] = agent_model or _tracker.model_name
     
     # Persist stats immediately after recording (outside lock to avoid deadlock)
     # This ensures stats survive SIGKILL interruptions
@@ -200,16 +238,19 @@ def get_stats() -> UsageStats:
             output_cost_per_million=_tracker.output_cost_per_million,
             model_name=_tracker.model_name,
             run_status=_tracker.run_status,
+            per_agent_stats=dict(_tracker.per_agent_stats),
         )
 
 
 def reset() -> None:
     """Reset all tracking data."""
-    global _tracker
+    global _tracker, _hardware_changed_on_resume, _previous_hardware_signature
     with _lock:
         _tracker = UsageStats()
         _tracker.cumulative_elapsed_time = 0.0
         _tracker.last_session_start = 0.0
+        _hardware_changed_on_resume = False
+        _previous_hardware_signature = None
 
 
 def get_hardware_signature() -> dict:
@@ -300,6 +341,7 @@ def save_stats_to_checkpoint() -> None:
             # Don't save last_session_start - we'll start fresh when resuming
             'run_status': _tracker.run_status,
             'hardware_signature': _tracker.hardware_signature,
+            'per_agent_stats': _tracker.per_agent_stats,
         }
 
         
@@ -321,10 +363,15 @@ def load_stats_from_checkpoint() -> bool:
     Returns:
         True if stats were loaded and accumulated, False otherwise
     """
-    global _tracker
+    global _tracker, _hardware_changed_on_resume, _previous_hardware_signature
     from .tools.base import WORKSPACE_DIR
     
     checkpoint_settings_path = WORKSPACE_DIR / "checkpoint_settings.json"
+
+    # Reset resume-delta state before each load attempt so notices are emitted
+    # only for the current checkpoint comparison.
+    _hardware_changed_on_resume = False
+    _previous_hardware_signature = None
     
     if not checkpoint_settings_path.exists():
         return False
@@ -358,6 +405,10 @@ def load_stats_from_checkpoint() -> bool:
                 hardware_changed = True
         
         if hardware_changed:
+            # Record the change so operator.py can inject an informational message
+            _hardware_changed_on_resume = True
+            _previous_hardware_signature = saved_hw_sig
+
             # Hardware changed - move old stats to history, don't accumulate
             # First, generate a report for the interrupted session
             _generate_report_for_saved_stats(saved_stats)
@@ -418,6 +469,23 @@ def load_stats_from_checkpoint() -> bool:
             if not _tracker.accuracy: _tracker.accuracy = saved_stats.get('accuracy', '')
             if not _tracker.granularity: _tracker.granularity = saved_stats.get('granularity', '')
             if _tracker.enable_rag is None: _tracker.enable_rag = saved_stats.get('enable_rag')
+            
+            # Accumulate per-agent stats
+            saved_per_agent = saved_stats.get('per_agent_stats', {})
+            for agent_name, agent_data in saved_per_agent.items():
+                if agent_name not in _tracker.per_agent_stats:
+                    _tracker.per_agent_stats[agent_name] = {
+                        'api_request_count': 0,
+                        'input_tokens': 0,
+                        'output_tokens': 0,
+                        'model_name': agent_data.get('model_name', ''),
+                    }
+                existing = _tracker.per_agent_stats[agent_name]
+                existing['api_request_count'] += agent_data.get('api_request_count', 0)
+                existing['input_tokens'] += agent_data.get('input_tokens', 0)
+                existing['output_tokens'] += agent_data.get('output_tokens', 0)
+                if not existing.get('model_name'):
+                    existing['model_name'] = agent_data.get('model_name', '')
         
         return True
     except Exception:
@@ -449,6 +517,7 @@ def _generate_report_for_saved_stats(saved_stats: dict) -> None:
         enable_rag=saved_stats.get('enable_rag'),
         run_status=saved_stats.get('run_status', 'interrupted'),  # Default to interrupted
         hardware_signature=saved_stats.get('hardware_signature'),
+        per_agent_stats=saved_stats.get('per_agent_stats', {}),
     )
     
     # Generate report from this stats object
@@ -631,6 +700,19 @@ def _generate_report_from_stats(stats: UsageStats, completed_steps_count: Option
 | Output Tokens | {stats.output_tokens:,} |
 | **Total Tokens** | **{total_tokens:,}** |
 """
+    
+    # Add per-agent breakdown if data is available
+    if stats.per_agent_stats:
+        report += """\n### Per-Agent Breakdown\n\n| Agent | Model | API Calls | Input Tokens | Output Tokens | Total Tokens |\n|-------|-------|-----------|-------------|--------------|--------------|\n"""
+        for agent_name in ['strategist', 'operator', 'evaluator']:
+            if agent_name in stats.per_agent_stats:
+                a = stats.per_agent_stats[agent_name]
+                a_model = a.get('model_name', '') or stats.model_name
+                a_total = a.get('input_tokens', 0) + a.get('output_tokens', 0)
+                # Only show model name if it differs from primary
+                model_display = a_model if a_model != stats.model_name else f"{a_model}"
+                report += f"| {agent_name.capitalize()} | {model_display} | {a.get('api_request_count', 0):,} | {a.get('input_tokens', 0):,} | {a.get('output_tokens', 0):,} | {a_total:,} |\n"
+        report += "\n"
     
     # Add average tokens per step if available
     if avg_input_tokens is not None and avg_output_tokens is not None:

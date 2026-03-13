@@ -10,39 +10,48 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage, System
 class TestRouteAfterInitial:
     """Test route_after_initial logic."""
     
-    def test_replanning_with_plan_goes_to_operator(self):
-        """In replanning mode with a plan, should route to operator."""
+    def _route_after_initial(self, state):
+        """Replicated logic from graph.py for testing."""
+        is_replanning = state.get("is_replanning", False)
+        plan = state.get("plan", [])
+        initial_plan_content = state.get("initial_plan_content", "")
+        
+        # Both standard and replanning modes go to review if initial content exists
+        if initial_plan_content:
+            return "review"
+        
+        # Replanning with plan but no initial_plan_content (legacy/fallback)
+        if is_replanning:
+            return "operator" if plan else "end"
+        
+        return "end"
+    
+    def test_replanning_with_initial_content_goes_to_review(self):
+        """In replanning mode with initial_plan_content, should route to review."""
+        state = {
+            "is_replanning": True,
+            "plan": [],
+            "initial_plan_content": "Here is my replan...",
+        }
+        assert self._route_after_initial(state) == "review"
+    
+    def test_replanning_with_plan_no_content_goes_to_operator(self):
+        """In replanning mode with plan but no initial_plan_content (legacy), should route to operator."""
         state = {
             "is_replanning": True,
             "plan": ["Task 1", "Task 2"],
             "initial_plan_content": "",
         }
-        
-        # Logic: if is_replanning and plan -> "operator"
-        is_replanning = state.get("is_replanning", False)
-        plan = state.get("plan", [])
-        
-        if is_replanning:
-            result = "operator" if plan else "end"
-        else:
-            initial_plan_content = state.get("initial_plan_content", "")
-            result = "review" if initial_plan_content else "end"
-            
-        assert result == "operator"
+        assert self._route_after_initial(state) == "operator"
     
-    def test_replanning_without_plan_goes_to_end(self):
-        """In replanning mode without a plan, should route to end."""
+    def test_replanning_without_plan_or_content_goes_to_end(self):
+        """In replanning mode without plan or content, should route to end."""
         state = {
             "is_replanning": True,
             "plan": [],
             "initial_plan_content": "",
         }
-        
-        is_replanning = state.get("is_replanning", False)
-        plan = state.get("plan", [])
-        result = "operator" if plan else "end"
-        
-        assert result == "end"
+        assert self._route_after_initial(state) == "end"
     
     def test_standard_mode_with_content_goes_to_review(self):
         """In standard mode with initial_plan_content, should route to review."""
@@ -51,18 +60,7 @@ class TestRouteAfterInitial:
             "plan": [],
             "initial_plan_content": "Here is my execution plan...",
         }
-        
-        is_replanning = state.get("is_replanning", False)
-        initial_plan_content = state.get("initial_plan_content", "")
-        
-        if is_replanning:
-            result = "operator"
-        elif initial_plan_content:
-            result = "review"
-        else:
-            result = "end"
-            
-        assert result == "review"
+        assert self._route_after_initial(state) == "review"
     
     def test_standard_mode_no_content_goes_to_end(self):
         """In standard mode without initial_plan_content, should route to end."""
@@ -71,13 +69,7 @@ class TestRouteAfterInitial:
             "plan": [],
             "initial_plan_content": "",
         }
-        
-        is_replanning = state.get("is_replanning", False)
-        initial_plan_content = state.get("initial_plan_content", "")
-        
-        result = "review" if initial_plan_content else "end"
-        
-        assert result == "end"
+        assert self._route_after_initial(state) == "end"
 
 
 class TestRouteAfterReview:

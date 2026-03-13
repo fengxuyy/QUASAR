@@ -3,13 +3,11 @@
  */
 import React from 'react';
 import { Box, Text } from 'ink';
-import Spinner from 'ink-spinner';
 import type { AgentInfo } from '../../hooks/types.js';
 import { INDENT_EVALUATOR, INDENT_AGENT } from '../../utils/constants.js';
 import TriangleSpinner from './TriangleSpinner.js';
+import DotsSpinner from './DotsSpinner.js';
 import chalk from 'chalk';
-
-const SpinnerComponent = Spinner as any;
 
 interface ActiveAgentStatusProps {
     agent: AgentInfo;
@@ -57,7 +55,7 @@ const ActiveAgentStatus: React.FC<ActiveAgentStatusProps> = ({ agent, leftMargin
                 <Text>{chalk.ansi256(253)('L ')}</Text>
                 {!agent.isStreaming && (
                     <Text color={statusColor}>
-                        {isPanelStatus ? <TriangleSpinner /> : <SpinnerComponent type="dots" />}
+                        {isPanelStatus ? <TriangleSpinner /> : <DotsSpinner />}
                         {' '}
                     </Text>
                 )}

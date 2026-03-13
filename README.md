@@ -4,13 +4,14 @@
 
 <h1 align="center">Universal Autonomous System for Atomistic Research</h1>
 
-A research-ready autonomous computational chemistry agentic system. QUASAR covers the full atomistic simulation pipeline with integrated tools including Quantum ESPRESSO, ASE, MACE, pymatgen, LAMMPS, and RASPA3. Currently optimised for Gemini models; other providers may not be fully functional. Broader compatibility coming in future releases.
+A research-ready autonomous computational chemistry agentic system. QUASAR covers the full atomistic simulation pipeline with integrated tools including Density Functional Theory (DFT), Machine Learning Potentials (MLP), Molecular Dynamics (MD), and Grand Canonical Monte Carlo (GCMC), allowing scientists to rapidly iterate on hypotheses, explore large design spaces, and accelerate the discovery of novel materials and phenomena.
 
 <details>
 <summary><strong>Quick Start</strong></summary>
 
-### 1. Install Docker
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux).
+### 1. Install Docker or Singularity
+- **Docker:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux).
+- **HPC:** Singularity for cluster environments.
 
 ### 2. Pull the Image
 Get the latest version from [Docker Hub](https://hub.docker.com/r/fengxuyang/quasar):
@@ -18,31 +19,34 @@ Get the latest version from [Docker Hub](https://hub.docker.com/r/fengxuyang/qua
 docker pull fengxuyang/quasar:<tag>
 ```
 
-### 3. Run via Docker
+### 3. Choose Your Interface
+- **CLI** — Terminal-based interactive interface with essential functionalities; see [CLI](#cli) below.
 
-#### **Option A: CLI**
+- **Batch** — Headless automated execution for background or HPC tasks; see [Batch Jobs](#batch-jobs) below.
+
+- **Web** — A premium web-based experience offering advanced usage, fine-grained control, and rich visualisation; currently in private beta, contact us at [j.evans@adelaide.edu.au](mailto:j.evans@adelaide.edu.au) for early access.
+
+</details>
+
+<br>
+
+
+<details>
+<summary id="cli"><strong>CLI</strong></summary>
+
+Run QUASAR interactively from the terminal or inspect run history.
+
+#### Docker — Interactive
 ```bash
 docker run -it --rm \
-  -e MODEL_API_KEY=<api_key> \
-  -e MODEL=<model_name> \   
-  -v "<workspace_path>:/workspace" fengxuyang/quasar:<tag> \    
-  quasar     
-```
-
-#### **Option B: Batch Mode (Headless)**
-Pass a prompt directly as an argument for automated jobs:
-```bash
-docker run --rm \
   -e MODEL_API_KEY=<api_key> \
   -e MODEL=<model_name> \
   -v "<workspace_path>:/workspace" \
   fengxuyang/quasar:<tag> \
-  quasar "Calculate the band structure of silicon"
+  quasar
 ```
 
-### 4. HPC Singularity
-
-#### **Option A: CLI (Interactive)**
+#### Singularity (HPC) — Interactive
 ```bash
 singularity exec --cleanenv \
   -B "<workspace_path>:/workspace" \
@@ -52,7 +56,36 @@ singularity exec --cleanenv \
   <tag>.sif quasar
 ```
 
-#### **Option B: Batch Mode (Headless)**
+#### `quasar history`
+After a run (or when resuming from a checkpoint), the CLI can show **per-task run history** from the current workspace checkpoint. This is useful to review what the operator and evaluator did for each task without re-running.
+
+- **Command:** `quasar history`
+- **Requires:** A workspace with an existing checkpoint (from a current or past run).
+- **Behavior:** Starts an interactive view that lists all tasks (e.g. `task_1`, `task_2`, …). Use ↑/↓ to select a task and Enter to open it. For the selected task you see the full step-by-step history: task description, operator tool calls (e.g. code snippets, file reads, searches), code outputs, and the evaluator’s summary for that task. Use ESC to go back to the task list; Ctrl+C or Ctrl+D to exit.
+
+If no checkpoint exists, `quasar history` reports that you need to run `quasar` first or resume an interrupted session.
+
+</details>
+
+<br>
+
+<details>
+<summary id="batch-jobs"><strong>Batch Jobs</strong></summary>
+
+Automate your research with one-off batch jobs for headless execution.
+
+#### Docker — Batch (headless)
+Pass a prompt as an argument for automated jobs:
+```bash
+docker run --rm \
+  -e MODEL_API_KEY=<api_key> \
+  -e MODEL=<model_name> \
+  -v "<workspace_path>:/workspace" \
+  fengxuyang/quasar:<tag> \
+  quasar "Calculate the band structure of silicon"
+```
+
+#### Singularity (HPC) — Batch (headless)
 ```bash
 singularity exec --cleanenv \
   -B "<workspace_path>:/workspace" \
@@ -69,7 +102,7 @@ singularity exec --cleanenv \
 <details>
 <summary><strong>Configuration</strong></summary>
 
-When using CLI, configure the system via environment variables:
+Configure the system via environment variables (Web and CLI):
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
@@ -81,6 +114,7 @@ When using CLI, configure the system via environment variables:
 | `IF_RESTART` | Resume from the last checkpoint. | `false` |
 | `PMG_MAPI_KEY` | Materials Project API key for `pymatgen`. | - |
 | `CHECK_INTERVAL`| Minutes between LLM check-ins for long Python runs. | `15` |
+
 
 </details>
 
@@ -121,7 +155,7 @@ When a run completes:
 <br>
 
 <details>
-<summary><strong>Restart Mechanism</strong></summary>
+<summary><strong>Restart</strong></summary>
 
 QUASAR automatically checkpoints progress during execution. To resume from the last checkpoint:
 
@@ -129,7 +163,7 @@ QUASAR automatically checkpoints progress during execution. To resume from the l
 ```bash
 docker run --rm -e IF_RESTART=true \
   -v "<workspace_path>:/workspace" \
-  fengxuyang/quasar-chem:<tag> quasar
+  fengxuyang/quasar:<tag> quasar
 ```
 
 **Singularity:**
@@ -152,14 +186,42 @@ singularity exec --cleanenv \
 
 <br>
 
-### Contact & Advanced Usage
+<details>
+<summary><strong>Acknowledgements</strong></summary>
 
-For the web service and advanced use, please email j.evans@adelaide.edu.au for more information.
+QUASAR is built upon a foundation of powerful open-source tools and research. We gratefully acknowledge the following projects: Quantum ESPRESSO, ASE, MACE, pymatgen, LAMMPS, and RASPA3.
+
+</details>
 
 <br>
 
-### Citation
+<details>
+<summary><strong>Citation</strong></summary>
 
-If you use QUASAR in your research, please cite the following paper:
+If you find QUASAR useful for your research, please cite our benchmark paper:
 
-Yang, Fengxu, and Jack D. Evans. “QUASAR: A Universal Autonomous System for Atomistic Simulation and a Benchmark of Its Capabilities.” arXiv:2602.00185. Preprint, arXiv, January 30, 2026. https://doi.org/10.48550/arXiv.2602.00185.
+> Yang, Fengxu, and Jack D. Evans. **"QUASAR: A Universal Autonomous System for Atomistic Simulation and a Benchmark of Its Capabilities."** *arXiv:2602.00185*, 30 Jan. 2026. [https://doi.org/10.48550/arXiv.2602.00185](https://doi.org/10.48550/arXiv.2602.00185)
+
+```bibtex
+@misc{yang2026quasar,
+      title={QUASAR: A Universal Autonomous System for Atomistic Simulation and a Benchmark of Its Capabilities}, 
+      author={Fengxu Yang and Jack D. Evans},
+      year={2026},
+      eprint={2602.00185},
+      archivePrefix={arXiv},
+      primaryClass={physics.chem-ph},
+      url={https://arxiv.org/abs/2602.00185}, 
+}
+```
+
+</details>
+
+<br>
+
+<details>
+<summary><strong>Contact</strong></summary>
+
+For inquiries, advanced features, or beta access, please reach out to: [j.evans@adelaide.edu.au](mailto:j.evans@adelaide.edu.au)
+
+
+</details>

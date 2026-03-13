@@ -49,7 +49,7 @@ TOOL_DISPLAY_MESSAGES = {
     'analyze_image': 'Analyzed image',
     'search_web': 'Searched web',
     'fetch_web_page': 'Fetched web page',
-    'grep_search': 'Searched files',
+    'grep_search': 'Grepped files',
     'get_hardware_info': 'Checked Hardware',
 }
 
@@ -63,7 +63,7 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
         file_name = os.path.basename(file_path) if file_path else 'file'
         
         if keyword:
-            return f"Searched {keyword} in {file_name}"
+            return f"Read {file_name} ({keyword})"
         else:
             return f"Read {file_name}"
     
@@ -111,8 +111,8 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
             display_pattern = pattern[:50] + '...' if len(pattern) > 50 else pattern
             if directory_path and directory_path != '.':
                 dir_name = os.path.basename(str(directory_path).rstrip('/'))
-                return f"Searched files {display_pattern} in {dir_name}"
-            return f"Searched files {display_pattern}"
+                return f"Grepped files {display_pattern} in {dir_name}"
+            return f"Grepped files {display_pattern}"
     
     # Special handling for execute_code - show file name or truncated code
     if tool_name in ('execute_code', 'execute_python') and tool_args:
@@ -257,7 +257,7 @@ def _format_error_content(tool_name: str, tool_args: dict, content_str: str) -> 
             'analyze_image': 'Analyze Image Failed',
             'search_web': 'Search Web Failed',
             'fetch_web_page': 'Fetch Web Page Failed',
-            'grep_search': 'Search Files Failed',
+            'grep_search': 'Grep Files Failed',
         }
         return tool_error_names.get(tool_name, f"{tool_name} Failed")
     
@@ -327,13 +327,13 @@ def _format_error_content(tool_name: str, tool_args: dict, content_str: str) -> 
         pattern = tool_args.get("pattern", "")[:50]
         directory_path = tool_args.get("directory_path", ".")
         if "timed out" in content_lower:
-            return f"Search timed out for {pattern}"
+            return f"Grep timed out for {pattern}"
         elif "no matches found" in content_lower:
             return f"No matches for {pattern}"
         elif "not a directory" in content_lower or "does not exist" in content_lower:
             dir_name = os.path.basename(str(directory_path).rstrip('/')) if directory_path != '.' else 'directory'
             return f"{dir_name} not found"
-        return f"Search failed for {pattern}"
+        return f"Grep failed for {pattern}"
     
     # Generic fallback for other tools if error detected but no specific mapping
     if "not found" in content_lower or "does not exist" in content_lower or "no such file" in content_lower:
@@ -360,9 +360,10 @@ def _format_success_content(tool_name: str, tool_args: dict, content_str: str) -
         if match_re:
             lines_str = match_re.group(1)
             match_count = len([l.strip() for l in lines_str.split(',') if l.strip()])
-            return f"Searched {keyword} in {file_name} ({match_count} match{'es' if match_count != 1 else ''})"
+            match_word = "match" if match_count == 1 else "matches"
+            return f"Read {file_name} ({keyword}: {match_count} {match_word})"
         else:
-            return f"Searched {keyword} in {file_name}"
+            return f"Read {file_name} ({keyword})"
     
     elif tool_name == "search_web":
         query = tool_args.get("query", "")[:50]
@@ -399,27 +400,32 @@ def _format_success_content(tool_name: str, tool_args: dict, content_str: str) -
     elif tool_name == "grep_search":
         pattern = tool_args.get("pattern", "")[:50]
         directory_path = tool_args.get("directory_path", ".")
+        content_lower = content_str.lower()
         
-        # Count matches by counting lines in the output (each match is typically one line)
-        # The output format is: "file_path:line_number:content"
-        match_lines = [line for line in content_str.split('\n') if line.strip() and not line.startswith('**Grep Search:**')]
-        match_count = len(match_lines)
+        # No matches: tool returns "No matches found for pattern ..." - don't count that line as a match
+        if "no matches found" in content_lower:
+            if directory_path and directory_path != '.':
+                dir_name = os.path.basename(str(directory_path).rstrip('/'))
+                return f"Grepped files {pattern} in {dir_name}"
+            return f"Grepped files {pattern}"
         
-        # Check if results were truncated
-        is_truncated = "truncated" in content_str.lower() or "showing first" in content_str.lower()
-        
-        if match_count > 0:
+        # Extract match count from "Found X matches" in the tool output (success case)
+        match_re = re.search(r'Found (\d+) matches', content_str)
+        if match_re:
+            match_count = int(match_re.group(1))
+            is_truncated = "truncated" in content_lower or "showing first" in content_lower
             match_word = "match" if match_count == 1 else "matches"
             truncated_text = " (truncated)" if is_truncated else ""
             if directory_path and directory_path != '.':
                 dir_name = os.path.basename(str(directory_path).rstrip('/'))
-                return f"Searched files {pattern} in {dir_name} ({match_count} {match_word}{truncated_text})"
-            return f"Searched files {pattern} ({match_count} {match_word}{truncated_text})"
-        else:
-            if directory_path and directory_path != '.':
-                dir_name = os.path.basename(str(directory_path).rstrip('/'))
-                return f"Searched files {pattern} in {dir_name}"
-            return f"Searched files {pattern}"
+                return f"Grepped files {pattern} in {dir_name} ({match_count} {match_word}{truncated_text})"
+            return f"Grepped files {pattern} ({match_count} {match_word}{truncated_text})"
+        
+        # Fallback: no "Found X matches" and no "no matches found"
+        if directory_path and directory_path != '.':
+            dir_name = os.path.basename(str(directory_path).rstrip('/'))
+            return f"Grepped files {pattern} in {dir_name}"
+        return f"Grepped files {pattern}"
     
     return None  # Use default content
 
@@ -454,18 +460,41 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
     
     is_replan = replan_detected
     
+    # Strategist tools (tools available to strategist during planning - normal mode only, no web search)
+    # In replanning mode, strategist also has search_web and fetch_web_page
+    STRATEGIST_TOOLS_NORMAL = {'read_file', 'list_directory', 'analyze_image', 'grep_search'}
+    STRATEGIST_TOOLS_REPLANNING = {'read_file', 'list_directory', 'analyze_image', 'grep_search', 'search_web', 'fetch_web_page'}
+    # Use the combined set for history reconstruction since we need to detect both modes
+    STRATEGIST_TOOLS = STRATEGIST_TOOLS_NORMAL | STRATEGIST_TOOLS_REPLANNING
+    
     # Extract plans from strategist's AIMessages
+    # Only scan messages from the planning phase (before operator starts working)
+    # to avoid matching operator analysis text that contains "Task" and "###"
     all_plans = []
+    
+    # Use initial_plan_content from state if available (more reliable)
+    state_initial_plan = state_values.get('initial_plan_content', '').strip()
+    
     for msg in messages:
         if isinstance(msg, AIMessage) and msg.content:
             content = _extract_text(msg.content).strip()
+            tool_calls = _get_tool_calls(msg)
+            
+            # If this AIMessage has tool calls that are NOT strategist tools,
+            # the planning phase is over — stop scanning for plans
+            if tool_calls:
+                tool_names = {_extract_tool_info(tc)[0] for tc in tool_calls if _extract_tool_info(tc)[0]}
+                non_strategist_tools = tool_names - STRATEGIST_TOOLS
+                if non_strategist_tools:
+                    break
+            
             # Heuristic to identify plan messages
             if 'Task' in content and ('Guidance' in content or 'Task 1' in content or '###' in content):
                 all_plans.append(content)
     
     # In standard mode, we should have two plans (initial and reviewed)
     # in replanning mode, there might only be one.
-    initial_plan_text = all_plans[0] if len(all_plans) > 1 else ""
+    initial_plan_text = all_plans[0] if len(all_plans) > 1 else (state_initial_plan if state_initial_plan else "")
     full_plan_text = all_plans[-1] if all_plans else ""
     
     # Track items by task
@@ -477,12 +506,7 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
     in_evaluator = False
     in_planning_phase = True  # Track if we're still in planning phase
     
-    # Strategist tools (tools available to strategist during planning - normal mode only, no web search)
-    # In replanning mode, strategist also has search_web and fetch_web_page
-    STRATEGIST_TOOLS_NORMAL = {'read_file', 'list_directory', 'analyze_image', 'grep_search'}
-    STRATEGIST_TOOLS_REPLANNING = {'read_file', 'list_directory', 'analyze_image', 'grep_search', 'search_web', 'fetch_web_page'}
-    # Use the combined set for history reconstruction since we need to detect both modes
-    STRATEGIST_TOOLS = STRATEGIST_TOOLS_NORMAL | STRATEGIST_TOOLS_REPLANNING
+    # STRATEGIST_TOOLS, STRATEGIST_TOOLS_NORMAL, STRATEGIST_TOOLS_REPLANNING defined above (before plan extraction)
     
     # Evaluator-specific tools (these are the only tools available to the evaluator)
     EVALUATOR_TOOLS = {'read_file', 'list_directory', 'analyze_image', 'search_web', 'fetch_web_page', 'submit_evaluation', 'grep_search'}
@@ -806,6 +830,13 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
                         # Store the output in the tool item for display
                         matching_tool["output"] = diff_output
 
+                # Add output for grep_search, search_web, fetch_web_page (collapsible details in history)
+                if tool_name in ("grep_search", "search_web", "fetch_web_page") and content_str:
+                    truncated = content_str[:5000] if len(content_str) > 5000 else content_str
+                    if len(content_str) > 5000:
+                        truncated += "\n\n... [Results truncated for display]"
+                    matching_tool["output"] = truncated
+
         # Handle text content from AIMessage (model thought/text)
         elif isinstance(msg, AIMessage) and msg.content:
             content = _extract_text(msg.content).strip()
@@ -916,6 +947,13 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
                         success_content = _format_success_content(tool_name, tool_args, content_str)
                         if success_content:
                             matching_tool["content"] = success_content
+                    
+                    # Add output for grep_search, search_web, fetch_web_page (collapsible details in history)
+                    if tool_name in ("grep_search", "search_web", "fetch_web_page") and content_str:
+                        truncated = content_str[:5000] if len(content_str) > 5000 else content_str
+                        if len(content_str) > 5000:
+                            truncated += "\n\n... [Results truncated for display]"
+                        matching_tool["output"] = truncated
     
     # Build backward-compatible flat list
     operator_tools = []

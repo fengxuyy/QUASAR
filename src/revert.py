@@ -14,6 +14,7 @@ from .checkpoint import DB_PATH, THREAD_ID, create_checkpoint_infrastructure, ge
 from .graph import build_graph
 from .tools.base import WORKSPACE_DIR, LOGS_DIR
 from .debug_logger import log_custom, log_exception
+from .pending_execution import clear_pending_execution
 
 
 # System files that should never be deleted during revert
@@ -439,6 +440,13 @@ def revert_to_task(target_task: int) -> dict:
         deleted_checkpoints = delete_checkpoints_after(checkpoint_id)
         
         log_custom("REVERT", f"Deleted {deleted_checkpoints} checkpoints after target")
+        
+        # Clear any stale pending execution file from a previous run of this task.
+        # If a crash/SIGKILL occurred mid-execute_python before the revert, the file
+        # would survive and cause the operator (on its second iteration after revert)
+        # to falsely believe it had already started and interrupted an execution.
+        clear_pending_execution()
+        log_custom("REVERT", "Cleared pending execution state (if any)")
         
         return {
             "success": True,

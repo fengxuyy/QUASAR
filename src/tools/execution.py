@@ -5,9 +5,13 @@ import sys
 import tempfile
 import time
 import traceback
+import io
+import threading
+from collections import deque
 from pathlib import Path
 from typing import Optional, Union, Dict, Any
 
+import psutil
 from langchain_core.tools import tool
 
 from .base import WORKSPACE_DIR, truncate_content, get_all_files, format_file_list, PROTECTED_SYSTEM_FILES
@@ -19,6 +23,21 @@ _process_pgid: Optional[int] = None  # Process group ID for killing child proces
 _process_start_time: Optional[float] = None
 _process_script_path: Optional[Path] = None
 _process_files_before: Optional[set] = None
+_process_stdout_chunks: Optional[deque[str]] = None
+_process_stderr_chunks: Optional[deque[str]] = None
+_process_stdout_size: int = 0
+_process_stderr_size: int = 0
+_process_output_lock = threading.Lock()
+_process_output_threads: list[threading.Thread] = []
+
+
+_MAX_CAPTURE_CHARS = 500_000
+
+
+def _get_resource_usage_lazy(pid: int = None) -> str:
+    """Lazy-import wrapper to avoid circular import between src.tools and src.agents."""
+    from ..agents.utils.system import get_resource_usage
+    return get_resource_usage(pid=pid)
 
 
 def _get_check_interval() -> int:
@@ -41,6 +60,94 @@ def _format_elapsed_time(seconds: float) -> str:
     return f"{minutes} minute{'s' if minutes != 1 else ''}"
 
 
+def _reset_output_capture() -> None:
+    """Reset buffered stdout/stderr state for the active execution."""
+    global _process_stdout_chunks, _process_stderr_chunks
+    global _process_stdout_size, _process_stderr_size, _process_output_threads
+
+    _process_stdout_chunks = None
+    _process_stderr_chunks = None
+    _process_stdout_size = 0
+    _process_stderr_size = 0
+    _process_output_threads = []
+
+
+def _append_captured_output(stream_name: str, chunk: str) -> None:
+    """Append output while keeping memory bounded for long-running jobs."""
+    global _process_stdout_chunks, _process_stderr_chunks
+    global _process_stdout_size, _process_stderr_size
+
+    with _process_output_lock:
+        if stream_name == "stdout":
+            if _process_stdout_chunks is None:
+                _process_stdout_chunks = deque()
+            _process_stdout_chunks.append(chunk)
+            _process_stdout_size += len(chunk)
+            while _process_stdout_size > _MAX_CAPTURE_CHARS and _process_stdout_chunks:
+                _process_stdout_size -= len(_process_stdout_chunks.popleft())
+        else:
+            if _process_stderr_chunks is None:
+                _process_stderr_chunks = deque()
+            _process_stderr_chunks.append(chunk)
+            _process_stderr_size += len(chunk)
+            while _process_stderr_size > _MAX_CAPTURE_CHARS and _process_stderr_chunks:
+                _process_stderr_size -= len(_process_stderr_chunks.popleft())
+
+
+def _drain_process_stream(stream: io.TextIOBase, stream_name: str) -> None:
+    """Continuously drain a subprocess pipe so verbose jobs do not block."""
+    try:
+        for chunk in iter(stream.readline, ""):
+            if not chunk:
+                break
+            _append_captured_output(stream_name, chunk)
+    except Exception:
+        pass
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+
+
+def _start_output_capture(process: subprocess.Popen) -> None:
+    """Start background readers for stdout/stderr when real pipes are available."""
+    global _process_output_threads
+
+    _reset_output_capture()
+
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(process, stream_name, None)
+        if isinstance(stream, io.TextIOBase):
+            reader = threading.Thread(
+                target=_drain_process_stream,
+                args=(stream, stream_name),
+                daemon=True,
+            )
+            reader.start()
+            _process_output_threads.append(reader)
+
+
+def _consume_captured_output(process: subprocess.Popen) -> tuple[str, str]:
+    """Collect buffered stdout/stderr, falling back to communicate for mocked processes."""
+    global _process_stdout_chunks, _process_stderr_chunks, _process_output_threads
+
+    if _process_output_threads:
+        for reader in _process_output_threads:
+            reader.join(timeout=1.0)
+
+        with _process_output_lock:
+            stdout = "".join(_process_stdout_chunks) if _process_stdout_chunks else ""
+            stderr = "".join(_process_stderr_chunks) if _process_stderr_chunks else ""
+
+        _reset_output_capture()
+        return stdout, stderr
+
+    stdout, stderr = process.communicate()
+    _reset_output_capture()
+    return stdout, stderr
+
+
 def _collect_execution_result(
     process: subprocess.Popen,
     script_path: Path,
@@ -48,7 +155,7 @@ def _collect_execution_result(
     was_interrupted: bool = False
 ) -> str:
     """Collect and format execution result from a completed/terminated process."""
-    stdout, stderr = process.communicate()
+    stdout, stderr = _consume_captured_output(process)
     
     # Capture files after execution to detect changes
     files_after = get_all_files()
@@ -90,12 +197,85 @@ def _collect_execution_result(
     
     return md_result.strip()
 
+def _kill_process_and_children(process: subprocess.Popen, pgid: Optional[int]) -> None:
+    """Recursively kill a process, its children, and its process group."""
+    processes_to_kill = set()
+    
+    # 1. Collect process tree using psutil
+    try:
+        parent = psutil.Process(process.pid)
+        children = parent.children(recursive=True)
+        processes_to_kill.add(parent)
+        processes_to_kill.update(children)
+    except psutil.NoSuchProcess:
+        pass
+    
+    # 2. Try graceful termination first (SIGTERM)
+    # Send to specific processes we found
+    for p in processes_to_kill:
+        try:
+            p.terminate()
+        except psutil.NoSuchProcess:
+            pass
+            
+    # Also send to process group if we have it
+    if pgid is not None:
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+            
+    # Brief wait for graceful exit
+    if processes_to_kill:
+        psutil.wait_procs(processes_to_kill, timeout=2.0)
+    else:
+        time.sleep(1.0)
+        
+    # 3. Force kill anything still alive (SIGKILL)
+    for p in processes_to_kill:
+        try:
+            if p.is_running():
+                p.kill()
+        except psutil.NoSuchProcess:
+            pass
+            
+    if pgid is not None:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+            
+    # Try one final wait on the main subprocess
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _find_processes_in_group(pgid: Optional[int], exclude_pids: Optional[set[int]] = None) -> list[psutil.Process]:
+    """Return processes that are still in the given process group."""
+    if pgid is None:
+        return []
+
+    exclude_pids = exclude_pids or set()
+    matches: list[psutil.Process] = []
+    for proc in psutil.process_iter(['pid']):
+        try:
+            if proc.pid in exclude_pids:
+                continue
+            if os.getpgid(proc.pid) == pgid:
+                matches.append(proc)
+        except (ProcessLookupError, PermissionError):
+            continue
+    return matches
+
 
 @tool
 def execute_python(
+    trial_timeout: Optional[float],
     file_path: Optional[str] = None,
     code: Optional[str] = None,
-    omp_num_threads: int = 1
+    omp_num_threads: int = 1,
 ) -> Union[str, Dict[str, Any]]:
     """Execute Python code directly or from a file.
     
@@ -106,6 +286,9 @@ def execute_python(
     environment variable (default: 900 seconds = 15 minutes).
     
     Args:
+        trial_timeout: Hard timeout in minutes for trial/test runs. Pass a positive float to cap
+                       runtime (e.g. 2.0 for a 2-minute smoke test). Pass None explicitly for
+                       production runs where no timeout should be enforced.
         file_path: Optional path to the Python file. If provided with `code`, the code will be written 
                    to this file before execution. If provided without `code`, the existing file will be executed.
         code: Optional Python code to execute directly. If provided without `file_path`, a temporary file 
@@ -119,15 +302,26 @@ def execute_python(
         may return a check-in request dict that prompts the LLM to decide whether to continue.
     
     Examples:
-        - execute_python(file_path="script.py") - Execute existing file
-        - execute_python(code="print('hello')", file_path="hello.py") - Write code to file then execute
-        - execute_python(code="print(2+2)") - Execute simple code via temp file (for quick tests only)
+        - execute_python(None, file_path="script.py") - Production run, no timeout
+        - execute_python(None, code="print('hello')", file_path="production.py") - Production run
+        - execute_python(2.0, code="print('smoke')") - Trial run with 2-minute timeout
     """
     global _running_process, _process_start_time, _process_script_path, _process_files_before
     
     # Validate arguments
     if file_path is None and code is None:
         return "Error: Either 'file_path' or 'code' must be provided."
+
+    test_timeout_seconds: Optional[float] = None
+    trial_timeout_value: Optional[float] = None
+    if trial_timeout is not None:
+        try:
+            trial_timeout_value = float(trial_timeout)
+        except (TypeError, ValueError):
+            return "Error: 'trial_timeout' must be a positive number of minutes."
+        if trial_timeout_value <= 0:
+            return "Error: 'trial_timeout' must be a positive number of minutes."
+        test_timeout_seconds = trial_timeout_value * 60.0
     
     # Get check-in interval
     check_interval = _get_check_interval()
@@ -210,13 +404,16 @@ def execute_python(
         # This allows us to kill all child processes (MPI jobs) together
         process = subprocess.Popen(
             cmd, 
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, 
             stderr=subprocess.PIPE, 
+            bufsize=1,
             text=True, 
             cwd=str(WORKSPACE_DIR), 
             env=env,
             start_new_session=True
         )
+        _start_output_capture(process)
         
         # Get the process group ID for later cleanup
         pgid = os.getpgid(process.pid)
@@ -237,22 +434,7 @@ def execute_python(
                 import bridge
                 if bridge.interrupt_event.is_set():
                     # Kill process and return interrupted result
-                    if _process_pgid is not None:
-                        try:
-                            # Send SIGTERM to entire process group
-                            os.killpg(_process_pgid, signal.SIGTERM)
-                            
-                            # Brief wait to allow graceful termination
-                            # We can't wait too long as responsiveness is key
-                            time.sleep(1)
-                            
-                            try:
-                                # Force kill if still running
-                                os.killpg(_process_pgid, signal.SIGKILL)
-                            except ProcessLookupError:
-                                pass
-                        except (ProcessLookupError, PermissionError):
-                            pass
+                    _kill_process_and_children(process, _process_pgid)
                     
                     # Collect partial result with interrupted flag
                     result = _collect_execution_result(process, script_path, files_before, was_interrupted=True)
@@ -272,6 +454,11 @@ def execute_python(
             # Check if process has completed
             poll_result = process.poll()
             if poll_result is not None:
+                leftover = _find_processes_in_group(_process_pgid, exclude_pids={process.pid})
+                if leftover:
+                    # Ensure any stray child processes are terminated (even if the script exits cleanly).
+                    _kill_process_and_children(process, _process_pgid)
+
                 # Process completed - clean up global state
                 _running_process = None
                 _process_pgid = None
@@ -288,8 +475,34 @@ def execute_python(
                 
                 return _collect_execution_result(process, script_path, files_before)
             
-            # Check if we've reached the check-in interval
+            # Check if we've reached the test timeout or check-in interval
             elapsed = time.time() - start_time
+            if test_timeout_seconds is not None and elapsed >= test_timeout_seconds:
+                # Test timeout reached - terminate process and return partial output
+                _kill_process_and_children(process, _process_pgid)
+
+                result = _collect_execution_result(process, script_path, files_before)
+
+                # Clean up global state
+                _running_process = None
+                _process_pgid = None
+                _process_start_time = None
+                _process_script_path = None
+                _process_files_before = None
+
+                # Clean up temp file if used
+                if use_temp_file and script_path.exists():
+                    try:
+                        script_path.unlink()
+                    except Exception:
+                        pass
+
+                timeout_info = (
+                    "\n\n**Test Timeout:**\n\n"
+                    f"> Execution exceeded the test timeout of {trial_timeout_value} minutes.\n"
+                    "> The process was terminated. For full runs, remove `trial_timeout`.\n\n"
+                )
+                return timeout_info + result
             if elapsed >= check_interval:
                 # Return check-in request - operator will handle prompting LLM
                 return {
@@ -297,7 +510,8 @@ def execute_python(
                     "elapsed_seconds": elapsed,
                     "elapsed_display": _format_elapsed_time(elapsed),
                     "file_path": str(script_path),
-                    "use_temp_file": use_temp_file
+                    "use_temp_file": use_temp_file,
+                    "resource_usage": _get_resource_usage_lazy(pid=process.pid)
                 }
             
             # Sleep briefly before next poll (100ms)
@@ -307,17 +521,9 @@ def execute_python(
         # Special handling for subprocess timeout - kill all child processes and return to LLM
         # This catches when user's script has an uncaught subprocess.wait(timeout=X) that expires
         
-        # Try to kill all child processes spawned by the script
-        if _process_pgid is not None:
-            try:
-                os.killpg(_process_pgid, signal.SIGTERM)
-                time.sleep(2)  # Give processes time to terminate
-                try:
-                    os.killpg(_process_pgid, signal.SIGKILL)  # Force kill any remaining
-                except ProcessLookupError:
-                    pass  # Already terminated
-            except (ProcessLookupError, PermissionError):
-                pass  # Process group already terminated
+        # Try to kill all child processes spawned by the script using psutil + killpg
+        if _running_process is not None:
+            _kill_process_and_children(_running_process, _process_pgid)
         
         # Collect any partial output
         result_msg = _collect_execution_result(
@@ -346,6 +552,8 @@ def execute_python(
                 _process_script_path.unlink()
             except Exception:
                 pass
+
+        _reset_output_capture()
                 
         # Clean up global state on error
         _running_process = None
@@ -400,7 +608,8 @@ def resume_execution() -> Union[str, Dict[str, Any]]:
                 "elapsed_seconds": total_elapsed,
                 "elapsed_display": _format_elapsed_time(total_elapsed),
                 "file_path": str(script_path),
-                "use_temp_file": False  # Temp files don't get resumed
+                "use_temp_file": False,  # Temp files don't get resumed
+                "resource_usage": _get_resource_usage_lazy(pid=process.pid)
             }
         
         # Sleep briefly before next poll
@@ -424,31 +633,8 @@ def interrupt_running_execution() -> str:
     script_path = _process_script_path
     files_before = _process_files_before
     
-    # Terminate the entire process group (kills all child processes including MPI jobs)
-    try:
-        if pgid is not None:
-            # Send SIGTERM to entire process group
-            os.killpg(pgid, signal.SIGTERM)
-            # Give processes a moment to terminate gracefully
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                # Force kill if they don't terminate
-                os.killpg(pgid, signal.SIGKILL)
-                process.wait(timeout=5)
-        else:
-            # Fallback to single process termination
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-    except (ProcessLookupError, PermissionError):
-        # Process/group already terminated
-        pass
-    except Exception:
-        pass
+    # Terminate the entire process tree using psutil (kills all child processes including MPI jobs)
+    _kill_process_and_children(process, pgid)
     
     # Clean up global state
     _running_process = None

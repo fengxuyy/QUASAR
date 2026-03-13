@@ -19,13 +19,23 @@ from .tools import (
 from .debug_logger import log_route_after_planning, log_custom
 
 
-def build_graph(llm):
+def build_graph(llm, agent_llms=None):
     """Build and configure the state graph.
     
     Args:
-        llm: The initialized LLM object to use for agents.
+        llm: The initialized LLM object to use for agents (default/fallback).
+        agent_llms: Optional dict mapping agent name to LLM instance.
+                    Keys: 'strategist', 'operator', 'evaluator'.
+                    Falls back to llm when a key is missing.
     """
     log_custom("GRAPH", "Building graph")
+    
+    # Resolve per-agent LLMs (fall back to primary)
+    if agent_llms is None:
+        agent_llms = {}
+    strategist_llm_base = agent_llms.get("strategist", llm)
+    operator_llm_base = agent_llms.get("operator", llm)
+    evaluator_llm_base = agent_llms.get("evaluator", llm)
     
     all_tools = get_all_tools()
     # Normal mode strategist tools (no web search)
@@ -37,21 +47,21 @@ def build_graph(llm):
     
     # Bind tools once for each agent to ensure proper tool binding
     # Strategist uses replanning tools (superset) - filtering happens inside the node
-    strategist_llm_normal = llm.bind_tools(strategist_tools_normal)
-    strategist_llm_replanning = llm.bind_tools(strategist_tools_replanning)
-    operator_llm = llm.bind_tools(operator_tools)
-    evaluator_llm = llm.bind_tools(evaluator_tools)
+    strategist_llm_normal = strategist_llm_base.bind_tools(strategist_tools_normal)
+    strategist_llm_replanning = strategist_llm_base.bind_tools(strategist_tools_replanning)
+    operator_llm = operator_llm_base.bind_tools(operator_tools)
+    evaluator_llm = evaluator_llm_base.bind_tools(evaluator_tools)
     
     graph_builder = StateGraph(State)
     
     # Two strategist nodes for checkpointing between initial plan and review
     # Pass both tool sets - node will choose based on is_replanning
     graph_builder.add_node("strategist_initial", lambda s: strategist_initial_node(
-        s, llm, 
+        s, strategist_llm_base, 
         strategist_llm_normal, strategist_tools_normal,
         strategist_llm_replanning, strategist_tools_replanning
     ))
-    graph_builder.add_node("strategist_review", lambda s: strategist_review_node(s, llm))
+    graph_builder.add_node("strategist_review", lambda s: strategist_review_node(s, strategist_llm_base))
     graph_builder.add_node("operator", lambda s: operator_node(s, operator_llm, operator_tools))
     
     # Two evaluator nodes for checkpointing between setup and each iteration
@@ -62,7 +72,7 @@ def build_graph(llm):
     graph_builder.add_edge(START, "strategist_initial")
 
     def route_after_initial(state: State) -> str:
-        """Route after initial strategist: to review (standard) or operator (replanning)."""
+        """Route after initial strategist: to review if initial content exists."""
         is_replanning = state.get("is_replanning", False)
         plan = state.get("plan", [])
         initial_plan_content = state.get("initial_plan_content", "")
@@ -73,13 +83,13 @@ def build_graph(llm):
             "has_initial_content": bool(initial_plan_content),
         })
         
-        # In replanning mode, initial node already extracted plan, go to operator
-        if is_replanning:
-            return "operator" if plan else "end"
-        
-        # In standard mode, go to review phase if we have initial content
+        # Both standard and replanning modes go to review if initial content exists
         if initial_plan_content:
             return "review"
+        
+        # Replanning with plan but no initial_plan_content (legacy/fallback)
+        if is_replanning:
+            return "operator" if plan else "end"
         
         # No content, end
         return "end"

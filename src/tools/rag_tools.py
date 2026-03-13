@@ -11,7 +11,7 @@ from .base import WORKSPACE_DIR
 
 @tool
 def initialize_rag_from_directory(directory_path: Optional[str] = None) -> str:
-    """Initialize or reindex the RAG system with ASE, pymatgen, MACE, RASPA3, and Quantum ESPRESSO documentation.
+    """Initialize or reindex the RAG system with ASE, pymatgen, MACE, RASPA3, Quantum ESPRESSO, NWChem, and RDKit documentation.
     
     Args:
         directory_path: Path to directory containing source code or docs.
@@ -44,19 +44,19 @@ def initialize_rag_from_directory(directory_path: Optional[str] = None) -> str:
         except:
             return "RAG system initialized successfully."
     else:
-        return "Error: Failed to initialize RAG system. Check that the directory path is correct and contains ASE, pymatgen, MACE, RASPA3, or Quantum ESPRESSO files."
+        return "Error: Failed to initialize RAG system. Check that the directory path is correct and contains ASE, pymatgen, MACE, RASPA3, Quantum ESPRESSO, NWChem, or RDKit files."
 
 
 @tool
 def query_rag(query: str, library: str, top_k: int = 3) -> str:
-    """Query the RAG system for ASE, pymatgen, MACE, RASPA3, and Quantum ESPRESSO-related information.
+    """Query the RAG system for ASE, pymatgen, MACE, RASPA3, Quantum ESPRESSO, NWChem, and RDKit-related information.
     
-    This is your exclusive source of information for ASE, pymatgen, MACE, RASPA3, and Quantum ESPRESSO API usage.
+    This is your exclusive source of information for ASE, pymatgen, MACE, RASPA3, Quantum ESPRESSO, NWChem, and RDKit API usage.
     Always query RAG before writing any code using these libraries.
     
     Args:
-        query: The search query about ASE, pymatgen, MACE, RASPA3, or Quantum ESPRESSO functionality
-        library: Library name to filter by. Valid values: "raspa3", "qe", "mace", "pymatgen", "ase"
+        query: The search query about ASE, pymatgen, MACE, RASPA3, Quantum ESPRESSO, NWChem, or RDKit functionality
+        library: Library name to filter by. Valid values: "raspa3", "qe", "mace", "pymatgen", "ase", "nwchem", "rdkit"
         top_k: Number of results to return (default: 3)
     
     Returns:

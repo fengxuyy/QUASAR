@@ -135,15 +135,16 @@ def test_format_file_list_simple():
 
 
 def test_format_file_list_collapse_ranges():
-    """Test format_file_list collapsing numbered sequences."""
+    """Test format_file_list collapsing directories with many files."""
     from src.tools.base import format_file_list
     
-    # Create many numbered files
-    files = [f"output_{i}.dat" for i in range(1, 25)]
-    result = format_file_list(files, max_files_per_dir=10)
+    # Create many files in same dir
+    files = [f"dir/output_{i}.dat" for i in range(1, 10)]
+    result = format_file_list(files, max_files_per_dir=5)
     
-    # Should collapse the range
-    assert "files" in result.lower()  # Should mention number of files
+    # Should just mention the directory name
+    assert "- `dir`" in result
+    assert "output_1.dat" not in result
 
 
 def test_get_all_files(mock_workspace):
@@ -177,23 +178,5 @@ def test_get_all_files(mock_workspace):
     assert not any("__pycache__" in f for f in files)
 
 
-def test_find_number_ranges():
-    """Test _find_number_ranges helper."""
-    from src.tools.base import _find_number_ranges
-    
-    # Consecutive numbers
-    result = _find_number_ranges([1, 2, 3, 4, 5])
-    assert result == [(1, 5)]
-    
-    # Gaps
-    result = _find_number_ranges([1, 2, 5, 6, 7, 10])
-    assert result == [(1, 2), (5, 7), (10, 10)]
-    
-    # Single number
-    result = _find_number_ranges([5])
-    assert result == [(5, 5)]
-    
-    # Empty
-    result = _find_number_ranges([])
-    assert result == []
+
 

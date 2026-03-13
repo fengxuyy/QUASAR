@@ -104,14 +104,14 @@ def _sanitize_error_message(error_str: str) -> str:
 def is_api_connection_error(e: Exception) -> bool:
     """Check if an exception is a known API connection error based on HTTP error codes."""
     # API error codes to detect: 400 (Bad Request), 401 (Unauthorized), 404 (Not Found - invalid model), 
-    # 429 (Rate Limit), 500 (Server Error)
-    api_error_codes = {400, 401, 404, 429, 500}
+    # 429 (Rate Limit), 499 (Client Closed Request), 500 (Server Error), 502 (Bad Gateway), 503 (Service Unavailable), 504 (Gateway Timeout)
+    api_error_codes = {400, 401, 404, 429, 499, 500, 502, 503, 504}
     
     error_str = str(e)
     
     # Try to extract error code from the error string
     # Pattern 1: Look for "429 RESOURCE_EXHAUSTED" or "401 UNAUTHORIZED" or "404 NOT_FOUND" etc.
-    code_match = re.search(r'\b(400|401|404|429|500)\b', error_str)
+    code_match = re.search(r'\b(400|401|404|429|499|500|502|503|504)\b', error_str)
     if code_match:
         return True
     

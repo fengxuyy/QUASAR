@@ -60,12 +60,6 @@ REPO_CONFIGS = [
         "sparse_paths": ["Doc", "PW/Doc", "PW/examples", "PP/Doc", "PP/examples", 
                         "PHonon/Doc", "PHonon/examples", "README.md"],
     },
-    {
-        "name": "LAMMPS",
-        "url": "https://github.com/lammps/lammps.git",
-        "target": "lammps",
-        "sparse_paths": ["doc/src", "examples", "README", "doc/README"],
-    },
 ]
 
 # Pseudopotential URLs for Quantum ESPRESSO
@@ -78,6 +72,18 @@ QE_PSEUDO_URLS = [
     "https://www.pseudo-dojo.org/pseudos/nc-fr-04_pbe_standard_upf.tgz",
     "https://www.pseudo-dojo.org/pseudos/nc-sr-04_pbesol_standard_upf.tgz",
     "https://www.pseudo-dojo.org/pseudos/nc-fr-04_pbesol_standard_upf.tgz",
+]
+
+# MACE Models URLs mapping
+MACE_MODELS = [
+    {
+        "url": "https://github.com/ACEsuit/mace-foundations/releases/download/mace_mp_0b3/mace-mp-0b3-medium.model",
+        "filename": "mace-mp-0b3-medium.model"
+    },
+    {
+        "url": "https://github.com/ACEsuit/mace-foundations/releases/download/mace_mp_0/2024-01-07-mace-128-L2_epoch-199.model",
+        "filename": "mace-mp-0-large.model"
+    }
 ]
 
 
@@ -231,6 +237,48 @@ def _download_pseudopotentials(qe_dir: Path, status_tracker: Optional[Callable] 
         _log("requests module not available, skipping pseudopotential download")
 
 
+def _download_mace_models(mace_dir: Path, status_tracker: Optional[Callable] = None):
+    """Download MACE models into the models directory."""
+    models_dir = mace_dir / "models"
+    
+    # Check if directory exists and has all models
+    if models_dir.exists():
+        all_exist = all((models_dir / model["filename"]).exists() for model in MACE_MODELS)
+        if all_exist:
+            _log("MACE models already exist, skipping")
+            return
+            
+    try:
+        import requests
+        
+        models_dir.mkdir(parents=True, exist_ok=True)
+        
+        for model in MACE_MODELS:
+            target_path = models_dir / model["filename"]
+            
+            if target_path.exists():
+                _log(f"MACE model {model['filename']} already exists, skipping")
+                continue
+                
+            if status_tracker:
+                status_tracker(f"Downloading {model['filename']}...")
+            _log(f"Downloading MACE model {model['filename']}")
+            
+            response = requests.get(model["url"], stream=True, timeout=300)
+            
+            if response.status_code == 200:
+                with open(target_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                _log(f"Downloaded MACE model {model['filename']}")
+            else:
+                _log(f"Failed to download {model['filename']}: HTTP {response.status_code}")
+    except ImportError:
+        _log("requests module not available, skipping MACE models download")
+    except Exception as e:
+        _log(f"Error downloading MACE models", {"error": str(e)})
+
+
 def download_docs(
     workspace_dir: Path,
     status_tracker: Optional[Callable[[str], None]] = None,
@@ -306,6 +354,13 @@ def download_docs(
         if status_tracker:
             status_tracker("Downloading pseudopotentials...")
         _download_pseudopotentials(qe_dir, status_tracker)
+    
+    # Download MACE models
+    mace_dir = docs_dir / "mace"
+    if mace_dir.exists():
+        if status_tracker:
+            status_tracker("Downloading MACE models...")
+        _download_mace_models(mace_dir, status_tracker)
     
     _log(f"Documentation download complete", {"success": success_count, "total": total})
     return success_count > 0

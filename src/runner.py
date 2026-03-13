@@ -37,11 +37,11 @@ Review what was accomplished, identify any issues or areas for enhancement, and 
 _graph = None
 
 
-def get_or_create_graph(llm):
+def get_or_create_graph(llm, agent_llms=None):
     """Get existing graph or create new one."""
     global _graph
     if _graph is None:
-        graph_builder = build_graph(llm)
+        graph_builder = build_graph(llm, agent_llms=agent_llms)
         _graph = create_checkpoint_infrastructure(graph_builder)
     return _graph
 
@@ -57,7 +57,7 @@ def log_conversation(user_input: str, overwrite: bool = False):
         pass
 
 
-def process_prompt(user_input: str, llm, if_restart: bool = False) -> bool:
+def process_prompt(user_input: str, llm, if_restart: bool = False, agent_llms: dict = None) -> bool:
     """
     Process user prompt and execute the agent workflow.
     Returns: True if execution completed/aborted, False if interrupted by user (second press).
@@ -107,7 +107,7 @@ def process_prompt(user_input: str, llm, if_restart: bool = False) -> bool:
         # Re-initialize graph if connection is invalid (or first run)
         _graph = None
         
-    graph = get_or_create_graph(llm)
+    graph = get_or_create_graph(llm, agent_llms=agent_llms)
     
     config = get_thread_config()
     has_history = has_checkpoint_history(graph, config)

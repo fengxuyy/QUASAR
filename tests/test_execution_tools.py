@@ -105,3 +105,46 @@ def test_simulation_timeout_handling(mock_popen, mock_workspace):
             assert isinstance(result, dict)
             assert result.get('status') == "check_in_required"
 
+@patch('subprocess.Popen')
+def test_execute_python_test_timeout(mock_popen, mock_workspace):
+    """Test that trial_timeout terminates long-running executions."""
+    mock_process = MagicMock()
+    mock_popen.return_value = mock_process
+    mock_process.pid = 12345
+    mock_process.poll.return_value = None
+    mock_process.communicate.return_value = ("partial output", "")
+    mock_process.returncode = -9
+
+    time_calls = {"count": 0}
+
+    def fake_time():
+        time_calls["count"] += 1
+        return 0.2 * time_calls["count"]
+
+    with patch('os.getpgid', return_value=12345), \
+         patch('src.tools.execution._get_check_interval', return_value=999), \
+         patch('src.tools.execution._kill_process_and_children') as mock_kill, \
+         patch('src.tools.execution.time.time', side_effect=fake_time):
+
+        result = execute_python.invoke({"code": "import time; time.sleep(10)", "trial_timeout": 0.001})
+
+    assert "**Test Timeout:**" in result
+    assert mock_kill.called
+
+@patch('subprocess.Popen')
+def test_execute_python_kills_children_on_error(mock_popen, mock_workspace):
+    """Test that failed executions trigger child process cleanup."""
+    mock_process = MagicMock()
+    mock_popen.return_value = mock_process
+    mock_process.pid = 12345
+    mock_process.poll.return_value = 1
+    mock_process.returncode = 1
+    mock_process.communicate.return_value = ("", "error")
+
+    with patch('os.getpgid', return_value=12345), \
+         patch('src.tools.execution._find_processes_in_group', return_value=[MagicMock()]), \
+         patch('src.tools.execution._kill_process_and_children') as mock_kill:
+        result = execute_python.invoke({"code": "raise SystemExit(1)"})
+
+    assert "**Execution Result:**" in result
+    assert mock_kill.called
