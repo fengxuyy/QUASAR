@@ -9,17 +9,28 @@ A research-ready autonomous computational chemistry agentic system. QUASAR cover
 <details>
 <summary><strong>Quick Start</strong></summary>
 
-### 1. Install Docker or Singularity
+### 1. Choose how to run QUASAR
+- **Containers (recommended)** — Use the Docker or Singularity image for one-step setup.
+- **Local Deployment** — Install QUASAR and simulation engines (QE, LAMMPS, RASPA3, etc.) on your machine via conda and pip; see [Local Deployment](#local-deployment). This option is less recommended because dependency conflicts are more likely, and agent-executed commands run directly on your host environment.
+
+### 2. Install Docker or Singularity
 - **Docker:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux).
 - **HPC:** Singularity for cluster environments.
 
-### 2. Pull the Image
+### 3. Pull the Image
 Get the latest version from [Docker Hub](https://hub.docker.com/r/fengxuyang/quasar):
+
+**Docker:**
 ```bash
 docker pull fengxuyang/quasar:<tag>
 ```
 
-### 3. Choose Your Interface
+**Singularity (HPC):** Convert the Docker image to a `.sif` file. Either build directly from Docker Hub:
+```bash
+singularity build quasar_<tag>.sif docker://fengxuyang/quasar:<tag>
+```
+
+### 4. Choose Your Interface
 - **CLI** — Terminal-based interactive interface with essential functionalities; see [CLI](#cli) below.
 
 - **Batch** — Headless automated execution for background or HPC tasks; see [Batch Jobs](#batch-jobs) below.
@@ -30,13 +41,53 @@ docker pull fengxuyang/quasar:<tag>
 
 <br>
 
+<details>
+<summary id="local-deployment"><strong>Local Deployment</strong></summary>
+
+Run QUASAR on your machine (without Docker/Singularity). Simulation engines (Quantum ESPRESSO, LAMMPS, RASPA3) needs to be pre-installed. Here's an example using conda.
+
+### 1. Prerequisites
+- [Miniconda](https://docs.conda.io/en/latest/miniconda.html) or [Anaconda](https://www.anaconda.com/)
+- [Node.js](https://nodejs.org/) 18+ (required to run the QUASAR CLI)
+
+### 2. Create conda environment with simulation tools
+```bash
+conda create -n quasar python=3.11 -y
+conda activate quasar
+
+# Simulation engines (conda-forge)
+conda install -c conda-forge qe lammps raspa3 raspalib -y
+```
+
+### 3. Install QUASAR from PyPI
+```bash
+pip install --upgrade pip
+pip install quasar-core
+```
+
+### 4. Set required environment variables
+```bash
+export MODEL_API_KEY=<api_key>
+export MODEL=<model_name>
+export WORKSPACE_DIR=<workspace_directory>
+```
+
+### 5. Run QUASAR
+```bash
+quasar
+```
+More details please refer to CLI and Batch 
+</details>
+
+<br>
+
 
 <details>
 <summary id="cli"><strong>CLI</strong></summary>
 
 Run QUASAR interactively from the terminal or inspect run history.
 
-#### Docker — Interactive
+#### Docker
 ```bash
 docker run -it --rm \
   -e MODEL_API_KEY=<api_key> \
@@ -46,7 +97,7 @@ docker run -it --rm \
   quasar
 ```
 
-#### Singularity (HPC) — Interactive
+#### Singularity (HPC)
 ```bash
 singularity exec --cleanenv \
   -B "<workspace_path>:/workspace" \
@@ -56,12 +107,20 @@ singularity exec --cleanenv \
   <tag>.sif quasar
 ```
 
+#### Local Deployment
+```bash
+export MODEL_API_KEY=<api_key>
+export MODEL=<model_name>
+export WORKSPACE_DIR=<workspace_directory>
+quasar
+```
+
 #### `quasar history`
 After a run (or when resuming from a checkpoint), the CLI can show **per-task run history** from the current workspace checkpoint. This is useful to review what the operator and evaluator did for each task without re-running.
 
 - **Command:** `quasar history`
 - **Requires:** A workspace with an existing checkpoint (from a current or past run).
-- **Behavior:** Starts an interactive view that lists all tasks (e.g. `task_1`, `task_2`, …). Use ↑/↓ to select a task and Enter to open it. For the selected task you see the full step-by-step history: task description, operator tool calls (e.g. code snippets, file reads, searches), code outputs, and the evaluator’s summary for that task. Use ESC to go back to the task list; Ctrl+C or Ctrl+D to exit.
+- **Behaviour:** Starts an interactive view that lists all tasks (e.g. `task_1`, `task_2`, …). Use ↑/↓ to select a task and Enter to open it. For the selected task you see the full step-by-step history: task description, operator tool calls (e.g. code snippets, file reads, searches), code outputs, and the evaluator’s summary for that task. Use ESC to go back to the task list; Ctrl+C or Ctrl+D to exit.
 
 If no checkpoint exists, `quasar history` reports that you need to run `quasar` first or resume an interrupted session.
 
@@ -72,10 +131,9 @@ If no checkpoint exists, `quasar history` reports that you need to run `quasar` 
 <details>
 <summary id="batch-jobs"><strong>Batch Jobs</strong></summary>
 
-Automate your research with one-off batch jobs for headless execution.
+Automate your research with one-off batch jobs for headless execution. Pass a prompt as an argument for automated jobs:
 
-#### Docker — Batch (headless)
-Pass a prompt as an argument for automated jobs:
+#### Docker
 ```bash
 docker run --rm \
   -e MODEL_API_KEY=<api_key> \
@@ -85,7 +143,7 @@ docker run --rm \
   quasar "Calculate the band structure of silicon"
 ```
 
-#### Singularity (HPC) — Batch (headless)
+#### Singularity (HPC)
 ```bash
 singularity exec --cleanenv \
   -B "<workspace_path>:/workspace" \
@@ -95,6 +153,13 @@ singularity exec --cleanenv \
   <tag>.sif quasar "Your research prompt here"
 ```
 
+#### Local Deployment
+```bash
+export MODEL_API_KEY=<api_key>
+export MODEL=<model_name>
+export WORKSPACE_DIR=<workspace_directory>
+quasar "Your research prompt here"
+```
 </details>
 
 <br>
@@ -175,12 +240,14 @@ singularity exec --cleanenv \
   <tag>.sif quasar
 ```
 
-**When changing hardware** (e.g., moving to a different node or GPU):
-1. Ensure the same workspace path is mounted
-2. Set `IF_RESTART=true` to resume from the checkpoint
-3. The system will continue from exactly where it left off
-
-> **Note:** Checkpoints are stored in `checkpoints.sqlite` within the workspace. Completed runs are archived to `archive/run_N/` with their checkpoint data preserved.
+**Local Deployment:**
+```bash
+export MODEL_API_KEY=<api_key>
+export MODEL=<model_name>
+export WORKSPACE_DIR=<workspace_directory>
+export IF_RESTART=true
+quasar 
+```
 
 </details>
 
