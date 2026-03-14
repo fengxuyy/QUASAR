@@ -4,6 +4,14 @@
 
 <h1 align="center">Quantum Universal Autonomous System for Atomistic Research</h1>
 
+<p align="center">
+  <a href="https://pypi.org/project/quasar-core/">
+    <img src="https://img.shields.io/pypi/v/quasar-core?style=for-the-badge&logo=pypi&logoColor=white" alt="PyPI version" />
+  </a>
+  <img src="https://img.shields.io/pypi/pyversions/quasar-core?style=for-the-badge&logo=python&logoColor=white" alt="Python versions" />
+  <img src="https://img.shields.io/pypi/l/quasar-core?style=for-the-badge" alt="PyPI license" />
+</p>
+
 A research-ready autonomous computational chemistry agentic system. QUASAR covers the full atomistic simulation pipeline with integrated tools including Density Functional Theory (DFT), Machine Learning Potentials (MLP), Molecular Dynamics (MD), and Grand Canonical Monte Carlo (GCMC), allowing scientists to rapidly iterate on hypotheses, explore large design spaces, and accelerate the discovery of novel materials and phenomena.
 
 <details>
@@ -25,7 +33,7 @@ Get the latest version from [Docker Hub](https://hub.docker.com/r/fengxuyang/qua
 docker pull fengxuyang/quasar:<tag>
 ```
 
-**Singularity (HPC):** Convert the Docker image to a `.sif` file. Either build directly from Docker Hub:
+**Singularity (HPC):** Convert the Docker image to a `.sif` file. Build directly from Docker Hub:
 ```bash
 singularity build quasar_<tag>.sif docker://fengxuyang/quasar:<tag>
 ```
