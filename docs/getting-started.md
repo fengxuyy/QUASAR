@@ -1,19 +1,19 @@
 ---
 title: Getting Started
-description: Install and launch QUASAR-CHEM with Docker or Singularity.
+description: Install and launch QUASAR with Docker or Singularity.
 section: Setup
-lead: Start a new QUASAR-CHEM session with Docker or Singularity, mount a workspace, and run it through the CLI.
+lead: Start a new QUASAR session with Docker or Singularity, mount a workspace, and run it through the CLI.
 permalink: /getting-started/
 ---
 
 ## Prerequisites
 
 - A model provider and a valid `MODEL_API_KEY`
-- A model name exposed as `MODEL`
+- a model name exposed as `MODEL`
 - Docker Desktop / Docker Engine, or Singularity on HPC systems
 - A writable workspace directory you can mount into the container
 
-> QUASAR-CHEM is currently optimized for Gemini-oriented setups. Other providers may work, but they are not yet the primary compatibility target.
+> QUASAR is currently optimized for Gemini-oriented setups. Other providers may work, but they are not yet the primary compatibility target.
 
 ## Launch Modes
 
@@ -75,7 +75,7 @@ singularity exec --cleanenv \
 
 ## First-Run Expectations
 
-On startup, QUASAR-CHEM may download:
+On startup, QUASAR may download:
 
 - documentation repositories into `workspace/docs/`
 - a prebuilt RAG index into `workspace/.rag_index/` when RAG is enabled

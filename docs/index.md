@@ -1,6 +1,6 @@
 ---
-title: QUASAR-CHEM Documentation
-description: Documentation hub for installing, running, and understanding QUASAR-CHEM.
+title: QUASAR Documentation
+description: Documentation hub for installing, running, and understanding QUASAR.
 show_title: false
 ---
 
@@ -9,7 +9,7 @@ show_title: false
     <span class="pill">Universal Autonomous System for Atomistic Research</span>
     <h1>Documentation for the full atomistic simulation workflow</h1>
     <p>
-      QUASAR-CHEM is a research-ready autonomous computational chemistry system with a terminal-native CLI.
+      QUASAR is a research-ready autonomous computational chemistry system with a terminal-native CLI.
       It can plan a workflow, execute tasks inside a shared workspace, validate outputs, and archive complete runs for later inspection.
     </p>
     <div class="hero-actions">
@@ -39,7 +39,7 @@ show_title: false
   <a class="feature-card" href="{{ '/getting-started/' | relative_url }}">
     <p class="mini-label">Install</p>
     <h3>Getting Started</h3>
-    <p>Run QUASAR-CHEM with Docker or Singularity using the interactive CLI or headless prompts.</p>
+    <p>Run QUASAR with Docker or Singularity using the interactive CLI or headless prompts.</p>
   </a>
   <a class="feature-card" href="{{ '/cli/' | relative_url }}">
     <p class="mini-label">Interface</p>
@@ -68,9 +68,9 @@ show_title: false
   </a>
 </div>
 
-## What QUASAR-CHEM Covers
+## What QUASAR Covers
 
-QUASAR-CHEM is designed around atomistic research workflows and integrates tools including Quantum ESPRESSO, ASE, MACE, pymatgen, LAMMPS, and RASPA3. The current codebase is optimized primarily for Gemini-based model setups, while broader compatibility is still evolving.
+QUASAR is designed around atomistic research workflows and integrates tools including Quantum ESPRESSO, ASE, MACE, pymatgen, LAMMPS, and RASPA3. The current codebase is optimized primarily for Gemini-based model setups, while broader compatibility is still evolving.
 
 <div class="metric-grid">
   <div class="metric-card">
@@ -92,7 +92,7 @@ QUASAR-CHEM is designed around atomistic research workflows and integrates tools
 
 ## Recommended Reading Order
 
-1. Read [Getting Started]({{ '/getting-started/' | relative_url }}) if you are installing or launching QUASAR-CHEM for the first time.
+1. Read [Getting Started]({{ '/getting-started/' | relative_url }}) if you are installing or launching QUASAR for the first time.
 2. Run the [Quick Tutorial]({{ '/quick-tutorial/' | relative_url }}) for a concrete end-to-end example.
 3. Jump to [CLI]({{ '/cli/' | relative_url }}) for the interactive and headless command surface.
 4. Keep [Configuration]({{ '/configuration/' | relative_url }}) nearby when tuning models, RAG, or execution rigor.

@@ -1,8 +1,8 @@
 ---
 title: Workspace & History
-description: How QUASAR-CHEM stores outputs, checkpoints, archives, and documentation resources.
+description: How QUASAR stores outputs, checkpoints, archives, and documentation resources.
 section: Results
-lead: QUASAR-CHEM treats the mounted workspace as the center of the run. Understanding that directory model makes restart, cleanup, and result review much easier.
+lead: QUASAR treats the mounted workspace as the center of the run. Understanding that directory model makes restart, cleanup, and result review much easier.
 permalink: /workspace-history/
 ---
 
@@ -35,7 +35,7 @@ workspace/
 
 ## Completion Behavior
 
-When a run completes successfully, QUASAR-CHEM archives the active workspace into `archive/run_N/` and removes checkpoint artifacts from the live workspace. That gives you a clean active area while keeping the finished run intact for inspection.
+When a run completes successfully, QUASAR archives the active workspace into `archive/run_N/` and removes checkpoint artifacts from the live workspace. That gives you a clean active area while keeping the finished run intact for inspection.
 
 Archived runs can include:
 

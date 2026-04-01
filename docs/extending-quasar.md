@@ -2,7 +2,7 @@
 title: Extending QUASAR
 description: How to let QUASAR use additional software, dependencies, and first-class tools.
 section: Advanced
-lead: There are two practical ways to extend QUASAR-CHEM: tell it to install something during a run for temporary use, or bake the dependency into the project for permanent and more reliable use.
+lead: There are two practical ways to extend QUASAR: tell it to install something during a run for temporary use, or bake the dependency into the project for permanent and more reliable use.
 permalink: /extending-quasar/
 ---
 
@@ -61,7 +61,7 @@ If you want QUASAR to use software reliably and repeatedly, bake it into the env
 
 ### Add Python Dependencies to `requirements.txt`
 
-Use [requirements.txt](/Users/fyang/Desktop/QUASAR-dev/requirements.txt) when the new dependency is mainly a Python package.
+Use [requirements.txt](/Users/fyang/Desktop/QUASAR/requirements.txt) when the new dependency is mainly a Python package.
 
 This is the right place for packages like:
 
@@ -74,7 +74,7 @@ After editing `requirements.txt`, rebuild the image you use for QUASAR.
 
 ### Add System Software to a Dockerfile
 
-Use the Dockerfiles under [docker/](/Users/fyang/Desktop/QUASAR-dev/docker) when the new dependency needs:
+Use the Dockerfiles under [docker/](/Users/fyang/Desktop/QUASAR/docker) when the new dependency needs:
 
 - `apt-get install`
 - native binaries
@@ -84,10 +84,10 @@ Use the Dockerfiles under [docker/](/Users/fyang/Desktop/QUASAR-dev/docker) when
 
 Examples in this repo include:
 
-- [docker/Dockerfile.amd64](/Users/fyang/Desktop/QUASAR-dev/docker/Dockerfile.amd64)
-- [docker/Dockerfile.arm64](/Users/fyang/Desktop/QUASAR-dev/docker/Dockerfile.arm64)
-- [docker/Dockerfile.cuda](/Users/fyang/Desktop/QUASAR-dev/docker/Dockerfile.cuda)
-- [docker/Dockerfile.rocm](/Users/fyang/Desktop/QUASAR-dev/docker/Dockerfile.rocm)
+- [docker/Dockerfile.amd64](/Users/fyang/Desktop/QUASAR/docker/Dockerfile.amd64)
+- [docker/Dockerfile.arm64](/Users/fyang/Desktop/QUASAR/docker/Dockerfile.arm64)
+- [docker/Dockerfile.cuda](/Users/fyang/Desktop/QUASAR/docker/Dockerfile.cuda)
+- [docker/Dockerfile.rocm](/Users/fyang/Desktop/QUASAR/docker/Dockerfile.rocm)
 
 If the install is architecture-specific or accelerator-specific, update the relevant image variant rather than only one file.
 
@@ -125,9 +125,9 @@ If you want something beyond “software the Operator can use from Python,” yo
 
 The main integration points are:
 
-- tool definitions in [src/tools/](/Users/fyang/Desktop/QUASAR-dev/src/tools)
-- exported tools in [src/tools/__init__.py](/Users/fyang/Desktop/QUASAR-dev/src/tools/__init__.py)
-- agent tool maps in [src/agents/operator.py](/Users/fyang/Desktop/QUASAR-dev/src/agents/operator.py), [src/agents/strategist.py](/Users/fyang/Desktop/QUASAR-dev/src/agents/strategist.py), and [src/agents/evaluator.py](/Users/fyang/Desktop/QUASAR-dev/src/agents/evaluator.py)
+- tool definitions in [src/tools/](/Users/fyang/Desktop/QUASAR/src/tools)
+- exported tools in [src/tools/__init__.py](/Users/fyang/Desktop/QUASAR/src/tools/__init__.py)
+- agent tool maps in [src/agents/operator.py](/Users/fyang/Desktop/QUASAR/src/agents/operator.py), [src/agents/strategist.py](/Users/fyang/Desktop/QUASAR/src/agents/strategist.py), and [src/agents/evaluator.py](/Users/fyang/Desktop/QUASAR/src/agents/evaluator.py)
 
 That path is worth taking when:
 

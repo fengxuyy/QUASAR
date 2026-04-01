@@ -1,8 +1,8 @@
 ---
 title: Architecture
-description: High-level architecture and workflow model for QUASAR-CHEM.
+description: High-level architecture and workflow model for QUASAR.
 section: System
-lead: QUASAR-CHEM combines a three-agent workflow, a shared workspace, and local documentation retrieval to support long-running scientific tasks with recovery and review.
+lead: QUASAR combines a three-agent workflow, a shared workspace, and local documentation retrieval to support long-running scientific tasks with recovery and review.
 permalink: /architecture/
 ---
 
@@ -41,7 +41,7 @@ This shared state is what makes checkpoint resume possible.
 
 ## Documentation Retrieval
 
-When RAG is enabled, QUASAR-CHEM prepares two complementary resources:
+When RAG is enabled, QUASAR prepares two complementary resources:
 
 1. downloaded documentation repositories in `workspace/docs/`
 2. a prebuilt retrieval index in `workspace/.rag_index/`

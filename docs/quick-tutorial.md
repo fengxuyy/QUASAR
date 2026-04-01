@@ -1,14 +1,14 @@
 ---
 title: Quick Tutorial
-description: A fast first-run tutorial for QUASAR-CHEM using silicon band-gap calculation as the example.
+description: A fast first-run tutorial for QUASAR using silicon band-gap calculation as the example.
 section: Walkthrough
-lead: This tutorial walks through a simple first run with QUASAR-CHEM using the prompt “calculate the band gap of silicon,” from launch to inspecting the final results.
+lead: This tutorial walks through a simple first run with QUASAR using the prompt “calculate the band gap of silicon,” from launch to inspecting the final results.
 permalink: /quick-tutorial/
 ---
 
 ## Goal
 
-In this tutorial, we will ask QUASAR-CHEM to:
+In this tutorial, we will ask QUASAR to:
 
 > Calculate the band gap of silicon.
 
@@ -59,16 +59,16 @@ docker run --rm \
   quasar "Calculate the band gap of silicon. Use a reproducible workflow, save the key input and output files in the workspace, and summarize the final band gap value, method, and assumptions."
 ```
 
-This is the fastest way to see QUASAR-CHEM do useful work end to end.
+This is the fastest way to see QUASAR do useful work end to end.
 
-## What QUASAR-CHEM Will Typically Do
+## What QUASAR Will Typically Do
 
-For this prompt, QUASAR-CHEM will usually move through a pattern like this:
+For this prompt, QUASAR will usually move through a pattern like this:
 
 1. The **Strategist** creates a plan for computing the band gap of silicon.
 2. The **Operator** gathers context, checks relevant documentation/examples, prepares inputs, and runs the necessary calculations.
 3. The **Evaluator** reviews whether the produced result is scientifically adequate for the current task.
-4. If needed, QUASAR-CHEM loops until the task is complete or the run stops.
+4. If needed, QUASAR loops until the task is complete or the run stops.
 
 The exact workflow can vary depending on your model, settings, and environment.
 
@@ -90,7 +90,7 @@ When the run completes, inspect these locations in the workspace:
 - `logs/usage_report.md`
 - any generated calculation inputs/outputs relevant to the silicon workflow
 
-After a completed run, QUASAR-CHEM archives the results under:
+After a completed run, QUASAR archives the results under:
 
 ```text
 workspace/archive/run_N/
@@ -111,7 +111,7 @@ For a first pass, focus less on the exact numerical value and more on whether th
 
 ## If the Run Stops Early
 
-If QUASAR-CHEM is interrupted, do not start over immediately. Resume from the checkpoint instead:
+If QUASAR is interrupted, do not start over immediately. Resume from the checkpoint instead:
 
 ```bash
 quasar --resume
@@ -131,4 +131,4 @@ Once the silicon example works, good follow-up prompts are:
 
 From here, the most useful references are [Configuration]({{ '/configuration/' | relative_url }}) for tuning behavior and [Workspace & History]({{ '/workspace-history/' | relative_url }}) for understanding how results are stored.
 
-If you want QUASAR-CHEM to use software that is not already available in the image, continue with [Extending QUASAR]({{ '/extending-quasar/' | relative_url }}).
+If you want QUASAR to use software that is not already available in the image, continue with [Extending QUASAR]({{ '/extending-quasar/' | relative_url }}).

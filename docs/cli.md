@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Run QUASAR-CHEM from the terminal.
+description: Run QUASAR from the terminal.
 section: Interface
 lead: The CLI supports interactive work, headless prompts, checkpoint management, and run history browsing.
 permalink: /cli/

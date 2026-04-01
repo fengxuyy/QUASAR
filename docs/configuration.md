@@ -1,8 +1,8 @@
 ---
 title: Configuration
-description: Environment variables and runtime controls for QUASAR-CHEM.
+description: Environment variables and runtime controls for QUASAR.
 section: Tuning
-lead: QUASAR-CHEM is configured primarily through environment variables, with command-level controls exposed through the CLI.
+lead: QUASAR is configured primarily through environment variables, with command-level controls exposed through the CLI.
 permalink: /configuration/
 ---
 
@@ -61,13 +61,13 @@ If an agent override is not set, that agent falls back to the global `MODEL` and
   </div>
   <div class="step-card">
     <h3>`AUTO_IMPROVE_CYCLES`</h3>
-    <p>Set this above <code>0</code> when you want QUASAR-CHEM to automatically launch additional auto-improve passes after a successful run completes.</p>
+    <p>Set this above <code>0</code> when you want QUASAR to automatically launch additional auto-improve passes after a successful run completes.</p>
   </div>
 </div>
 
 ## Checkpoint-Aware Settings
 
-When QUASAR-CHEM resumes a checkpoint, it loads settings from `checkpoint_settings.json` and merges sensitive values like API keys back in from environment variables. This helps preserve the run’s original execution assumptions while avoiding direct checkpoint storage of secrets.
+When QUASAR resumes a checkpoint, it loads settings from `checkpoint_settings.json` and merges sensitive values like API keys back in from environment variables. This helps preserve the run’s original execution assumptions while avoiding direct checkpoint storage of secrets.
 
 That means changing settings during resume is intentionally constrained. In particular, `ACCURACY` and `GRANULARITY` should stay aligned with the checkpointed run.
 
