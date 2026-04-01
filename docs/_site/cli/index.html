@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CLI | QUASAR</title>
+    <meta name="description" content="Run QUASAR from the terminal.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/QUASAR/assets/styles.css">
+  </head>
+  <body>
+    <div class="page-glow page-glow-a"></div>
+    <div class="page-glow page-glow-b"></div>
+    <div class="site-shell">
+      <header class="topbar">
+        <a class="brand" href="/QUASAR/" aria-label="QUASAR documentation home">
+          <img src="/QUASAR/assets/quasar-logo.png" alt="QUASAR wordmark">
+          <span class="brand-tag">Documentation</span>
+        </a>
+        <div class="topbar-actions">
+          <a class="ghost-link" href="https://github.com/fengxuyy/QUASAR">GitHub</a>
+          <a class="button-link button-link-subtle" href="/QUASAR/getting-started/">Get Started</a>
+        </div>
+      </header>
+
+      <div class="site-body">
+        <aside class="sidebar">
+          <div class="sidebar-panel">
+            <p class="sidebar-label">Documentation</p>
+            <nav class="site-nav" aria-label="Documentation navigation">
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/">
+      <span>Home</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/quick-tutorial/">
+      <span>Quick Tutorial</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/getting-started/">
+      <span>Getting Started</span>
+    </a>
+  
+    
+    
+    <a class="nav-link is-active" href="/QUASAR/cli/">
+      <span>CLI</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/configuration/">
+      <span>Configuration</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/workspace-history/">
+      <span>Workspace & History</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/extending-quasar/">
+      <span>Extending QUASAR</span>
+    </a>
+  
+</nav>
+
+          </div>
+          <div class="sidebar-panel sidebar-note">
+            <p class="sidebar-label">What QUASAR Does</p>
+            <p>
+              QUASAR turns a research prompt into a checkpointed workflow that can plan, execute, validate, and archive scientific work inside one shared workspace.
+            </p>
+            <a class="text-link" href="https://github.com/fengxuyy/QUASAR">Open repository</a>
+          </div>
+        </aside>
+
+        <main class="content">
+          
+            
+              <p class="eyebrow">Interface</p>
+            
+            <h1>CLI</h1>
+            
+              <p class="page-lead">The CLI supports interactive work, headless prompts, checkpoint management, and run history browsing.</p>
+            
+          
+          <h2 id="install-the-launcher">Install the Launcher</h2>
+
+<p>Install the Python package and launcher from PyPI:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>pip <span class="nb">install </span>quasar-core
+</code></pre></div></div>
+
+<p><code class="language-plaintext highlighter-rouge">quasar-core</code> ships the Python backend and the packaged <code class="language-plaintext highlighter-rouge">quasar</code> launcher. Node.js 18+ is still required at runtime for the current terminal UI.</p>
+
+<h2 id="core-usage">Core Usage</h2>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>quasar <span class="o">[</span>prompt]
+quasar <span class="nt">--resume</span>
+quasar <span class="nt">--clear</span>
+quasar <span class="nt">--fresh</span>
+quasar <span class="nt">--history</span>
+quasar <span class="nt">--config</span> <span class="o">[</span>show|validate]
+quasar <span class="nt">--info</span>
+</code></pre></div></div>
+
+<h2 id="command-reference">Command Reference</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Command</th>
+      <th>What it does</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">quasar</code></td>
+      <td>Starts the interactive CLI run flow.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">quasar "..."</code></td>
+      <td>Runs a direct prompt in headless mode.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">quasar --resume</code></td>
+      <td>Resumes from an active checkpoint and forces restart semantics.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">quasar --clear</code></td>
+      <td>Clears the active checkpoint and current workspace state, but keeps archived runs.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">quasar --fresh</code></td>
+      <td>Clears current workspace state and archived runs, while preserving downloaded docs and dotfiles.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">quasar --history</code></td>
+      <td>Opens an interactive per-task checkpoint history browser.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">quasar --config</code></td>
+      <td>Shows current configuration values.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">quasar --config validate</code></td>
+      <td>Verifies required configuration such as <code class="language-plaintext highlighter-rouge">MODEL_API_KEY</code>.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">quasar --info</code></td>
+      <td>Prints system and environment context such as workspace path and platform.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">quasar --no-rag "..."</code></td>
+      <td>Runs without documentation retrieval for that specific prompt.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="interactive-vs-headless">Interactive vs Headless</h2>
+
+<p>Use interactive mode when you want a full terminal UI with agent updates, planning panels, and checkpoint prompts. Use headless mode when you want to pass a single prompt directly from scripts, CI jobs, or schedulers.</p>
+
+<p>Examples:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>quasar
+quasar <span class="s2">"Optimize the geometry of MOF-5 and summarize convergence behavior"</span>
+</code></pre></div></div>
+
+<div class="card-grid">
+  <div class="step-card">
+    <p class="mini-label">Interactive</p>
+    <h3>Use <code>\settings</code> for Missing Values</h3>
+    <p>If <code>MODEL</code> or <code>MODEL_API_KEY</code> are missing, the interactive CLI can open the settings panel before the run starts.</p>
+  </div>
+  <div class="step-card">
+    <p class="mini-label">Headless</p>
+    <h3>Best for Automation</h3>
+    <p>Pass a full prompt directly when you want one-shot execution from scripts, containers, or scheduler jobs.</p>
+  </div>
+  <div class="step-card">
+    <p class="mini-label">Config</p>
+    <h3>Inspect Runtime State</h3>
+    <p>Use <code>quasar --config</code> and <code>quasar --info</code> when you want to sanity-check environment values before launching a large run.</p>
+  </div>
+</div>
+
+<h2 id="common-launch-patterns">Common Launch Patterns</h2>
+
+<p>Interactive session:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>quasar
+</code></pre></div></div>
+
+<p>Headless run:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>quasar <span class="s2">"Optimize the geometry of MOF-5 and summarize convergence behavior"</span>
+</code></pre></div></div>
+
+<p>Resume an interrupted run:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>quasar <span class="nt">--resume</span>
+</code></pre></div></div>
+
+<p>Disable RAG for one run:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>quasar <span class="nt">--no-rag</span> <span class="s2">"Summarize the existing files in this workspace and propose the next simulation step"</span>
+</code></pre></div></div>
+
+<h2 id="resume-rules">Resume Rules</h2>
+
+<p>The CLI enforces a few guardrails:</p>
+
+<ul>
+  <li>if <code class="language-plaintext highlighter-rouge">--resume</code> is set and no checkpoint exists, it exits with an error</li>
+  <li>if a checkpoint exists and you try to start a new headless prompt without resume, it refuses to overwrite that state</li>
+  <li>if you pass a prompt together with <code class="language-plaintext highlighter-rouge">--resume</code>, the prompt is ignored and the checkpoint is resumed</li>
+</ul>
+
+<p>These checks prevent accidental loss of interrupted work.</p>
+
+<h2 id="quasar---history"><code class="language-plaintext highlighter-rouge">quasar --history</code></h2>
+
+<p>The history view is a checkpoint-aware browser for task-by-task inspection. It lets you:</p>
+
+<ul>
+  <li>select <code class="language-plaintext highlighter-rouge">task_1</code>, <code class="language-plaintext highlighter-rouge">task_2</code>, and so on</li>
+  <li>inspect operator tool calls and outputs</li>
+  <li>review evaluator summaries</li>
+  <li>move back to the task list with <code class="language-plaintext highlighter-rouge">Esc</code></li>
+  <li>exit with <code class="language-plaintext highlighter-rouge">Ctrl+C</code> or <code class="language-plaintext highlighter-rouge">Ctrl+D</code></li>
+</ul>
+
+<p>This is especially helpful when you need to understand exactly where a long research run failed or why an evaluation loop requested changes.</p>
+
+<h2 id="quasar---config-and-quasar---info"><code class="language-plaintext highlighter-rouge">quasar --config</code> and <code class="language-plaintext highlighter-rouge">quasar --info</code></h2>
+
+<p>These commands are lightweight sanity checks:</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">quasar --config</code> shows the currently resolved runtime configuration</li>
+  <li><code class="language-plaintext highlighter-rouge">quasar --config validate</code> checks whether required values such as <code class="language-plaintext highlighter-rouge">MODEL_API_KEY</code> are present</li>
+  <li><code class="language-plaintext highlighter-rouge">quasar --info</code> prints the workspace path, platform, architecture, CPU count, and Node version</li>
+</ul>
+
+<h2 id="--clear-vs---fresh"><code class="language-plaintext highlighter-rouge">--clear</code> vs <code class="language-plaintext highlighter-rouge">--fresh</code></h2>
+
+<p>These two commands are easy to confuse:</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">--clear</code> preserves <code class="language-plaintext highlighter-rouge">archive/</code>, <code class="language-plaintext highlighter-rouge">docs/</code>, and dotfiles</li>
+  <li><code class="language-plaintext highlighter-rouge">--fresh</code> preserves <code class="language-plaintext highlighter-rouge">docs/</code> and dotfiles, but removes archived runs</li>
+</ul>
+
+<p>If you want to clean up an interrupted run but keep previous results, use <code class="language-plaintext highlighter-rouge">--clear</code>. If you want to wipe prior run history as well, use <code class="language-plaintext highlighter-rouge">--fresh</code>.</p>
+
+<h2 id="legacy---web-flag">Legacy <code class="language-plaintext highlighter-rouge">--web</code> Flag</h2>
+
+<p>Older docs and scripts may still reference <code class="language-plaintext highlighter-rouge">quasar --web</code>. That flag now exits with an error because browser UI support has been removed from the current CLI.</p>
+
+        </main>
+      </div>
+
+      <footer class="site-footer">
+      </footer>
+    </div>
+  </body>
+</html>

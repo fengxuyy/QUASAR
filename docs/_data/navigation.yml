@@ -10,7 +10,5 @@
   url: /configuration/
 - title: Workspace & History
   url: /workspace-history/
-- title: Architecture
-  url: /architecture/
 - title: Extending QUASAR
   url: /extending-quasar/

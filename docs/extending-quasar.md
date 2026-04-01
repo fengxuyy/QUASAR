@@ -1,10 +1,30 @@
 ---
 title: Extending QUASAR
-description: How to let QUASAR use additional software, dependencies, and first-class tools.
+description: "How to let QUASAR use additional software, dependencies, and first-class tools."
 section: Advanced
-lead: There are two practical ways to extend QUASAR: tell it to install something during a run for temporary use, or bake the dependency into the project for permanent and more reliable use.
+lead: "There are two practical ways to extend QUASAR: tell it to install something during a run for temporary use, or bake the dependency into the project for permanent and more reliable use."
 permalink: /extending-quasar/
 ---
+
+## Choose the Right Extension Level
+
+<div class="card-grid">
+  <div class="step-card">
+    <p class="mini-label">Fastest</p>
+    <h3>Prompt-Time Install</h3>
+    <p>Best when you are experimenting and only need a dependency for one run.</p>
+  </div>
+  <div class="step-card">
+    <p class="mini-label">Reliable</p>
+    <h3>Project-Level Dependency</h3>
+    <p>Best when the software should already exist every time QUASAR starts.</p>
+  </div>
+  <div class="step-card">
+    <p class="mini-label">Reusable</p>
+    <h3>First-Class Tool</h3>
+    <p>Best when the capability deserves an explicit tool interface instead of being driven only through prompt instructions.</p>
+  </div>
+</div>
 
 ## The Short Rule
 
@@ -61,7 +81,7 @@ If you want QUASAR to use software reliably and repeatedly, bake it into the env
 
 ### Add Python Dependencies to `requirements.txt`
 
-Use [requirements.txt](/Users/fyang/Desktop/QUASAR/requirements.txt) when the new dependency is mainly a Python package.
+Use [requirements.txt]({{ site.repository_url }}/blob/main/requirements.txt) when the new dependency is mainly a Python package.
 
 This is the right place for packages like:
 
@@ -74,7 +94,7 @@ After editing `requirements.txt`, rebuild the image you use for QUASAR.
 
 ### Add System Software to a Dockerfile
 
-Use the Dockerfiles under [docker/](/Users/fyang/Desktop/QUASAR/docker) when the new dependency needs:
+Use the Dockerfiles under [docker/]({{ site.repository_url }}/tree/main/docker) when the new dependency needs:
 
 - `apt-get install`
 - native binaries
@@ -84,10 +104,10 @@ Use the Dockerfiles under [docker/](/Users/fyang/Desktop/QUASAR/docker) when the
 
 Examples in this repo include:
 
-- [docker/Dockerfile.amd64](/Users/fyang/Desktop/QUASAR/docker/Dockerfile.amd64)
-- [docker/Dockerfile.arm64](/Users/fyang/Desktop/QUASAR/docker/Dockerfile.arm64)
-- [docker/Dockerfile.cuda](/Users/fyang/Desktop/QUASAR/docker/Dockerfile.cuda)
-- [docker/Dockerfile.rocm](/Users/fyang/Desktop/QUASAR/docker/Dockerfile.rocm)
+- [docker/Dockerfile.amd64]({{ site.repository_url }}/blob/main/docker/Dockerfile.amd64)
+- [docker/Dockerfile.arm64]({{ site.repository_url }}/blob/main/docker/Dockerfile.arm64)
+- [docker/Dockerfile.cuda]({{ site.repository_url }}/blob/main/docker/Dockerfile.cuda)
+- [docker/Dockerfile.rocm]({{ site.repository_url }}/blob/main/docker/Dockerfile.rocm)
 
 If the install is architecture-specific or accelerator-specific, update the relevant image variant rather than only one file.
 
@@ -125,9 +145,9 @@ If you want something beyond “software the Operator can use from Python,” yo
 
 The main integration points are:
 
-- tool definitions in [src/tools/](/Users/fyang/Desktop/QUASAR/src/tools)
-- exported tools in [src/tools/__init__.py](/Users/fyang/Desktop/QUASAR/src/tools/__init__.py)
-- agent tool maps in [src/agents/operator.py](/Users/fyang/Desktop/QUASAR/src/agents/operator.py), [src/agents/strategist.py](/Users/fyang/Desktop/QUASAR/src/agents/strategist.py), and [src/agents/evaluator.py](/Users/fyang/Desktop/QUASAR/src/agents/evaluator.py)
+- tool definitions in [src/tools/]({{ site.repository_url }}/tree/main/src/tools)
+- exported tools in [src/tools/__init__.py]({{ site.repository_url }}/blob/main/src/tools/__init__.py)
+- agent tool maps in [src/agents/operator.py]({{ site.repository_url }}/blob/main/src/agents/operator.py), [src/agents/strategist.py]({{ site.repository_url }}/blob/main/src/agents/strategist.py), and [src/agents/evaluator.py]({{ site.repository_url }}/blob/main/src/agents/evaluator.py)
 
 That path is worth taking when:
 

@@ -1,12 +1,101 @@
----
-title: Quick Tutorial
-description: A fast first-run tutorial for QUASAR using silicon band-gap calculation as the example.
-section: Walkthrough
-lead: This tutorial walks through a simple first run with QUASAR using the prompt “calculate the band gap of silicon,” from launch to inspecting the final results.
-permalink: /quick-tutorial/
----
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Quick Tutorial | QUASAR</title>
+    <meta name="description" content="A fast first-run tutorial for QUASAR using silicon band-gap calculation as the example.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/QUASAR/assets/styles.css">
+  </head>
+  <body>
+    <div class="page-glow page-glow-a"></div>
+    <div class="page-glow page-glow-b"></div>
+    <div class="site-shell">
+      <header class="topbar">
+        <a class="brand" href="/QUASAR/" aria-label="QUASAR documentation home">
+          <img src="/QUASAR/assets/quasar-logo.png" alt="QUASAR wordmark">
+          <span class="brand-tag">Documentation</span>
+        </a>
+        <div class="topbar-actions">
+          <a class="ghost-link" href="https://github.com/fengxuyy/QUASAR">GitHub</a>
+          <a class="button-link button-link-subtle" href="/QUASAR/getting-started/">Get Started</a>
+        </div>
+      </header>
 
-## What You Will Learn
+      <div class="site-body">
+        <aside class="sidebar">
+          <div class="sidebar-panel">
+            <p class="sidebar-label">Documentation</p>
+            <nav class="site-nav" aria-label="Documentation navigation">
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/">
+      <span>Home</span>
+    </a>
+  
+    
+    
+    <a class="nav-link is-active" href="/QUASAR/quick-tutorial/">
+      <span>Quick Tutorial</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/getting-started/">
+      <span>Getting Started</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/cli/">
+      <span>CLI</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/configuration/">
+      <span>Configuration</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/workspace-history/">
+      <span>Workspace & History</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/extending-quasar/">
+      <span>Extending QUASAR</span>
+    </a>
+  
+</nav>
+
+          </div>
+          <div class="sidebar-panel sidebar-note">
+            <p class="sidebar-label">What QUASAR Does</p>
+            <p>
+              QUASAR turns a research prompt into a checkpointed workflow that can plan, execute, validate, and archive scientific work inside one shared workspace.
+            </p>
+            <a class="text-link" href="https://github.com/fengxuyy/QUASAR">Open repository</a>
+          </div>
+        </aside>
+
+        <main class="content">
+          
+            
+              <p class="eyebrow">Walkthrough</p>
+            
+            <h1>Quick Tutorial</h1>
+            
+              <p class="page-lead">This tutorial walks through a simple first run with QUASAR using the prompt “calculate the band gap of silicon,” from launch to inspecting the final results.</p>
+            
+          
+          <h2 id="what-you-will-learn">What You Will Learn</h2>
 
 <div class="card-grid">
   <div class="step-card">
@@ -26,30 +115,31 @@ permalink: /quick-tutorial/
   </div>
 </div>
 
-## Goal
+<h2 id="goal">Goal</h2>
 
-In this tutorial, we will ask QUASAR to:
+<p>In this tutorial, we will ask QUASAR to:</p>
 
-> Calculate the band gap of silicon.
+<blockquote>
+  <p>Calculate the band gap of silicon.</p>
+</blockquote>
 
+<h2 id="before-you-start">Before You Start</h2>
 
+<p>Make sure you already have:</p>
 
-## Before You Start
+<ul>
+  <li>a working runtime path such as Docker, Singularity, or local deployment</li>
+  <li><code class="language-plaintext highlighter-rouge">MODEL</code> and <code class="language-plaintext highlighter-rouge">MODEL_API_KEY</code> configured, or access to the interactive <code class="language-plaintext highlighter-rouge">\settings</code> panel</li>
+  <li>a mounted or exported workspace directory</li>
+</ul>
 
-Make sure you already have:
+<p>If not, go through <a href="/QUASAR/getting-started/">Getting Started</a> first.</p>
 
-- a working runtime path such as Docker, Singularity, or local deployment
-- `MODEL` and `MODEL_API_KEY` configured, or access to the interactive `\settings` panel
-- a mounted or exported workspace directory
+<h2 id="user-request">User Request</h2>
 
-If not, go through [Getting Started]({{ '/getting-started/' | relative_url }}) first.
+<p>Here we need to provided scientific request to QUASAR. Providing a more detailed prompt is always recommended, as it gives QUASAR the scientific context needed to choose the right methods and ensures you receive the specific outputs you need. For tutorial purposes, we will use a very short prompt.</p>
 
-## User Request
-
-Here we need to provided scientific request to QUASAR. Providing a more detailed prompt is always recommended, as it gives QUASAR the scientific context needed to choose the right methods and ensures you receive the specific outputs you need. For tutorial purposes, we will use a very short prompt.
-
-```text
-       ╭─────────────────────────────────────────────────────────────────────────────────────────╮
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>       ╭─────────────────────────────────────────────────────────────────────────────────────────╮
        │                                                                                         │
        │         ██████    █████  █████   █████████    █████████    █████████   ███████████      │
        │       ███░░░░███ ░░███  ░░███   ███░░░░░███  ███░░░░░███  ███░░░░░███ ░░███░░░░░███     │
@@ -71,14 +161,13 @@ Here we need to provided scientific request to QUASAR. Providing a more detailed
         ✴ Calculate the band gap of silicon.                                               Ctx 0%
        ───────────────────────────────────────────────────────────────────────────────────────────
         Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit
-```
+</code></pre></div></div>
 
-## Confirmation and Settings
+<h2 id="confirmation-and-settings">Confirmation and Settings</h2>
 
-After submitting your request, QUASAR presents the current runtime settings for review. Confirm that these settings are correct before the autonomous run begins, then enter `yes` to proceed. For this tutorial, we configure the accuracy to `eco` and the `granularity` to low to enable a faster, lightweight run.
+<p>After submitting your request, QUASAR presents the current runtime settings for review. Confirm that these settings are correct before the autonomous run begins, then enter <code class="language-plaintext highlighter-rouge">yes</code> to proceed. For this tutorial, we configure the accuracy to <code class="language-plaintext highlighter-rouge">eco</code> and the <code class="language-plaintext highlighter-rouge">granularity</code> to low to enable a faster, lightweight run.</p>
 
-```text
-        ╭─ Settings ───────────────────────────────────────────────────╮
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        ╭─ Settings ───────────────────────────────────────────────────╮
         │ MODEL                    : gemini-3-flash-preview            │
         │ MODEL_API_KEY            : Set                               │
         │ OPENAI_API_BASE          : (not set)                         │
@@ -108,14 +197,13 @@ After submitting your request, QUASAR presents the current runtime settings for 
        ───────────────────────────────────────────────────────────────────────────────────────────
         Request to send: Calculate the band gap of silicon.
         Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit
-```
+</code></pre></div></div>
 
-## Planning and Strategy
+<h2 id="planning-and-strategy">Planning and Strategy</h2>
 
-Once settings are confirmed, QUASAR’s **Strategist** takes over. It analyzes your prompt and environment to build a detailed execution plan. For this silicon example, it suggests a multi-task workflow involving structural relaxation, electronic density calculations, and final band structure extraction:
+<p>Once settings are confirmed, QUASAR’s <strong>Strategist</strong> takes over. It analyzes your prompt and environment to build a detailed execution plan. For this silicon example, it suggests a multi-task workflow involving structural relaxation, electronic density calculations, and final band structure extraction:</p>
 
-```text
-        ¤ Strategist
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        ¤ Strategist
           L ✓ Created Initial Plan
           L ✓ Reviewed Plan
             ╭─ Execution Plan ──────────────────────────────────────────────────────────────────╮
@@ -134,16 +222,15 @@ Once settings are confirmed, QUASAR’s **Strategist** takes over. It analyzes y
         ✴ Proceed with this plan? (yes/no)                                                 Ctx 0%
        ───────────────────────────────────────────────────────────────────────────────────────────
         Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit
-```
+</code></pre></div></div>
 
-Review the plan and enter `yes` to begin the simulation.
+<p>Review the plan and enter <code class="language-plaintext highlighter-rouge">yes</code> to begin the simulation.</p>
 
-## Execution and Tools
+<h2 id="execution-and-tools">Execution and Tools</h2>
 
-Once authorized, the Operator begins executing the tasks. In this phase, QUASAR starts preparing inputs and running calculations:
+<p>Once authorized, the Operator begins executing the tasks. In this phase, QUASAR starts preparing inputs and running calculations:</p>
 
-```text
-        ¤ Operator
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        ¤ Operator
          ╭─ Task 1 ─────────────────────────────────────────────────────────────────────────────╮
          │ Integrated Structural Relaxation and Electronic Density Generation                   │
          ╰──────────────────────────────────────────────────────────────────────────────────────╯
@@ -159,14 +246,13 @@ Once authorized, the Operator begins executing the tasks. In this phase, QUASAR 
         ✸ yes                                                                    Ctx 1%  Task 1/2
        ───────────────────────────────────────────────────────────────────────────────────────────
         Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit
-```
+</code></pre></div></div>
 
-## Task Completion and Evaluation
+<h2 id="task-completion-and-evaluation">Task Completion and Evaluation</h2>
 
-After each task, the **Evaluator** reviews the Operator's work to ensure scientific consistency and goal alignment. Here is the summary produced after Task 1 (Silicon relaxation and SCF):
+<p>After each task, the <strong>Evaluator</strong> reviews the Operator’s work to ensure scientific consistency and goal alignment. Here is the summary produced after Task 1 (Silicon relaxation and SCF):</p>
 
-```text
-        ¤ Operator
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>        ¤ Operator
          ╭─ Task 1 ─────────────────────────────────────────────────────────────────────────────╮
          │ Integrated Structural Relaxation and Electronic Density Generation                   │
          ╰──────────────────────────────────────────────────────────────────────────────────────╯
@@ -181,16 +267,15 @@ After each task, the **Evaluator** reviews the Operator's work to ensure scienti
                 │ are now ready for Task 2. Next, an NSCF calculation should be performed along │
                 │ high-symmetry paths to determine the band gap.                                │
                 ╰───────────────────────────────────────────────────────────────────────────────╯
-```
+</code></pre></div></div>
 
-With Task 1 validated, QUASAR automatically proceeds to Task 2 to calculate the final band gap dispersion and synthesize the results.
+<p>With Task 1 validated, QUASAR automatically proceeds to Task 2 to calculate the final band gap dispersion and synthesize the results.</p>
 
-## Final Run Summary
+<h2 id="final-run-summary">Final Run Summary</h2>
 
-When the entire research goal is reached, QUASAR produces a final **Run Summary**. This integrates the technical findings from all tasks into a single cohesive report, including optimized parameters, calculated values, and scientific contextualization:
+<p>When the entire research goal is reached, QUASAR produces a final <strong>Run Summary</strong>. This integrates the technical findings from all tasks into a single cohesive report, including optimized parameters, calculated values, and scientific contextualization:</p>
 
-```text
-         ╭─ Run Summary ────────────────────────────────────────────────────────────────────────╮
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>         ╭─ Run Summary ────────────────────────────────────────────────────────────────────────╮
          │                                                                                      │
          │ Band Gap Calculation of Silicon                                                      │
          │                                                                                      │
@@ -210,64 +295,95 @@ When the entire research goal is reached, QUASAR produces a final **Run Summary*
         ✴ Previous results found. Enter to auto-improve (or 'no' to start fresh) Ctx 3%  Task 2/2
        ───────────────────────────────────────────────────────────────────────────────────────────
         Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit
-```
+</code></pre></div></div>
 
-Once the summary is displayed, the agent remains active. You can press `Enter` to trigger an **auto-improvement cycle** where QUASAR self-evaluates the results for potential refinements, or you can type a follow-up request to extend the research (e.g., "Now calculate the effective masses at the VBM and CBM").
+<p>Once the summary is displayed, the agent remains active. You can press <code class="language-plaintext highlighter-rouge">Enter</code> to trigger an <strong>auto-improvement cycle</strong> where QUASAR self-evaluates the results for potential refinements, or you can type a follow-up request to extend the research (e.g., “Now calculate the effective masses at the VBM and CBM”).</p>
 
-## Where to Look for More Results
+<h2 id="where-to-look-for-more-results">Where to Look for More Results</h2>
 
-When the run completes, inspect these locations in the workspace:
+<p>When the run completes, inspect these locations in the workspace:</p>
 
-| Path | Why it matters |
-| --- | --- |
-| `final_results/summary.md` | Final written summary of the outcome and the workflow used to produce it. |
-| `logs/execution_overview.md` | High-level execution trace that is useful when you want to review what happened without reading everything. |
-| `logs/usage_report.md` | Token and cost reporting for the run. |
-| Generated input and output files | The actual scientific artifacts you may want to inspect, rerun, or compare. |
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Why it matters</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">final_results/summary.md</code></td>
+      <td>Final written summary of the outcome and the workflow used to produce it.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">logs/execution_overview.md</code></td>
+      <td>High-level execution trace that is useful when you want to review what happened without reading everything.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">logs/usage_report.md</code></td>
+      <td>Token and cost reporting for the run.</td>
+    </tr>
+    <tr>
+      <td>Generated input and output files</td>
+      <td>The actual scientific artifacts you may want to inspect, rerun, or compare.</td>
+    </tr>
+  </tbody>
+</table>
 
-After a completed run, QUASAR archives the results under:
+<p>After a completed run, QUASAR archives the results under:</p>
 
-```text
-workspace/archive/run_N/
-```
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>workspace/archive/run_N/
+</code></pre></div></div>
 
-You can inspect that archived run directly from the filesystem or from the CLI history tools.
+<p>You can inspect that archived run directly from the filesystem or from the CLI history tools.</p>
 
-## How to Judge a Successful First Run
+<h2 id="how-to-judge-a-successful-first-run">How to Judge a Successful First Run</h2>
 
-A successful tutorial run should leave you with:
+<p>A successful tutorial run should leave you with:</p>
 
-- a written summary of the silicon band gap result
-- the method used to obtain it
-- enough saved inputs and outputs to understand what QUASAR actually ran
-- logs that let you reconstruct the run later
+<ul>
+  <li>a written summary of the silicon band gap result</li>
+  <li>the method used to obtain it</li>
+  <li>enough saved inputs and outputs to understand what QUASAR actually ran</li>
+  <li>logs that let you reconstruct the run later</li>
+</ul>
 
-For a first pass, focus less on the exact numerical value and more on whether the workflow is inspectable, reproducible, and easy to continue.
+<p>For a first pass, focus less on the exact numerical value and more on whether the workflow is inspectable, reproducible, and easy to continue.</p>
 
-## What Success Looks Like
+<h2 id="what-success-looks-like">What Success Looks Like</h2>
 
-Once the first run works, you can start tightening prompts, increasing rigor, or asking QUASAR to compare methods instead of simply producing one answer.
+<p>Once the first run works, you can start tightening prompts, increasing rigor, or asking QUASAR to compare methods instead of simply producing one answer.</p>
 
-## If the Run Stops Early
+<h2 id="if-the-run-stops-early">If the Run Stops Early</h2>
 
-If QUASAR is interrupted, do not start over immediately. Resume from the checkpoint instead:
+<p>If QUASAR is interrupted, do not start over immediately. Resume from the checkpoint instead:</p>
 
-```bash
-quasar --resume
-```
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>quasar <span class="nt">--resume</span>
+</code></pre></div></div>
 
-Or launch the container again with `IF_RESTART=true`.
+<p>Or launch the container again with <code class="language-plaintext highlighter-rouge">IF_RESTART=true</code>.</p>
 
-This is especially important for longer scientific runs where you do not want to lose progress.
+<p>This is especially important for longer scientific runs where you do not want to lose progress.</p>
 
-## Good Next Steps
+<h2 id="good-next-steps">Good Next Steps</h2>
 
-Once the silicon example works, good follow-up prompts are:
+<p>Once the silicon example works, good follow-up prompts are:</p>
 
-- calculate the band structure of silicon and compare it with the reported band gap
-- rerun the silicon workflow with a different level of rigor
-- improve the previous run and explain what changed
+<ul>
+  <li>calculate the band structure of silicon and compare it with the reported band gap</li>
+  <li>rerun the silicon workflow with a different level of rigor</li>
+  <li>improve the previous run and explain what changed</li>
+</ul>
 
-From here, the most useful references are [Configuration]({{ '/configuration/' | relative_url }}) for tuning behavior, [Workspace & History]({{ '/workspace-history/' | relative_url }}) for understanding where results are stored, and [CLI]({{ '/cli/' | relative_url }}) if you want to use resume, cleanup, or history tools more deliberately.
+<p>From here, the most useful references are <a href="/QUASAR/configuration/">Configuration</a> for tuning behavior, <a href="/QUASAR/workspace-history/">Workspace &amp; History</a> for understanding where results are stored, and <a href="/QUASAR/cli/">CLI</a> if you want to use resume, cleanup, or history tools more deliberately.</p>
 
-If you want QUASAR to use software that is not already available in the image, continue with [Extending QUASAR]({{ '/extending-quasar/' | relative_url }}).
+<p>If you want QUASAR to use software that is not already available in the image, continue with <a href="/QUASAR/extending-quasar/">Extending QUASAR</a>.</p>
+
+        </main>
+      </div>
+
+      <footer class="site-footer">
+      </footer>
+    </div>
+  </body>
+</html>

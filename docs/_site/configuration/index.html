@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Configuration | QUASAR</title>
+    <meta name="description" content="Environment variables and runtime controls for QUASAR.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/QUASAR/assets/styles.css">
+  </head>
+  <body>
+    <div class="page-glow page-glow-a"></div>
+    <div class="page-glow page-glow-b"></div>
+    <div class="site-shell">
+      <header class="topbar">
+        <a class="brand" href="/QUASAR/" aria-label="QUASAR documentation home">
+          <img src="/QUASAR/assets/quasar-logo.png" alt="QUASAR wordmark">
+          <span class="brand-tag">Documentation</span>
+        </a>
+        <div class="topbar-actions">
+          <a class="ghost-link" href="https://github.com/fengxuyy/QUASAR">GitHub</a>
+          <a class="button-link button-link-subtle" href="/QUASAR/getting-started/">Get Started</a>
+        </div>
+      </header>
+
+      <div class="site-body">
+        <aside class="sidebar">
+          <div class="sidebar-panel">
+            <p class="sidebar-label">Documentation</p>
+            <nav class="site-nav" aria-label="Documentation navigation">
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/">
+      <span>Home</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/quick-tutorial/">
+      <span>Quick Tutorial</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/getting-started/">
+      <span>Getting Started</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/cli/">
+      <span>CLI</span>
+    </a>
+  
+    
+    
+    <a class="nav-link is-active" href="/QUASAR/configuration/">
+      <span>Configuration</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/workspace-history/">
+      <span>Workspace & History</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/extending-quasar/">
+      <span>Extending QUASAR</span>
+    </a>
+  
+</nav>
+
+          </div>
+          <div class="sidebar-panel sidebar-note">
+            <p class="sidebar-label">What QUASAR Does</p>
+            <p>
+              QUASAR turns a research prompt into a checkpointed workflow that can plan, execute, validate, and archive scientific work inside one shared workspace.
+            </p>
+            <a class="text-link" href="https://github.com/fengxuyy/QUASAR">Open repository</a>
+          </div>
+        </aside>
+
+        <main class="content">
+          
+            
+              <p class="eyebrow">Tuning</p>
+            
+            <h1>Configuration</h1>
+            
+              <p class="page-lead">QUASAR is configured primarily through environment variables, with command-level controls exposed through the CLI.</p>
+            
+          
+          <h2 id="core-environment-variables">Core Environment Variables</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Variable</th>
+      <th>Required</th>
+      <th>Purpose</th>
+      <th>Default</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">MODEL</code></td>
+      <td>Yes</td>
+      <td>Base model name for the system.</td>
+      <td>None</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">MODEL_API_KEY</code></td>
+      <td>Yes</td>
+      <td>API key for the base model provider.</td>
+      <td>None</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">OPENAI_API_BASE</code></td>
+      <td>No</td>
+      <td>Base URL for OpenAI-compatible global endpoints.</td>
+      <td>None</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">ACCURACY</code></td>
+      <td>No</td>
+      <td>Planning/execution rigor: <code class="language-plaintext highlighter-rouge">eco</code>, <code class="language-plaintext highlighter-rouge">standard</code>, <code class="language-plaintext highlighter-rouge">pro</code>.</td>
+      <td><code class="language-plaintext highlighter-rouge">standard</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">GRANULARITY</code></td>
+      <td>No</td>
+      <td>Task decomposition depth: <code class="language-plaintext highlighter-rouge">low</code>, <code class="language-plaintext highlighter-rouge">medium</code>, <code class="language-plaintext highlighter-rouge">high</code>.</td>
+      <td><code class="language-plaintext highlighter-rouge">medium</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CONTEXT_THRESHOLD</code></td>
+      <td>No</td>
+      <td>Context compression trigger level: <code class="language-plaintext highlighter-rouge">low</code> = 40%, <code class="language-plaintext highlighter-rouge">medium</code> = 60%, <code class="language-plaintext highlighter-rouge">high</code> = 80% of model context.</td>
+      <td><code class="language-plaintext highlighter-rouge">medium</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">ENABLE_RAG</code></td>
+      <td>No</td>
+      <td>Enable documentation retrieval.</td>
+      <td><code class="language-plaintext highlighter-rouge">true</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">CHECK_INTERVAL</code></td>
+      <td>No</td>
+      <td>Minutes between long-run LLM check-ins. Leave unset or use <code class="language-plaintext highlighter-rouge">0</code> to disable.</td>
+      <td>Disabled</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">AUTO_IMPROVE_CYCLES</code></td>
+      <td>No</td>
+      <td>Number of automatic auto-improve follow-up runs after a successful user-started run.</td>
+      <td><code class="language-plaintext highlighter-rouge">0</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">NUM_CORES</code></td>
+      <td>No</td>
+      <td>Override physical core detection.</td>
+      <td><code class="language-plaintext highlighter-rouge">Auto</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">PMG_MAPI_KEY</code></td>
+      <td>No</td>
+      <td>Materials Project access for <code class="language-plaintext highlighter-rouge">pymatgen</code>-driven tasks.</td>
+      <td>None</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">IF_RESTART</code></td>
+      <td>No</td>
+      <td>Resume from checkpoint when present.</td>
+      <td><code class="language-plaintext highlighter-rouge">false</code></td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">HF_TOKEN</code></td>
+      <td>No</td>
+      <td>Hugging Face token for index/resource access when needed.</td>
+      <td>None</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>The runtime also accepts <code class="language-plaintext highlighter-rouge">API_BASE_URL</code> as a compatibility alias for the shared OpenAI-compatible endpoint.</p>
+
+<h2 id="per-agent-model-overrides">Per-Agent Model Overrides</h2>
+
+<p>You can override the shared global model for each agent independently.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Agent</th>
+      <th>Model</th>
+      <th>API key</th>
+      <th>Base URL</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Strategist</td>
+      <td><code class="language-plaintext highlighter-rouge">STRATEGIST_MODEL</code></td>
+      <td><code class="language-plaintext highlighter-rouge">STRATEGIST_MODEL_API_KEY</code></td>
+      <td><code class="language-plaintext highlighter-rouge">STRATEGIST_API_BASE_URL</code></td>
+    </tr>
+    <tr>
+      <td>Operator</td>
+      <td><code class="language-plaintext highlighter-rouge">OPERATOR_MODEL</code></td>
+      <td><code class="language-plaintext highlighter-rouge">OPERATOR_MODEL_API_KEY</code></td>
+      <td><code class="language-plaintext highlighter-rouge">OPERATOR_API_BASE_URL</code></td>
+    </tr>
+    <tr>
+      <td>Evaluator</td>
+      <td><code class="language-plaintext highlighter-rouge">EVALUATOR_MODEL</code></td>
+      <td><code class="language-plaintext highlighter-rouge">EVALUATOR_MODEL_API_KEY</code></td>
+      <td><code class="language-plaintext highlighter-rouge">EVALUATOR_API_BASE_URL</code></td>
+    </tr>
+  </tbody>
+</table>
+
+<p>If an agent override is not set, that agent falls back to the global <code class="language-plaintext highlighter-rouge">MODEL</code> and <code class="language-plaintext highlighter-rouge">MODEL_API_KEY</code>.</p>
+
+<h2 id="how-people-usually-configure-quasar">How People Usually Configure QUASAR</h2>
+
+<div class="card-grid">
+  <div class="step-card">
+    <h3>Balanced Default</h3>
+    <p>Set <code>ACCURACY=standard</code>, <code>GRANULARITY=medium</code>, and <code>ENABLE_RAG=true</code> when you want a sensible default for most research tasks.</p>
+  </div>
+  <div class="step-card">
+    <h3>Faster Exploration</h3>
+    <p>Use <code>ACCURACY=eco</code> when you are still exploring a problem and want shorter loops before tightening rigor.</p>
+  </div>
+  <div class="step-card">
+    <h3>Higher Rigor</h3>
+    <p>Use <code>ACCURACY=pro</code> and often <code>GRANULARITY=high</code> when you want more explicit planning and stronger emphasis on scientific completeness.</p>
+  </div>
+  <div class="step-card">
+    <h3>Long-Running Jobs</h3>
+    <p>Set `CHECK_INTERVAL` when you want periodic review of long Python executions instead of completely silent runs.</p>
+  </div>
+</div>
+
+<h2 id="practical-tuning-advice">Practical Tuning Advice</h2>
+
+<div class="card-grid">
+  <div class="step-card">
+    <h3><code>ACCURACY</code></h3>
+    <p>Use <code>eco</code> for faster exploration, <code>standard</code> for balanced work, and <code>pro</code> when you want the strongest emphasis on rigor and reproducibility.</p>
+  </div>
+  <div class="step-card">
+    <h3><code>GRANULARITY</code></h3>
+    <p>Lower values create broader tasks; higher values encourage more decomposition and more explicit execution steps.</p>
+  </div>
+  <div class="step-card">
+    <h3><code>ENABLE_RAG</code></h3>
+    <p>Keep this on if you want local documentation retrieval across the supported scientific toolchain.</p>
+  </div>
+  <div class="step-card">
+    <h3><code>CONTEXT_THRESHOLD</code></h3>
+    <p>Use <code>low</code> for earlier compression, <code>medium</code> for the balanced default, and <code>high</code> to preserve more raw conversation before compression kicks in.</p>
+  </div>
+  <div class="step-card">
+    <h3><code>CHECK_INTERVAL</code></h3>
+    <p>Helpful for long Python jobs that need periodic review rather than fully silent execution. Leave it unset to disable periodic check-ins.</p>
+  </div>
+  <div class="step-card">
+    <h3>`AUTO_IMPROVE_CYCLES`</h3>
+    <p>Set this above <code>0</code> when you want QUASAR to automatically launch additional auto-improve passes after a successful run completes.</p>
+  </div>
+</div>
+
+<h2 id="interactive-settings-vs-environment-variables">Interactive Settings vs Environment Variables</h2>
+
+<p>The interactive CLI can surface missing required values through <code class="language-plaintext highlighter-rouge">\settings</code>, which is useful for first-time runs and exploratory sessions. For headless jobs, scheduled runs, and HPC usage, prefer setting environment variables explicitly before launch.</p>
+
+<h2 id="checkpoint-aware-settings">Checkpoint-Aware Settings</h2>
+
+<p>When QUASAR resumes a checkpoint, it loads settings from <code class="language-plaintext highlighter-rouge">checkpoint_settings.json</code> and merges sensitive values like API keys back in from environment variables. This helps preserve the run’s original execution assumptions while avoiding direct checkpoint storage of secrets.</p>
+
+<p>That means changing settings during resume is intentionally constrained. In particular, <code class="language-plaintext highlighter-rouge">ACCURACY</code> and <code class="language-plaintext highlighter-rouge">GRANULARITY</code> should stay aligned with the checkpointed run.</p>
+
+<p>Automatic auto-improve chains also persist their remaining cycle budget in checkpoint metadata, so an interrupted follow-up run can resume and continue the remaining automatic passes.</p>
+
+<h2 id="example">Example</h2>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">export </span><span class="nv">MODEL</span><span class="o">=</span>gemini-2.5-pro
+<span class="nb">export </span><span class="nv">MODEL_API_KEY</span><span class="o">=</span>your_key_here
+<span class="c"># Optional for OpenAI-compatible custom endpoints only</span>
+<span class="c"># export OPENAI_API_BASE=https://your-compatible-endpoint.example/v1</span>
+<span class="nb">export </span><span class="nv">ACCURACY</span><span class="o">=</span>standard
+<span class="nb">export </span><span class="nv">GRANULARITY</span><span class="o">=</span>medium
+<span class="nb">export </span><span class="nv">CONTEXT_THRESHOLD</span><span class="o">=</span>medium
+<span class="nb">export </span><span class="nv">ENABLE_RAG</span><span class="o">=</span><span class="nb">true
+export </span><span class="nv">CHECK_INTERVAL</span><span class="o">=</span>0
+<span class="nb">export </span><span class="nv">AUTO_IMPROVE_CYCLES</span><span class="o">=</span>0
+<span class="nb">export </span><span class="nv">PMG_MAPI_KEY</span><span class="o">=</span>your_materials_project_key
+</code></pre></div></div>
+
+<p>If you want to see how those settings affect run storage and resume behavior, continue with <a href="/QUASAR/workspace-history/">Workspace &amp; History</a>.</p>
+
+        </main>
+      </div>
+
+      <footer class="site-footer">
+      </footer>
+    </div>
+  </body>
+</html>

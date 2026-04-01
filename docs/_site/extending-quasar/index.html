@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Extending QUASAR | QUASAR</title>
+    <meta name="description" content="How to let QUASAR use additional software, dependencies, and first-class tools.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/QUASAR/assets/styles.css">
+  </head>
+  <body>
+    <div class="page-glow page-glow-a"></div>
+    <div class="page-glow page-glow-b"></div>
+    <div class="site-shell">
+      <header class="topbar">
+        <a class="brand" href="/QUASAR/" aria-label="QUASAR documentation home">
+          <img src="/QUASAR/assets/quasar-logo.png" alt="QUASAR wordmark">
+          <span class="brand-tag">Documentation</span>
+        </a>
+        <div class="topbar-actions">
+          <a class="ghost-link" href="https://github.com/fengxuyy/QUASAR">GitHub</a>
+          <a class="button-link button-link-subtle" href="/QUASAR/getting-started/">Get Started</a>
+        </div>
+      </header>
+
+      <div class="site-body">
+        <aside class="sidebar">
+          <div class="sidebar-panel">
+            <p class="sidebar-label">Documentation</p>
+            <nav class="site-nav" aria-label="Documentation navigation">
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/">
+      <span>Home</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/quick-tutorial/">
+      <span>Quick Tutorial</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/getting-started/">
+      <span>Getting Started</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/cli/">
+      <span>CLI</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/configuration/">
+      <span>Configuration</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/workspace-history/">
+      <span>Workspace & History</span>
+    </a>
+  
+    
+    
+    <a class="nav-link is-active" href="/QUASAR/extending-quasar/">
+      <span>Extending QUASAR</span>
+    </a>
+  
+</nav>
+
+          </div>
+          <div class="sidebar-panel sidebar-note">
+            <p class="sidebar-label">What QUASAR Does</p>
+            <p>
+              QUASAR turns a research prompt into a checkpointed workflow that can plan, execute, validate, and archive scientific work inside one shared workspace.
+            </p>
+            <a class="text-link" href="https://github.com/fengxuyy/QUASAR">Open repository</a>
+          </div>
+        </aside>
+
+        <main class="content">
+          
+            
+              <p class="eyebrow">Advanced</p>
+            
+            <h1>Extending QUASAR</h1>
+            
+              <p class="page-lead">There are two practical ways to extend QUASAR: tell it to install something during a run for temporary use, or bake the dependency into the project for permanent and more reliable use.</p>
+            
+          
+          <h2 id="choose-the-right-extension-level">Choose the Right Extension Level</h2>
+
+<div class="card-grid">
+  <div class="step-card">
+    <p class="mini-label">Fastest</p>
+    <h3>Prompt-Time Install</h3>
+    <p>Best when you are experimenting and only need a dependency for one run.</p>
+  </div>
+  <div class="step-card">
+    <p class="mini-label">Reliable</p>
+    <h3>Project-Level Dependency</h3>
+    <p>Best when the software should already exist every time QUASAR starts.</p>
+  </div>
+  <div class="step-card">
+    <p class="mini-label">Reusable</p>
+    <h3>First-Class Tool</h3>
+    <p>Best when the capability deserves an explicit tool interface instead of being driven only through prompt instructions.</p>
+  </div>
+</div>
+
+<h2 id="the-short-rule">The Short Rule</h2>
+
+<p>Use this rule of thumb:</p>
+
+<ol>
+  <li>For a one-off experiment or temporary dependency, include the install instruction directly in the prompt.</li>
+  <li>For repeated use, difficult installs, compiled software, or anything you want to rely on long term, add it to the repo environment with <code class="language-plaintext highlighter-rouge">requirements.txt</code> or a Dockerfile.</li>
+</ol>
+
+<p>That matches how QUASAR is structured today.</p>
+
+<h2 id="option-1-temporary-use-through-the-prompt">Option 1: Temporary Use Through the Prompt</h2>
+
+<p>If you only need a package for a single run, you can tell QUASAR to install it as part of the workflow.</p>
+
+<p>This works best for:</p>
+
+<ul>
+  <li>Python packages that can be installed with <code class="language-plaintext highlighter-rouge">pip</code></li>
+  <li>lightweight tools that can be fetched with <code class="language-plaintext highlighter-rouge">wget</code> or <code class="language-plaintext highlighter-rouge">curl</code></li>
+  <li>exploratory runs where you are still deciding whether the dependency is worth keeping</li>
+</ul>
+
+<p>Example prompt:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Calculate the band gap of silicon. If the required package is missing, install it first in the current environment and then continue. Treat the installation as temporary for this run, save the key scripts and outputs in the workspace, and summarize what was installed.
+</code></pre></div></div>
+
+<p>You can also be more explicit:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Calculate the band gap of silicon. If needed, install &lt;package_name&gt; with pip before using it. If installation fails, explain the failure clearly and stop rather than silently changing methods.
+</code></pre></div></div>
+
+<h3 id="when-this-is-a-good-fit">When This Is a Good Fit</h3>
+
+<ul>
+  <li>you are testing a new library</li>
+  <li>the dependency is pure Python or otherwise easy to install</li>
+  <li>you do not mind slower startup for that run</li>
+  <li>you do not need the install to persist across fresh containers or future sessions</li>
+</ul>
+
+<h3 id="limitations">Limitations</h3>
+
+<p>Prompt-based installs are less reliable when:</p>
+
+<ul>
+  <li>the package needs system libraries or compilers</li>
+  <li>the install is slow or brittle</li>
+  <li>you need the dependency in many runs</li>
+  <li>you want reproducible behavior across machines and images</li>
+</ul>
+
+<p>In those cases, move to a permanent install.</p>
+
+<h2 id="option-2-permanent-support-in-the-repo">Option 2: Permanent Support in the Repo</h2>
+
+<p>If you want QUASAR to use software reliably and repeatedly, bake it into the environment.</p>
+
+<h3 id="add-python-dependencies-to-requirementstxt">Add Python Dependencies to <code class="language-plaintext highlighter-rouge">requirements.txt</code></h3>
+
+<p>Use <a href="https://github.com/fengxuyy/QUASAR/blob/main/requirements.txt">requirements.txt</a> when the new dependency is mainly a Python package.</p>
+
+<p>This is the right place for packages like:</p>
+
+<ul>
+  <li>analysis libraries</li>
+  <li>file format libraries</li>
+  <li>scientific Python packages</li>
+  <li>helper packages QUASAR should always be able to import</li>
+</ul>
+
+<p>After editing <code class="language-plaintext highlighter-rouge">requirements.txt</code>, rebuild the image you use for QUASAR.</p>
+
+<h3 id="add-system-software-to-a-dockerfile">Add System Software to a Dockerfile</h3>
+
+<p>Use the Dockerfiles under <a href="https://github.com/fengxuyy/QUASAR/tree/main/docker">docker/</a> when the new dependency needs:</p>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">apt-get install</code></li>
+  <li>native binaries</li>
+  <li>compilers</li>
+  <li>GPU-specific runtime support</li>
+  <li>large external scientific codes that should already exist in the image</li>
+</ul>
+
+<p>Examples in this repo include:</p>
+
+<ul>
+  <li><a href="https://github.com/fengxuyy/QUASAR/blob/main/docker/Dockerfile.amd64">docker/Dockerfile.amd64</a></li>
+  <li><a href="https://github.com/fengxuyy/QUASAR/blob/main/docker/Dockerfile.arm64">docker/Dockerfile.arm64</a></li>
+  <li><a href="https://github.com/fengxuyy/QUASAR/blob/main/docker/Dockerfile.cuda">docker/Dockerfile.cuda</a></li>
+  <li><a href="https://github.com/fengxuyy/QUASAR/blob/main/docker/Dockerfile.rocm">docker/Dockerfile.rocm</a></li>
+</ul>
+
+<p>If the install is architecture-specific or accelerator-specific, update the relevant image variant rather than only one file.</p>
+
+<h3 id="when-permanent-installation-is-the-better-choice">When Permanent Installation Is the Better Choice</h3>
+
+<ul>
+  <li>you want the tool available in every run</li>
+  <li>the installation is error-prone</li>
+  <li>the software is large or compiled</li>
+  <li>reproducibility matters</li>
+  <li>you do not want the agent spending time reinstalling dependencies at runtime</li>
+</ul>
+
+<h2 id="which-file-should-i-change">Which File Should I Change?</h2>
+
+<p>Use this quick guide:</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Situation</th>
+      <th>Best place</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>One-off package for a single run</td>
+      <td>Put install instructions in the prompt</td>
+    </tr>
+    <tr>
+      <td>Python package QUASAR should always have</td>
+      <td><code class="language-plaintext highlighter-rouge">requirements.txt</code></td>
+    </tr>
+    <tr>
+      <td>OS package, binary, compiler, or complex scientific code</td>
+      <td>A Dockerfile under <code class="language-plaintext highlighter-rouge">docker/</code></td>
+    </tr>
+    <tr>
+      <td>Architecture- or GPU-specific software</td>
+      <td>The matching Dockerfile variant</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="important-practical-difference">Important Practical Difference</h2>
+
+<p>There are really two extension levels:</p>
+
+<ol>
+  <li><strong>Make software available</strong> so QUASAR can use it from scripts during a run.</li>
+  <li><strong>Add a first-class QUASAR tool</strong> so the agents can call it directly as part of the tool system.</li>
+</ol>
+
+<p>Most people should start with level 1.</p>
+
+<h2 id="if-you-want-a-true-first-class-quasar-tool">If You Want a True First-Class QUASAR Tool</h2>
+
+<p>If you want something beyond “software the Operator can use from Python,” you will need code changes.</p>
+
+<p>The main integration points are:</p>
+
+<ul>
+  <li>tool definitions in <a href="https://github.com/fengxuyy/QUASAR/tree/main/src/tools">src/tools/</a></li>
+  <li>exported tools in <a href="https://github.com/fengxuyy/QUASAR/blob/main/src/tools/__init__.py">src/tools/<strong>init</strong>.py</a></li>
+  <li>agent tool maps in <a href="https://github.com/fengxuyy/QUASAR/blob/main/src/agents/operator.py">src/agents/operator.py</a>, <a href="https://github.com/fengxuyy/QUASAR/blob/main/src/agents/strategist.py">src/agents/strategist.py</a>, and <a href="https://github.com/fengxuyy/QUASAR/blob/main/src/agents/evaluator.py">src/agents/evaluator.py</a></li>
+</ul>
+
+<p>That path is worth taking when:</p>
+
+<ul>
+  <li>the capability should be called repeatedly</li>
+  <li>you want a stable interface instead of prompt instructions</li>
+  <li>the same behavior should be available across many workflows</li>
+</ul>
+
+<h2 id="suggested-workflow">Suggested Workflow</h2>
+
+<p>For most extensions, the cleanest progression is:</p>
+
+<ol>
+  <li>Try it once with explicit install instructions in the prompt.</li>
+  <li>If the dependency is useful and stable, move it into <code class="language-plaintext highlighter-rouge">requirements.txt</code> or the relevant Dockerfile.</li>
+  <li>If the capability deserves a reusable interface, implement it as a proper QUASAR tool.</li>
+</ol>
+
+<p>This lets you explore quickly without committing too early, while still giving you a path to a durable setup once the tool proves useful.</p>
+
+        </main>
+      </div>
+
+      <footer class="site-footer">
+      </footer>
+    </div>
+  </body>
+</html>

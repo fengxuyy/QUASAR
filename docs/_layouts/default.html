@@ -15,12 +15,9 @@
     <div class="page-glow page-glow-b"></div>
     <div class="site-shell">
       <header class="topbar">
-        <a class="brand" href="{{ '/' | relative_url }}">
-          <img src="{{ '/assets/quasar-logo.png' | relative_url }}" alt="QUASAR">
-          <span class="brand-copy">
-            <strong>QUASAR</strong>
-            <small>Atomistic research workflows</small>
-          </span>
+        <a class="brand" href="{{ '/' | relative_url }}" aria-label="QUASAR documentation home">
+          <img src="{{ '/assets/quasar-logo.png' | relative_url }}" alt="QUASAR wordmark">
+          <span class="brand-tag">Documentation</span>
         </a>
         <div class="topbar-actions">
           <a class="ghost-link" href="{{ site.repository_url }}">GitHub</a>
@@ -35,9 +32,9 @@
             {% include nav.html %}
           </div>
           <div class="sidebar-panel sidebar-note">
-            <p class="sidebar-label">Quick Context</p>
+            <p class="sidebar-label">What QUASAR Does</p>
             <p>
-              QUASAR plans, executes, evaluates, and archives computational chemistry work across a shared workspace.
+              QUASAR turns a research prompt into a checkpointed workflow that can plan, execute, validate, and archive scientific work inside one shared workspace.
             </p>
             <a class="text-link" href="{{ site.repository_url }}">Open repository</a>
           </div>
@@ -58,7 +55,6 @@
       </div>
 
       <footer class="site-footer">
-        <p>Built for GitHub Pages. Source lives in the <code>docs/</code> directory of the QUASAR repository.</p>
       </footer>
     </div>
   </body>

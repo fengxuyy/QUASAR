@@ -6,25 +6,40 @@ show_title: false
 
 <div class="hero">
   <div>
-    <span class="pill">Universal Autonomous System for Atomistic Research</span>
-    <h1>Documentation for the full atomistic simulation workflow</h1>
+    <span class="pill">Quantum Universal Autonomous System for Atomistic Research</span>
+    <h1>Documentation for QUASAR</h1>
     <p>
-      QUASAR is a research-ready autonomous computational chemistry system with a terminal-native CLI.
-      It can plan a workflow, execute tasks inside a shared workspace, validate outputs, and archive complete runs for later inspection.
+      QUASAR is an autonomous system for end-to-end scientific discovery, integrating LLMs with simulation tools to automate workflows across quantum chemistry, materials science, and molecular simulation.
     </p>
     <div class="hero-actions">
       <a class="button-link" href="{{ '/getting-started/' | relative_url }}">Start With Setup</a>
-      <a class="button-link button-link-subtle" href="{{ site.repository_url }}">Open GitHub</a>
+      <a class="button-link button-link-subtle" href="{{ '/quick-tutorial/' | relative_url }}">Run the Tutorial</a>
     </div>
   </div>
-  <div class="hero-panel">
-    <p class="mini-label">Inside the loop</p>
-    <ol class="stack-list">
-      <li><strong>Strategist</strong> turns a research request into an execution plan.</li>
-      <li><strong>Operator</strong> works through tasks with filesystem, Python, RAG, and web tools.</li>
-      <li><strong>Evaluator</strong> checks whether each task is scientifically complete before the run advances.</li>
-      <li><strong>Archive + restart</strong> preserve finished runs and let interrupted work resume from checkpoints.</li>
-    </ol>
+</div>
+
+## Why Teams Use QUASAR
+
+<div class="metric-grid">
+  <div class="metric-card">
+    <p class="mini-label">Scope</p>
+    <h3>Complete Chemistry Landscape</h3>
+    <p>QUASAR is designed for the full range of atomistic research, from DFT and machine-learning potentials to molecular dynamics and adsorption simulations.</p>
+  </div>
+  <div class="metric-card">
+    <p class="mini-label">Automation</p>
+    <h3>Autonomous Complex Simulation</h3>
+    <p>Go beyond simple chat. QUASAR plans multi-step scientific workflows, executes calculations, and validates intermediate results automatically.</p>
+  </div>
+  <div class="metric-card">
+    <p class="mini-label">Adaptability</p>
+    <h3>Modular Flexibility</h3>
+    <p>Easily extend capabilities through your own models, custom tools, or prompt-time software installation to match your specific research needs.</p>
+  </div>
+  <div class="metric-card">
+    <p class="mini-label">Integrity</p>
+    <h3>Traceable & Reproducible</h3>
+    <p>Comprehensive context management ensures every run stays traceable through checkpoints, archives, and detailed execution logs.</p>
   </div>
 </div>
 
@@ -34,59 +49,79 @@ show_title: false
   <a class="feature-card" href="{{ '/quick-tutorial/' | relative_url }}">
     <p class="mini-label">Walkthrough</p>
     <h3>Quick Tutorial</h3>
-    <p>Follow a first run using “calculate the band gap of silicon” as the working example.</p>
+    <p>Follow a concrete first run around a silicon band-gap workflow from launch through result inspection.</p>
   </a>
   <a class="feature-card" href="{{ '/getting-started/' | relative_url }}">
     <p class="mini-label">Install</p>
     <h3>Getting Started</h3>
-    <p>Run QUASAR with Docker or Singularity using the interactive CLI or headless prompts.</p>
+    <p>Choose Docker, Singularity, or local deployment, mount a workspace, and launch QUASAR correctly the first time.</p>
   </a>
   <a class="feature-card" href="{{ '/cli/' | relative_url }}">
     <p class="mini-label">Interface</p>
     <h3>CLI</h3>
-    <p>Use interactive runs, headless prompts, checkpoint control, history, and system info.</p>
+    <p>Learn the interactive CLI, headless runs, resume behavior, cleanup commands, history browsing, and runtime checks.</p>
   </a>
   <a class="feature-card" href="{{ '/configuration/' | relative_url }}">
     <p class="mini-label">Tuning</p>
     <h3>Configuration</h3>
-    <p>Set models, RAG, execution rigor, task granularity, Materials Project access, and agent overrides.</p>
+    <p>Set models, RAG, execution rigor, task granularity, agent-specific overrides, and long-run behavior.</p>
   </a>
   <a class="feature-card" href="{{ '/workspace-history/' | relative_url }}">
     <p class="mini-label">Results</p>
     <h3>Workspace & History</h3>
-    <p>Understand checkpoints, archives, preserved documentation, and where run outputs are stored.</p>
-  </a>
-  <a class="feature-card" href="{{ '/architecture/' | relative_url }}">
-    <p class="mini-label">System</p>
-    <h3>Architecture</h3>
-    <p>See how Strategist, Operator, Evaluator, RAG resources, and restart behavior fit together.</p>
+    <p>Understand where outputs live, what gets preserved, how archives are created, and how to inspect older work.</p>
   </a>
   <a class="feature-card" href="{{ '/extending-quasar/' | relative_url }}">
     <p class="mini-label">Advanced</p>
     <h3>Extending QUASAR</h3>
-    <p>Learn when to install extra software in the prompt, when to add it to the image, and where first-class tools live in the codebase.</p>
+    <p>Learn when to install software in the prompt, when to bake it into the environment, and where first-class tools live in the codebase.</p>
   </a>
 </div>
 
-## What QUASAR Covers
+## What a Typical Run Looks Like
 
-QUASAR is designed around atomistic research workflows and integrates tools including Quantum ESPRESSO, ASE, MACE, pymatgen, LAMMPS, and RASPA3. The current codebase is optimized primarily for Gemini-based model setups, while broader compatibility is still evolving.
+<div class="card-grid">
+  <div class="step-card">
+    <p class="mini-label">1. Prompt</p>
+    <h3>Start From a Research Goal</h3>
+    <p>Describe the scientific task you want done and the artifacts you want kept in the workspace.</p>
+  </div>
+  <div class="step-card">
+    <p class="mini-label">2. Plan</p>
+    <h3>Break Work Into Tasks</h3>
+    <p>The Strategist creates a plan that reflects your requested rigor, granularity, and current workspace state.</p>
+  </div>
+  <div class="step-card">
+    <p class="mini-label">3. Execute</p>
+    <h3>Use Tools and Scientific Software</h3>
+    <p>The Operator can read files, run Python, query documentation, and work through the task list inside the mounted workspace.</p>
+  </div>
+  <div class="step-card">
+    <p class="mini-label">4. Review</p>
+    <h3>Validate and Archive</h3>
+    <p>The Evaluator checks task completion, and completed runs are archived for later inspection or follow-up work.</p>
+  </div>
+</div>
+
+## Coverage Today
+
+QUASAR is designed around atomistic research workflows and can support pipelines that touch DFT, machine-learning potentials, molecular dynamics, and adsorption-style simulation tasks. The broader toolchain around QUASAR includes projects such as Quantum ESPRESSO, ASE, MACE, pymatgen, LAMMPS, and RASPA3.
 
 <div class="metric-grid">
   <div class="metric-card">
-    <p class="mini-label">Execution</p>
-    <h3>CLI</h3>
-    <p>Use the same run engine through the interactive terminal UI or direct headless prompts.</p>
+    <p class="mini-label">Runtime</p>
+    <h3>CLI + Headless</h3>
+    <p>The same run engine powers both the interactive terminal UI and direct one-shot prompts.</p>
   </div>
   <div class="metric-card">
-    <p class="mini-label">Recovery</p>
-    <h3>Checkpoint Resume</h3>
-    <p>Interrupted runs can continue from saved state instead of starting over.</p>
+    <p class="mini-label">Modeling</p>
+    <h3>Provider Flexibility</h3>
+    <p>The current codebase is especially tuned for Gemini-oriented setups, with additional provider support continuing to mature.</p>
   </div>
   <div class="metric-card">
-    <p class="mini-label">Reference</p>
-    <h3>Built-In Docs</h3>
-    <p>Documentation repositories and example inputs are cached into the workspace for retrieval and inspection.</p>
+    <p class="mini-label">Storage</p>
+    <h3>Workspace-Centered</h3>
+    <p>Results, logs, checkpoints, archives, and cached documentation all stay anchored to one mounted workspace.</p>
   </div>
 </div>
 
@@ -97,9 +132,4 @@ QUASAR is designed around atomistic research workflows and integrates tools incl
 3. Jump to [CLI]({{ '/cli/' | relative_url }}) for the interactive and headless command surface.
 4. Keep [Configuration]({{ '/configuration/' | relative_url }}) nearby when tuning models, RAG, or execution rigor.
 5. Use [Workspace & History]({{ '/workspace-history/' | relative_url }}) to understand result locations, archive behavior, and restart semantics.
-6. Read [Architecture]({{ '/architecture/' | relative_url }}) when you need the higher-level mental model behind the app.
-7. Use [Extending QUASAR]({{ '/extending-quasar/' | relative_url }}) when you want to add more software or true first-class tools.
-
-<div class="callout callout-accent">
-  <strong>Maintainer note:</strong> this site is designed to live in the repository’s root <code>docs/</code> folder and deploy through GitHub Pages.
-</div>
+6. Use [Extending QUASAR]({{ '/extending-quasar/' | relative_url }}) when you want to add more software or true first-class tools.

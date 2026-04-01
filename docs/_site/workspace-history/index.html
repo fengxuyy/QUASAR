@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Workspace & History | QUASAR</title>
+    <meta name="description" content="How QUASAR stores outputs, checkpoints, archives, and documentation resources.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/QUASAR/assets/styles.css">
+  </head>
+  <body>
+    <div class="page-glow page-glow-a"></div>
+    <div class="page-glow page-glow-b"></div>
+    <div class="site-shell">
+      <header class="topbar">
+        <a class="brand" href="/QUASAR/" aria-label="QUASAR documentation home">
+          <img src="/QUASAR/assets/quasar-logo.png" alt="QUASAR wordmark">
+          <span class="brand-tag">Documentation</span>
+        </a>
+        <div class="topbar-actions">
+          <a class="ghost-link" href="https://github.com/fengxuyy/QUASAR">GitHub</a>
+          <a class="button-link button-link-subtle" href="/QUASAR/getting-started/">Get Started</a>
+        </div>
+      </header>
+
+      <div class="site-body">
+        <aside class="sidebar">
+          <div class="sidebar-panel">
+            <p class="sidebar-label">Documentation</p>
+            <nav class="site-nav" aria-label="Documentation navigation">
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/">
+      <span>Home</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/quick-tutorial/">
+      <span>Quick Tutorial</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/getting-started/">
+      <span>Getting Started</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/cli/">
+      <span>CLI</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/configuration/">
+      <span>Configuration</span>
+    </a>
+  
+    
+    
+    <a class="nav-link is-active" href="/QUASAR/workspace-history/">
+      <span>Workspace & History</span>
+    </a>
+  
+    
+    
+    <a class="nav-link" href="/QUASAR/extending-quasar/">
+      <span>Extending QUASAR</span>
+    </a>
+  
+</nav>
+
+          </div>
+          <div class="sidebar-panel sidebar-note">
+            <p class="sidebar-label">What QUASAR Does</p>
+            <p>
+              QUASAR turns a research prompt into a checkpointed workflow that can plan, execute, validate, and archive scientific work inside one shared workspace.
+            </p>
+            <a class="text-link" href="https://github.com/fengxuyy/QUASAR">Open repository</a>
+          </div>
+        </aside>
+
+        <main class="content">
+          
+            
+              <p class="eyebrow">Results</p>
+            
+            <h1>Workspace & History</h1>
+            
+              <p class="page-lead">QUASAR treats the mounted workspace as the center of the run. Understanding that directory model makes restart, cleanup, and result review much easier.</p>
+            
+          
+          <h2 id="workspace-layout">Workspace Layout</h2>
+
+<p>A typical workspace includes files like these:</p>
+
+<div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>workspace/
+├── final_results/
+│   └── summary.md
+├── logs/
+│   ├── usage_report.md
+│   ├── execution_overview.md
+│   ├── input_messages.md
+│   └── conversation/
+├── archive/
+│   ├── run_1/
+│   └── run_N/
+├── docs/
+├── .rag_index/
+├── checkpoints.sqlite
+├── checkpoint_settings.json
+└── ...
+</code></pre></div></div>
+
+<h2 id="what-each-area-is-for">What Each Area Is For</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Path</th>
+      <th>Purpose</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">final_results/</code></td>
+      <td>Final user-facing outputs for the active run.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">logs/</code></td>
+      <td>Run summaries, usage reports, input history, and conversation traces.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">archive/run_N/</code></td>
+      <td>Historical snapshots of completed runs.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">docs/</code></td>
+      <td>Downloaded documentation repositories used for local retrieval and manual inspection.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">.rag_index/</code></td>
+      <td>Cached retrieval index and embedding resources.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">checkpoints.sqlite</code></td>
+      <td>Active checkpoint database that powers resume and history features.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">checkpoint_settings.json</code></td>
+      <td>Stored run settings and usage metadata used during resume and reporting.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="what-gets-preserved">What Gets Preserved</h2>
+
+<ul>
+  <li><code class="language-plaintext highlighter-rouge">docs/</code> is preserved across normal cleanup and fresh starts</li>
+  <li><code class="language-plaintext highlighter-rouge">.rag_index/</code> and other dotfiles are preserved by the CLI cleanup commands</li>
+  <li><code class="language-plaintext highlighter-rouge">archive/</code> is preserved when you clear a checkpoint, but removed during a full fresh reset</li>
+  <li>active checkpoint files stay in place until a run completes or you clear them</li>
+</ul>
+
+<h2 id="completion-behavior">Completion Behavior</h2>
+
+<p>When a run completes successfully, QUASAR archives the active workspace into <code class="language-plaintext highlighter-rouge">archive/run_N/</code> and removes checkpoint artifacts from the live workspace. That gives you a clean active area while keeping the finished run intact for inspection.</p>
+
+<p>Archived runs can include:</p>
+
+<ul>
+  <li>final results</li>
+  <li>logs</li>
+  <li>checkpoint-related sidecars</li>
+  <li>generated files and intermediate outputs</li>
+</ul>
+
+<h2 id="interrupted-runs">Interrupted Runs</h2>
+
+<p>An interrupted run behaves differently from a completed one:</p>
+
+<ul>
+  <li>checkpoint files remain in the workspace</li>
+  <li>the CLI exposes resume behavior</li>
+  <li>settings are restored from checkpoint metadata</li>
+  <li>the current run can continue without losing prior progress</li>
+</ul>
+
+<h2 id="cleanup-modes">Cleanup Modes</h2>
+
+<p>The CLI cleanup commands operate on the live workspace only. They do not modify older archived runs unless you choose <code class="language-plaintext highlighter-rouge">--fresh</code>.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Action</th>
+      <th>Keeps <code class="language-plaintext highlighter-rouge">docs/</code></th>
+      <th>Keeps <code class="language-plaintext highlighter-rouge">archive/</code></th>
+      <th>Keeps dotfiles</th>
+      <th>Keeps active checkpoint</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Resume</td>
+      <td>Yes</td>
+      <td>Yes</td>
+      <td>Yes</td>
+      <td>Yes</td>
+    </tr>
+    <tr>
+      <td>Clear checkpoint / <code class="language-plaintext highlighter-rouge">--clear</code></td>
+      <td>Yes</td>
+      <td>Yes</td>
+      <td>Yes</td>
+      <td>No</td>
+    </tr>
+    <tr>
+      <td>Fresh start / <code class="language-plaintext highlighter-rouge">--fresh</code></td>
+      <td>Yes</td>
+      <td>No</td>
+      <td>Yes</td>
+      <td>No</td>
+    </tr>
+    <tr>
+      <td>Completed run archive</td>
+      <td>Yes</td>
+      <td>Yes</td>
+      <td>Yes</td>
+      <td>No</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="history-surfaces">History Surfaces</h2>
+
+<p>There are two main ways to inspect past work:</p>
+
+<ul>
+  <li>the archived files under <code class="language-plaintext highlighter-rouge">workspace/archive/run_N/</code>, which preserve summaries, logs, traces, and generated outputs</li>
+  <li>the <strong>CLI <code class="language-plaintext highlighter-rouge">--history</code> command</strong>, which lets you inspect checkpoint task history step by step</li>
+</ul>
+
+<h2 id="a-practical-review-flow">A Practical Review Flow</h2>
+
+<p>For most runs, the fastest inspection sequence is:</p>
+
+<ol>
+  <li>Open <code class="language-plaintext highlighter-rouge">final_results/summary.md</code> for the user-facing conclusion.</li>
+  <li>Open <code class="language-plaintext highlighter-rouge">logs/execution_overview.md</code> when you want the high-level execution path.</li>
+  <li>Use <code class="language-plaintext highlighter-rouge">quasar --history</code> if you need per-task detail from the current checkpoint.</li>
+  <li>Open <code class="language-plaintext highlighter-rouge">archive/run_N/</code> when you want the full snapshot of a completed earlier run.</li>
+</ol>
+
+<h2 id="read-only-vs-editable-contexts">Read-Only vs Editable Contexts</h2>
+
+<p>The live workspace is where active runs read and write files. Archived runs are intentionally treated as historical snapshots, which helps prevent accidental edits to past results while still making them easy to inspect.</p>
+
+<div class="callout callout-accent">
+  <strong>Tip:</strong> if you are iterating on a workflow, clear the active checkpoint when you want a new live run but keep the archive. Reach for a full fresh start only when you intentionally want to delete previous run history.
+</div>
+
+        </main>
+      </div>
+
+      <footer class="site-footer">
+      </footer>
+    </div>
+  </body>
+</html>
