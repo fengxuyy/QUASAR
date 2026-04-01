@@ -41,19 +41,10 @@ def _log(message: str, data: dict = None):
 
 
 def _detect_device(status_tracker=None) -> str:
-    """Detect available compute device. Returns 'cuda' if available, else 'cpu'."""
-    try:
-        import torch
-        if torch.cuda.is_available():
-            device_name = torch.cuda.get_device_name(0)
-            if status_tracker:
-                status_tracker(f"Using GPU: {device_name}")
-            _log(f"GPU detected: {device_name}")
-            return 'cuda'
-    except ImportError:
-        pass
-
-    _log("No GPU available, using CPU")
+    """RAG embeddings always run on CPU to avoid interfering with Operator jobs."""
+    _log("Using CPU for RAG embeddings")
+    if status_tracker:
+        status_tracker("Using CPU for embedding model")
     return 'cpu'
 
 
@@ -87,15 +78,30 @@ def _create_embeddings(device: str):
         return None
     
     import io
+    import logging
     import contextlib
     
-    # Suppress all stdout/stderr during model download
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-        return BGEEmbeddings(
-            model_name=MODEL_NAME,
-            model_kwargs={'device': device},
-            encode_kwargs={'normalize_embeddings': True}
-        )
+    # Suppress stdout/stderr and noisy loggers (e.g. sentence_transformers load
+    # reports, transformers unexpected-key warnings) during model initialisation.
+    _noisy_loggers = [
+        "sentence_transformers",
+        "transformers",
+        "transformers.modeling_utils",
+    ]
+    _saved_levels = {name: logging.getLogger(name).level for name in _noisy_loggers}
+    for name in _noisy_loggers:
+        logging.getLogger(name).setLevel(logging.ERROR)
+
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return BGEEmbeddings(
+                model_name=MODEL_NAME,
+                model_kwargs={'device': device},
+                encode_kwargs={'normalize_embeddings': True}
+            )
+    finally:
+        for name, level in _saved_levels.items():
+            logging.getLogger(name).setLevel(level)
 
 
 def initialize_embeddings(workspace_dir: Optional[Path] = None, status_tracker=None):

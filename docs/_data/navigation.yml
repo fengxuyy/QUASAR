@@ -1,0 +1,16 @@
+- title: Home
+  url: /
+- title: Quick Tutorial
+  url: /quick-tutorial/
+- title: Getting Started
+  url: /getting-started/
+- title: CLI
+  url: /cli/
+- title: Configuration
+  url: /configuration/
+- title: Workspace & History
+  url: /workspace-history/
+- title: Architecture
+  url: /architecture/
+- title: Extending QUASAR
+  url: /extending-quasar/

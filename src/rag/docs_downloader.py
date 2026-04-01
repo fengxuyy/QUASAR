@@ -60,6 +60,12 @@ REPO_CONFIGS = [
         "sparse_paths": ["Doc", "PW/Doc", "PW/examples", "PP/Doc", "PP/examples", 
                         "PHonon/Doc", "PHonon/examples", "README.md"],
     },
+    {
+        "name": "LAMMPS",
+        "url": "https://github.com/lammps/lammps.git",
+        "target": "lammps",
+        "sparse_paths": ["doc/src", "examples", "README", "doc/README"],
+    }
 ]
 
 # Pseudopotential URLs for Quantum ESPRESSO

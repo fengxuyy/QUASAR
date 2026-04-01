@@ -2,57 +2,86 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import fs from 'fs';
 import path from 'path';
+import { resolveWorkspaceDir } from '../utils/envDefaults.js';
 
 interface CheckpointProps {
     args: string[];
 }
 
-// Mock path for migration scaffolding
-const WORKSPACE_DIR = path.resolve(process.cwd(), 'workspace');
-const DB_PATH = path.join(WORKSPACE_DIR, 'checkpoint.sqlite');
+const WORKSPACE_DIR = resolveWorkspaceDir();
+const CHECKPOINT_SIDE_CARS = ['checkpoints.sqlite', 'checkpoints.sqlite-shm', 'checkpoints.sqlite-wal', 'checkpoint_settings.json'];
+const CLEAR_PRESERVED_ENTRIES = new Set(['archive', 'docs']);
+const FRESH_PRESERVED_ENTRIES = new Set(['docs']);
 
-const Checkpoint: React.FC<CheckpointProps> = ({ args }) => {
-    const subCommand = args[0] || 'list';
-    const exists = fs.existsSync(DB_PATH);
+function clearWorkspace(preservedEntries: Set<string>): void {
+    fs.mkdirSync(WORKSPACE_DIR, { recursive: true });
 
-    if (subCommand === 'list') {
-        return (
-            <Box flexDirection="column" padding={1}>
-                <Box marginBottom={1}>
-                    <Text bold underline>Available Checkpoints</Text>
-                </Box>
-                {exists ? (
-                    <Box flexDirection="column">
-                         <Text color="green">✔ Checkpoint file found: {DB_PATH}</Text>
-                         <Text dimColor>Size: {(fs.statSync(DB_PATH).size / 1024 / 1024).toFixed(2)} MB</Text>
-                    </Box>
-                ) : (
-                    <Text color="yellow">No checkpoint file found.</Text>
-                )}
-            </Box>
-        );
+    for (const entry of fs.readdirSync(WORKSPACE_DIR, { withFileTypes: true })) {
+        if (entry.name.startsWith('.') || preservedEntries.has(entry.name)) {
+            continue;
+        }
+
+        const entryPath = path.join(WORKSPACE_DIR, entry.name);
+        fs.rmSync(entryPath, { recursive: true, force: true });
     }
 
+    fs.mkdirSync(path.join(WORKSPACE_DIR, 'logs'), { recursive: true });
+}
+
+function hasCheckpointArtifacts(): boolean {
+    return CHECKPOINT_SIDE_CARS.some(fileName => fs.existsSync(path.join(WORKSPACE_DIR, fileName)));
+}
+
+function hasWorkspaceArtifacts(preservedEntries: Set<string>): boolean {
+    if (!fs.existsSync(WORKSPACE_DIR)) {
+        return false;
+    }
+
+    return fs.readdirSync(WORKSPACE_DIR, { withFileTypes: true }).some(entry => {
+        return !entry.name.startsWith('.') && !preservedEntries.has(entry.name);
+    });
+}
+
+const Checkpoint: React.FC<CheckpointProps> = ({ args }) => {
+    const subCommand = args[0];
+
     if (subCommand === 'clear') {
-         if (exists) {
-            // In a real app we might ask for confirmation or use a flag.
-            // For now, let's just simulate or require a flag if we were using meow deeply.
-            // But strict requirement was "functionality should stay the same", so we might need interactive confirmation.
-            // Ink interactive confirmation is complex, simplest is to just delete for now or show message.
-            try {
-                fs.unlinkSync(DB_PATH);
-                return <Box padding={1}><Text color="green">✔ Checkpoint deleted.</Text></Box>;
-            } catch (e) {
-                return <Box padding={1}><Text color="red">✖ Failed to delete: {(e as Error).message}</Text></Box>;
-            }
-         } else {
-             return <Box padding={1}><Text color="yellow">No checkpoint to clear.</Text></Box>;
-         }
+        try {
+            const hadCheckpoint = hasCheckpointArtifacts();
+            clearWorkspace(CLEAR_PRESERVED_ENTRIES);
+            return (
+                <Box flexDirection="column" padding={1}>
+                    <Text color="green">
+                        {hadCheckpoint ? '✔ Active checkpoint cleared.' : '✔ Workspace cleared.'}
+                    </Text>
+                    <Text dimColor>Archived runs were preserved.</Text>
+                </Box>
+            );
+        } catch (e) {
+            return <Box padding={1}><Text color="red">✖ Failed to clear workspace: {(e as Error).message}</Text></Box>;
+        }
+    }
+
+    if (subCommand === 'fresh') {
+        try {
+            const hadWorkspaceState = hasWorkspaceArtifacts(FRESH_PRESERVED_ENTRIES);
+            clearWorkspace(FRESH_PRESERVED_ENTRIES);
+            return (
+                <Box flexDirection="column" padding={1}>
+                    <Text color="green">
+                        {hadWorkspaceState ? '✔ Workspace and archives cleared.' : '✔ Workspace already clean.'}
+                    </Text>
+                    <Text dimColor>Only docs and dotfiles were preserved.</Text>
+                </Box>
+            );
+        } catch (e) {
+            return <Box padding={1}><Text color="red">✖ Failed to clear workspace and archive: {(e as Error).message}</Text></Box>;
+        }
     }
 
     return (
         <Box padding={1}>
-            <Text>Unknown checkpoint command. Use list, resume, or clear.</Text>
+            <Text>Unknown checkpoint command. Use clear or fresh.</Text>
         </Box>
     );
 };

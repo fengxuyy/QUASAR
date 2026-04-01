@@ -2,12 +2,109 @@
 LLM streaming utilities with token tracking and repetition detection.
 """
 
+import copy
 import json
 import re
 from collections import Counter
 from typing import Callable, Optional
 
 from .text import _extract_text, _extract_thoughts
+
+
+# Track last-seen input tokens per agent (for context summarization checks).
+# The input_tokens from a single API call represents the full context size sent.
+_last_input_tokens: dict[str, int] = {}
+
+
+def _get_real_attr(obj, attr_name: str):
+    """Read an actual attribute without triggering MagicMock child synthesis."""
+    try:
+        return object.__getattribute__(obj, attr_name)
+    except AttributeError:
+        return None
+    except Exception:
+        return getattr(obj, attr_name, None)
+
+
+def get_last_input_tokens(agent_name: str) -> int:
+    """Return the input_tokens value from the most recent API call for this agent."""
+    return _last_input_tokens.get(agent_name, 0)
+
+
+def reset_last_input_tokens(agent_name: str) -> None:
+    """Reset the tracked input tokens for an agent (e.g., after context summarization)."""
+    _last_input_tokens.pop(agent_name, None)
+
+
+def _get_llm_model_name(llm_instance) -> str:
+    """Best-effort lookup of the underlying model name, even through wrappers."""
+    current = llm_instance
+    seen_ids = set()
+
+    while current is not None and id(current) not in seen_ids:
+        seen_ids.add(id(current))
+
+        for attr in ("model_name", "model"):
+            value = _get_real_attr(current, attr)
+            if isinstance(value, str) and value:
+                return value
+
+        next_bound = _get_real_attr(current, "bound")
+        if next_bound is current:
+            break
+        current = next_bound
+
+    return ""
+
+
+def _normalize_usage_metadata(usage) -> Optional[dict]:
+    """Normalize provider usage metadata to a plain dict."""
+    if not usage:
+        return None
+    if isinstance(usage, dict):
+        return copy.deepcopy(usage)
+
+    normalized = {}
+    for attr in (
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "input_token_details",
+        "output_token_details",
+    ):
+        value = getattr(usage, attr, None)
+        if value is not None:
+            normalized[attr] = copy.deepcopy(value)
+
+    return normalized or None
+
+
+def _select_usage_metadata(llm_instance, usage_snapshots: list[dict], aggregated_usage: Optional[dict]) -> Optional[dict]:
+    """Pick the usage metadata snapshot that best reflects the completed streamed call.
+
+    Gemini can emit cumulative usage metadata on multiple chunks, and LangChain
+    currently sums chunk metadata during aggregation. In that case, the final
+    chunk's snapshot is the accurate one.
+    """
+    if not usage_snapshots:
+        return aggregated_usage
+
+    # Gemini usage metadata used to be strictly cumulative.
+    # We now rely on the heuristic fallback below (or LangChain's own aggregation)
+    # since modern langchain-google-genai integrates correctly with delta chunks.
+
+    # Heuristic fallback: repeated positive input counts across multiple chunks
+    # strongly suggests cumulative per-chunk reporting rather than deltas.
+    if len(usage_snapshots) > 1:
+        input_counts = [
+            snapshot.get("input_tokens", 0)
+            for snapshot in usage_snapshots
+            if isinstance(snapshot.get("input_tokens", 0), int)
+        ]
+        if input_counts and input_counts[0] > 0 and len(set(input_counts)) == 1:
+            return usage_snapshots[-1]
+
+    return aggregated_usage or usage_snapshots[-1]
 
 
 class StopGenerationException(Exception):
@@ -267,12 +364,16 @@ def stream_with_token_tracking(
             - aggregated_response: The accumulated response object (for advanced use)
             - was_stopped_early: True if generation was stopped due to repetition
     """
+    from ...context_budget import build_context_usage_snapshot
+    from ...context_summarizer import get_effective_model_name
     from ...usage_tracker import record_api_call
+    from .bridge import send_context_usage
     
     full_content = ""
     accumulated_tool_calls = {}
     full_response = None
     was_stopped_early = False
+    usage_snapshots: list[dict] = []
     
     # Initialize repetition detector if enabled
     detector = None
@@ -326,6 +427,11 @@ def stream_with_token_tracking(
                             accumulated_tool_calls[idx]['id'] = tc_chunk['id']
             
             # Accumulate chunks for usage_metadata
+            if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
+                normalized_usage = _normalize_usage_metadata(chunk.usage_metadata)
+                if normalized_usage:
+                    usage_snapshots.append(normalized_usage)
+
             if full_response is None:
                 full_response = chunk
             else:
@@ -340,19 +446,42 @@ def stream_with_token_tracking(
             raise
     
     # Track token usage from aggregated response
+    aggregated_usage = None
     if full_response and hasattr(full_response, 'usage_metadata') and full_response.usage_metadata:
-        usage = full_response.usage_metadata
-        # Handle both dict and object access patterns
-        if isinstance(usage, dict):
-            input_tokens = usage.get('input_tokens', 0)
-            output_tokens = usage.get('output_tokens', 0)
-        else:
-            input_tokens = getattr(usage, 'input_tokens', 0)
-            output_tokens = getattr(usage, 'output_tokens', 0)
+        aggregated_usage = _normalize_usage_metadata(full_response.usage_metadata)
+
+    selected_usage = _select_usage_metadata(llm_instance, usage_snapshots, aggregated_usage)
+
+    if selected_usage:
+        input_tokens = selected_usage.get('input_tokens', 0)
+        output_tokens = selected_usage.get('output_tokens', 0)
+
+        # Keep the returned response object consistent with the corrected accounting.
+        if full_response is not None:
+            try:
+                full_response.usage_metadata = copy.deepcopy(selected_usage)
+            except Exception:
+                pass
+
         record_api_call(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             agent_name=agent_name
+        )
+        # Track last-seen input tokens for context summarization checks
+        if agent_name and input_tokens > 0:
+            _last_input_tokens[agent_name] = input_tokens
+
+        model_name = get_effective_model_name(
+            agent_name=agent_name,
+            model_name=_get_llm_model_name(llm_instance),
+        )
+        send_context_usage(
+            build_context_usage_snapshot(
+                input_tokens=input_tokens,
+                model_name=model_name,
+                agent_name=agent_name,
+            )
         )
     
     # Convert accumulated tool calls to list format

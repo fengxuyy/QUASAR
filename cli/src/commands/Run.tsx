@@ -11,6 +11,7 @@ import fs from 'fs';
 // UI Components
 import PromptInput from '../ui/PromptInput.js';
 import Banner from '../ui/Banner.js';
+import Settings from '../ui/Settings.js';
 import { RagStatus, ActiveAgentStatus, StaticItemRenderer } from '../ui/Run/index.js';
 import TriangleSpinner from '../ui/Run/TriangleSpinner.js';
 
@@ -18,6 +19,7 @@ import TriangleSpinner from '../ui/Run/TriangleSpinner.js';
 import { 
     AgentInfo, 
     CommittedItem, 
+    ContextUsage,
     RagStatusInfo, 
     TaskProgress, 
     FileContent,
@@ -52,9 +54,9 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
     const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
     const [status, setStatus] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
-    const [modelName, setModelName] = useState<string>(process.env.MODEL || "");
-    const [pmgConfigured, setPmgConfigured] = useState(!!process.env.PMG_MAPI_KEY);
     const [isResizing, setIsResizing] = useState(false);
+    const [settingsMode, setSettingsMode] = useState(false);
+    const [missingVars, setMissingVars] = useState<string[]>([]);
     
     const [ragStatus, setRagStatus] = useState<RagStatusInfo | null>(null);
     const ragStatusRef = useRef<RagStatusInfo | null>(null);
@@ -68,16 +70,19 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
     const [isPlanComplete, setIsPlanComplete] = useState(false);
     
     const activeFileContentRef = useRef<FileContent | null>(null);
-    const lastCodeResultIsErrorRef = useRef<boolean>(false);
     
     const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
     const taskProgressRef = useRef<TaskProgress | null>(null);
+    const [contextUsage, setContextUsage] = useState<ContextUsage | null>(null);
     
     const [committedItems, setCommittedItems] = useState<CommittedItem[]>([]);
     const [bannerCommitted, setBannerCommitted] = useState(false);
     
     const [checkpointMode, setCheckpointMode] = useState<CheckpointMode>('checking');
     const [previousInput, setPreviousInput] = useState<string>('');
+    const [pendingStartPrompt, setPendingStartPrompt] = useState('');
+    const skipStartConfirmOnceRef = useRef(false);
+    const hasCompletedFirstInteractivePromptRef = useRef(false);
     const [isPeriodicCheckinActive, setIsPeriodicCheckinActiveState] = useState(false);
     const [periodicCheckinToolCall, setPeriodicCheckinToolCall] = useState<{ content: string; isError: boolean } | null>(null);
     const isPeriodicCheckinActiveRef = useRef(false);
@@ -96,7 +101,6 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
     const [staticKey, setStaticKey] = useState(0);
     const bridgeRef = useRef<any>(null);
     const bridgeStdoutBufferRef = useRef<string>('');
-    const bridgeStderrBufferRef = useRef<string>('');
     const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const [bridgeRestartCounter, setBridgeRestartCounter] = useState(0);
     
@@ -104,6 +108,13 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
 
     const [parsedPlan, setParsedPlan] = useState<string[]>([]);
     const parsedPlanRef = useRef<string[]>([]);
+
+    const [inputPrefillRevision, setInputPrefillRevision] = useState(0);
+    const [inputPrefillText, setInputPrefillText] = useState('');
+    const bumpInputPrefill = useCallback((text: string) => {
+        setInputPrefillText(text);
+        setInputPrefillRevision((r) => r + 1);
+    }, []);
 
     const setIsPeriodicCheckinActive = useCallback((active: boolean) => {
         isPeriodicCheckinActiveRef.current = active;
@@ -203,16 +214,16 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
         }
     }, [ragStatus?.status]);
 
-    // Commit banner when model is set
+    // Commit banner on mount
     useEffect(() => {
-        if (modelName && !bannerCommitted) {
+        if (!bannerCommitted) {
             setBannerCommitted(true);
             setCommittedItems(prev => {
                 if (prev.some(item => item.id === 'banner')) return prev;
-                return [...prev, { id: 'banner', type: 'banner', content: { modelName, pmgConfigured } }];
+                return [...prev, { id: 'banner', type: 'banner', content: {} }];
             });
         }
-    }, [modelName, pmgConfigured, bannerCommitted]);
+    }, [bannerCommitted]);
 
     // Handle resize
     useEffect(() => {
@@ -288,7 +299,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
 
         // Create message handler context
         const ctx: MessageHandlerContext = {
-            setModelName,
+            setModelName: () => {},
             setStatus,
             setIsLoading,
             setMessages,
@@ -299,6 +310,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             setPlanContent,
             setIsPlanComplete,
             setTaskProgress,
+            setContextUsage,
             setCommittedItems,
             setCheckpointMode,
             setPreviousInput,
@@ -310,7 +322,6 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             bridgeRef,
             taskProgressRef,
             activeFileContentRef,
-            lastCodeResultIsErrorRef,
             isInterruptedRef,
             isPeriodicCheckinActiveRef,
             resumingWithEvaluatorRef,
@@ -318,6 +329,14 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             genUniqueId,
             handleCheckpointInfo,
             setStaticKey,
+            setBannerCommitted,
+            itemIdCounterRef,
+            bumpInputPrefill,
+            exitIfDirectArgs: () => {
+                if (directArgsUsed) {
+                    setTimeout(() => exit(), 500);
+                }
+            }
         };
         
         const handleBridgeMessage = createMessageHandler(ctx);
@@ -335,19 +354,16 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             }
         });
 
-        child.stderr.on('data', (data) => {
-            bridgeStderrBufferRef.current += data.toString();
-            const lines = bridgeStderrBufferRef.current.split('\n');
-            bridgeStderrBufferRef.current = lines.pop() || '';
-
-            for (const rawLine of lines) {
-                const line = rawLine.trim();
-                if (!line) continue;
-                setMessages(prev => [...prev, { role: 'system', content: `Bridge stderr: ${line}` }]);
+        child.stderr?.on('data', (data: Buffer) => {
+            // Suppress all library noise (warnings, HF, tokenizer, etc.).
+            // Only surface genuine Python errors to avoid polluting the Ink UI.
+            const errStr = data.toString().trim();
+            if (errStr && (errStr.includes('Traceback') || errStr.includes('Error: '))) {
+                handleBridgeMessage({ type: 'error', payload: { message: 'Bridge Error', traceback: errStr } });
             }
         });
 
-        child.on('error', (err) => {
+        child.on('error', (err: Error) => {
             setMessages(prev => [...prev, { role: 'system', content: `Bridge Error: ${err.message}` }]);
         });
 
@@ -361,10 +377,83 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
         }
     }, []);
 
+    // ========== HELPERS ==========
+    const sendToBridge = useCallback((msg: object) => {
+        try {
+            bridgeRef.current?.stdin?.write(JSON.stringify(msg) + '\n');
+        } catch (e) {
+            // bridge may not be ready
+        }
+    }, []);
+
     // ========== HANDLERS ==========
     const handleSubmit = async (input: string) => {
         if (input.trim().toLowerCase() === 'exit') {
             exit();
+            return;
+        }
+
+        // Handle \settings command
+        if (input.trim().toLowerCase() === '\\settings') {
+            setMissingVars([]);
+            setSettingsMode(true);
+            return;
+        }
+
+        // Handle \refresh command
+        if (input.trim().toLowerCase() === '\\refresh') {
+            process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+            applyFreshStartState({
+                setPreviousInput, setTaskProgress, taskProgressRef, setCommittedItems,
+                setBannerCommitted, setPlanContent, setIsPlanComplete, setAgents,
+                activeFileContentRef, setSystemStatus, itemIdCounterRef
+            });
+            hasCompletedFirstInteractivePromptRef.current = false;
+            setParsedPlan([]);
+            setStaticKey(prev => prev + 1);
+            setIsPeriodicCheckinActive(false);
+            setPeriodicCheckinToolCall(null);
+            if (bridgeRef.current) {
+                bridgeRef.current.stdin.write(JSON.stringify({ command: 'clear_checkpoint' }) + "\n");
+            }
+            return;
+        }
+
+        const model = process.env.MODEL;
+        const apiKey = process.env.MODEL_API_KEY;
+        const missing = [];
+        if (!model) missing.push('MODEL');
+        if (!apiKey) missing.push('MODEL_API_KEY');
+
+        if (missing.length > 0 && checkpointMode !== 'plan-awaiting-confirm' && checkpointMode !== 'auto-resume') {
+            setMissingVars(missing);
+            setInputPrefillText(input);
+            setInputPrefillRevision(prev => prev + 1);
+            setSettingsMode(true);
+            return;
+        }
+
+        // Prompt has officially passed validation interceptors.
+        // Prune any stale prefill data to ensure it doesn't accidentally bleed into subsequent UI confirmations that remount the PromptInput.
+        setInputPrefillText('');
+        setInputPrefillRevision(0);
+
+        if (checkpointMode === 'plan-awaiting-confirm') {
+            const answer = input.trim().toLowerCase();
+            if (answer === 'yes') {
+                if (bridgeRef.current) {
+                    bridgeRef.current.stdin.write(JSON.stringify({ command: 'plan_confirm', proceed: true }) + '\n');
+                }
+                setCheckpointMode('normal');
+                setIsLoading(true);
+                return;
+            }
+            if (answer === 'no') {
+                if (bridgeRef.current) {
+                    bridgeRef.current.stdin.write(JSON.stringify({ command: 'plan_confirm', proceed: false }) + '\n');
+                }
+                return;
+            }
             return;
         }
 
@@ -387,6 +476,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                     setBannerCommitted, setPlanContent, setIsPlanComplete, setAgents,
                     activeFileContentRef, setSystemStatus, itemIdCounterRef
                 });
+                hasCompletedFirstInteractivePromptRef.current = false;
                 setParsedPlan([]);
                 setStaticKey(prev => prev + 1);
                 setIsPeriodicCheckinActive(false);
@@ -417,6 +507,8 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                 }
                 // Transition to normal mode and fall through to prompt submission
                 setCheckpointMode('normal');
+                // Same submit path as improve/auto-improve — no second yes/no gate
+                skipStartConfirmOnceRef.current = true;
             }
         }
 
@@ -430,6 +522,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                     setBannerCommitted, setPlanContent, setIsPlanComplete, setAgents,
                     activeFileContentRef, setSystemStatus, itemIdCounterRef
                 });
+                hasCompletedFirstInteractivePromptRef.current = false;
                 setParsedPlan([]);
                 setCheckpointMode('normal');
                 setStaticKey(prev => prev + 1);
@@ -445,6 +538,50 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             return;
         }
 
+        if (checkpointMode === 'confirm-start-prompt') {
+            const answer = input.trim().toLowerCase();
+            if (answer === 'yes') {
+                const toSend = pendingStartPrompt;
+                setPendingStartPrompt('');
+                setCheckpointMode('normal');
+                if (!toSend.trim()) {
+                    return;
+                }
+                isInterruptedRef.current = false;
+                setIsLoading(true);
+                setStatus("Sending to backend...");
+                if (bridgeRef.current) {
+                    const restartFromEnv = ['true', '1', 'yes', 'on'].includes((process.env.IF_RESTART || '').toLowerCase());
+                    bridgeRef.current.stdin.write(JSON.stringify({
+                        command: 'prompt',
+                        content: toSend,
+                        restart: flags.restart || restartFromEnv
+                    }) + "\n");
+                }
+                hasCompletedFirstInteractivePromptRef.current = true;
+            } else if (answer === 'no') {
+                setPendingStartPrompt('');
+                setCheckpointMode('normal');
+            }
+            return;
+        }
+
+        const isInteractiveRun = args.length === 0;
+        if (
+            checkpointMode === 'normal' &&
+            isInteractiveRun &&
+            !skipStartConfirmOnceRef.current &&
+            input.trim() &&
+            !hasCompletedFirstInteractivePromptRef.current
+        ) {
+            setPendingStartPrompt(input);
+            setCheckpointMode('confirm-start-prompt');
+            return;
+        }
+        if (skipStartConfirmOnceRef.current) {
+            skipStartConfirmOnceRef.current = false;
+        }
+
         isInterruptedRef.current = false;
         setIsLoading(true);
         setStatus("Sending to backend...");
@@ -456,6 +593,9 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                 content: input, 
                 restart: flags.restart || restartFromEnv 
             }) + "\n");
+        }
+        if (isInteractiveRun && input.trim()) {
+            hasCompletedFirstInteractivePromptRef.current = true;
         }
     };
     
@@ -628,21 +768,57 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                         </Box>
                     )}
 
-                    {/* Input Area */}
+                    {/* Input Area / Settings */}
                     {isSystemReady && checkpointMode !== 'error' && checkpointMode !== 'checking' && (
-                        <Box marginTop={0}>
-                            <PromptInput 
-                                onSubmit={handleSubmit} 
-                                isLoading={isLoading} 
-                                taskProgress={taskProgress}
-                                checkpointPrompt={checkpointMode === 'prompt'}
-                                completedRunPrompt={checkpointMode === 'completed-run-prompt'}
-                                confirmDeleteArchive={checkpointMode === 'confirm-delete-archive'}
-                                previousInput={previousInput}
-                                showInterruptWarning={showInterruptWarning}
-                                showExitWarning={showExitWarning}
-                            />
-                        </Box>
+                        (settingsMode || checkpointMode === 'confirm-start-prompt') ? (
+                            <Box flexDirection="column" width="100%">
+                                <Settings 
+                                    onExit={() => setSettingsMode(false)} 
+                                    sendToBridge={sendToBridge} 
+                                    highlightMissing={missingVars}
+                                    isActive={settingsMode}
+                                />
+                                {checkpointMode === 'confirm-start-prompt' && !settingsMode && (
+                                    <PromptInput 
+                                        onSubmit={handleSubmit} 
+                                        isLoading={isLoading} 
+                                        taskProgress={taskProgress}
+                                        contextUsage={contextUsage}
+                                        checkpointPrompt={false}
+                                        completedRunPrompt={false}
+                                        confirmDeleteArchive={false}
+                                        startRequestConfirm={true}
+                                        pendingSubmitPreview={pendingStartPrompt}
+                                        planAwaitingConfirm={false}
+                                        prefillRevision={inputPrefillRevision}
+                                        prefillText={inputPrefillText}
+                                        previousInput={previousInput}
+                                        showInterruptWarning={showInterruptWarning}
+                                        showExitWarning={showExitWarning}
+                                    />
+                                )}
+                            </Box>
+                        ) : (
+                            <Box marginTop={0}>
+                                <PromptInput 
+                                    onSubmit={handleSubmit} 
+                                    isLoading={isLoading} 
+                                    taskProgress={taskProgress}
+                                    contextUsage={contextUsage}
+                                    checkpointPrompt={checkpointMode === 'prompt'}
+                                    completedRunPrompt={checkpointMode === 'completed-run-prompt'}
+                                    confirmDeleteArchive={checkpointMode === 'confirm-delete-archive'}
+                                    startRequestConfirm={false}
+                                    pendingSubmitPreview={pendingStartPrompt}
+                                    planAwaitingConfirm={checkpointMode === 'plan-awaiting-confirm'}
+                                    prefillRevision={inputPrefillRevision}
+                                    prefillText={inputPrefillText}
+                                    previousInput={previousInput}
+                                    showInterruptWarning={showInterruptWarning}
+                                    showExitWarning={showExitWarning}
+                                />
+                            </Box>
+                        )
                     )}
                 </>
             )}

@@ -3,6 +3,7 @@ import pytest
 import shutil
 from pathlib import Path
 from src.tools.filesystem import read_file, write_file, list_directory, delete_file, edit_file
+from src.tools.base import MAX_OUTPUT_CHARS
 from src.tools.base import PROTECTED_SYSTEM_FILES
 
 def test_write_and_read_file(mock_workspace):
@@ -59,8 +60,58 @@ def test_read_large_file_truncation(mock_workspace):
     write_file.invoke({"file_path": filename, "content": content})
     
     result = read_file.invoke({"file_path": filename})
-    assert "Content truncated" in result
+    assert "truncated" in result.lower()
     assert len(result) < 50000
+
+
+def test_read_file_keyword_mode_respects_global_output_limit(mock_workspace):
+    """Keyword reads should still honor the same global truncation budget."""
+    filename = "keyword_huge.log"
+    repeated_line = "keyword " + ("X" * 400)
+    content = "\n".join(f"{i}: {repeated_line}" for i in range(500))
+    write_file.invoke({"file_path": filename, "content": content})
+
+    result = read_file.invoke({
+        "file_path": filename,
+        "keyword": "keyword",
+        "context_lines": 0,
+    })
+
+    assert "Found keyword 'keyword'" in result
+    assert "truncated" in result.lower()
+    assert len(result) <= MAX_OUTPUT_CHARS + 200
+
+
+def test_read_file_first_lines_mode_respects_global_output_limit(mock_workspace):
+    """first_lines reads should be capped by the global output limit."""
+    filename = "first_lines_huge.log"
+    long_line = "Y" * 600
+    content = "\n".join(f"{i}: {long_line}" for i in range(300))
+    write_file.invoke({"file_path": filename, "content": content})
+
+    result = read_file.invoke({
+        "file_path": filename,
+        "first_lines": 200,
+    })
+
+    assert "truncated" in result.lower()
+    assert len(result) <= MAX_OUTPUT_CHARS + 200
+
+
+def test_read_file_last_lines_mode_respects_global_output_limit(mock_workspace):
+    """last_lines reads should be capped by the global output limit."""
+    filename = "last_lines_huge.log"
+    long_line = "Z" * 600
+    content = "\n".join(f"{i}: {long_line}" for i in range(300))
+    write_file.invoke({"file_path": filename, "content": content})
+
+    result = read_file.invoke({
+        "file_path": filename,
+        "last_lines": 200,
+    })
+
+    assert "truncated" in result.lower()
+    assert len(result) <= MAX_OUTPUT_CHARS + 200
 
 def test_read_protected_file(mock_workspace):
     """Test attempting to read a protected system file."""
@@ -330,3 +381,83 @@ def test_rename_file(mock_workspace):
     assert not (mock_workspace / "old_name.txt").exists()
     assert (mock_workspace / "new_name.txt").exists()
 
+
+# ── Multi-path tests ──────────────────────────────────────────────────────
+
+def test_read_multiple_files(mock_workspace):
+    """Test reading multiple files at once by passing a list of paths."""
+    write_file.invoke({"file_path": "multi1.txt", "content": "Alpha content"})
+    write_file.invoke({"file_path": "multi2.txt", "content": "Beta content"})
+
+    result = read_file.invoke({"file_path": ["multi1.txt", "multi2.txt"]})
+    assert "Alpha content" in result
+    assert "Beta content" in result
+    # Results should be separated by a divider
+    assert "---" in result
+
+
+def test_read_multiple_files_one_missing(mock_workspace):
+    """Test reading a list where one file does not exist – should still return partial results."""
+    write_file.invoke({"file_path": "exists.txt", "content": "I exist"})
+
+    result = read_file.invoke({"file_path": ["exists.txt", "ghost.txt"]})
+    assert "I exist" in result
+    assert "does not exist" in result
+
+
+def test_read_multiple_files_with_first_lines(mock_workspace):
+    """Test reading multiple files with first_lines parameter."""
+    write_file.invoke({"file_path": "a.txt", "content": "line1\nline2\nline3"})
+    write_file.invoke({"file_path": "b.txt", "content": "lineA\nlineB\nlineC"})
+
+    result = read_file.invoke({"file_path": ["a.txt", "b.txt"], "first_lines": 1})
+    assert "line1" in result
+    assert "lineA" in result
+    assert "line3" not in result
+    assert "lineC" not in result
+
+
+def test_list_multiple_directories(mock_workspace):
+    """Test listing multiple directories at once."""
+    import os
+    (mock_workspace / "dir_a").mkdir()
+    (mock_workspace / "dir_a" / "fileA.txt").touch()
+    (mock_workspace / "dir_b").mkdir()
+    (mock_workspace / "dir_b" / "fileB.py").touch()
+
+    result = list_directory.invoke({"directory_path": ["dir_a", "dir_b"]})
+    assert "fileA.txt" in result
+    assert "fileB.py" in result
+    assert "---" in result
+
+
+def test_read_single_file_unchanged(mock_workspace):
+    """Verify that passing a single string still works identically."""
+    write_file.invoke({"file_path": "solo.txt", "content": "Solo content"})
+    result = read_file.invoke({"file_path": "solo.txt"})
+    assert "Solo content" in result
+    assert "---" not in result  # No multi-file separator
+
+
+def test_delete_multiple_files(mock_workspace):
+    """Test deleting multiple files at once by passing a list of paths."""
+    write_file.invoke({"file_path": "del1.txt", "content": "content1"})
+    write_file.invoke({"file_path": "del2.txt", "content": "content2"})
+    assert (mock_workspace / "del1.txt").exists()
+    assert (mock_workspace / "del2.txt").exists()
+
+    result = delete_file.invoke({"file_path": ["del1.txt", "del2.txt"]})
+    assert "Successfully deleted" in result
+    assert "---" in result  # Multi-file separator
+    assert not (mock_workspace / "del1.txt").exists()
+    assert not (mock_workspace / "del2.txt").exists()
+
+
+def test_delete_multiple_files_one_missing(mock_workspace):
+    """Test deleting a list where one file does not exist – should still delete the other."""
+    write_file.invoke({"file_path": "exists_del.txt", "content": "content"})
+
+    result = delete_file.invoke({"file_path": ["exists_del.txt", "ghost_del.txt"]})
+    assert "Successfully deleted" in result
+    assert "Error" in result  # The missing file should produce an error
+    assert not (mock_workspace / "exists_del.txt").exists()

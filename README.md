@@ -14,6 +14,23 @@
 
 A research-ready autonomous computational chemistry agentic system. QUASAR covers the full atomistic simulation pipeline with integrated tools including Density Functional Theory (DFT), Machine Learning Potentials (MLP), Molecular Dynamics (MD), and Grand Canonical Monte Carlo (GCMC), allowing scientists to rapidly iterate on hypotheses, explore large design spaces, and accelerate the discovery of novel materials and phenomena.
 
+Documentation: [QUASAR-CHEM Docs](https://fengxuyy.github.io/QUASAR-CHEM/)
+
+<details>
+<summary><strong>New Features</strong></summary>
+
+- Dedicated GitHub Pages documentation for setup, CLI usage, configuration, architecture, and workspace history.
+- Expanded CLI commands for resume, cleanup, history browsing, configuration validation, and system info.
+- Interactive `\settings` panel for filling in required runtime settings from inside the terminal UI.
+- Checkpoint-aware history inspection plus separate `--clear` and `--fresh` cleanup modes.
+- Context compression controls via `CONTEXT_THRESHOLD` and automatic follow-up runs via `AUTO_IMPROVE_CYCLES`.
+- Per-agent model overrides for strategist, operator, and evaluator workflows.
+- Improved parallel execution of tool calls for enhanced performance.
+
+</details>
+
+<br>
+
 <details>
 <summary><strong>Quick Start</strong></summary>
 
@@ -35,15 +52,13 @@ docker pull fengxuyang/quasar:<tag>
 
 **Singularity (HPC):** Convert the Docker image to a `.sif` file. Build directly from Docker Hub:
 ```bash
-singularity build quasar_<tag>.sif docker://fengxuyang/quasar:<tag>
+singularity build quasar.sif docker://fengxuyang/quasar:<tag>
 ```
 
 ### 4. Choose Your Interface
-- **CLI** — Terminal-based interactive interface with essential functionalities; see [CLI](#cli) below.
+- **CLI** — Terminal-based interactive interface with live agent updates, checkpoint prompts, and the built-in `\settings` panel; see [CLI](#cli) below.
 
 - **Batch** — Headless automated execution for background or HPC tasks; see [Batch Jobs](#batch-jobs) below.
-
-- **Web** — A premium web-based experience offering advanced usage, fine-grained control, and rich visualisation; currently in private beta, contact us at [j.evans@adelaide.edu.au](mailto:j.evans@adelaide.edu.au) for early access.
 
 </details>
 
@@ -52,7 +67,7 @@ singularity build quasar_<tag>.sif docker://fengxuyang/quasar:<tag>
 <details>
 <summary id="local-deployment"><strong>Local Deployment</strong></summary>
 
-Run QUASAR on your machine (without Docker/Singularity). Simulation engines (Quantum ESPRESSO, LAMMPS, RASPA3) needs to be pre-installed. Here's an example using conda.
+Run QUASAR on your machine (without Docker/Singularity). Simulation engines such as Quantum ESPRESSO, LAMMPS, and RASPA3 need to be pre-installed. Here's an example using conda.
 
 ### 1. Prerequisites
 - [Miniconda](https://docs.conda.io/en/latest/miniconda.html) or [Anaconda](https://www.anaconda.com/)
@@ -73,18 +88,7 @@ pip install --upgrade pip
 pip install quasar-core
 ```
 
-### 4. Set required environment variables
-```bash
-export MODEL_API_KEY=<api_key>
-export MODEL=<model_name>
-export WORKSPACE_DIR=<workspace_directory>
-```
-
-### 5. Run QUASAR
-```bash
-quasar
-```
-More details please refer to CLI and Batch 
+`quasar-core` ships the Python backend and the packaged `quasar` launcher. Interactive runs can fill in missing `MODEL` and `MODEL_API_KEY` values from the CLI via `\settings`; headless runs should still export them before launch.
 </details>
 
 <br>
@@ -93,13 +97,11 @@ More details please refer to CLI and Batch
 <details>
 <summary id="cli"><strong>CLI</strong></summary>
 
-Run QUASAR interactively from the terminal or inspect run history.
+Run QUASAR interactively from the terminal, launch headless prompts, or inspect checkpoint state and task history.
 
 #### Docker
 ```bash
 docker run -it --rm \
-  -e MODEL_API_KEY=<api_key> \
-  -e MODEL=<model_name> \
   -v "<workspace_path>:/workspace" \
   fengxuyang/quasar:<tag> \
   quasar
@@ -110,27 +112,43 @@ docker run -it --rm \
 singularity exec --cleanenv \
   -B "<workspace_path>:/workspace" \
   --home "<workspace_path>:/workspace" \
-  --env MODEL_API_KEY=<api_key> \
-  --env MODEL=<model_name> \
   <tag>.sif quasar
 ```
 
 #### Local Deployment
 ```bash
-export MODEL_API_KEY=<api_key>
-export MODEL=<model_name>
 export WORKSPACE_DIR=<workspace_directory>
 quasar
 ```
 
-#### `quasar history`
+Interactive sessions can open the built-in `\settings` panel before the first prompt if required settings such as `MODEL` or `MODEL_API_KEY` are missing. For scripted or headless runs, provide required environment variables up front.
+
+#### Command Reference
+
+| Command | What it does |
+| :--- | :--- |
+| `quasar` | Starts the interactive terminal UI. |
+| `quasar "..."` | Runs a direct prompt in headless mode. |
+| `quasar --resume` | Resumes the active checkpoint. |
+| `quasar --clear` | Clears the active checkpoint and current workspace state, while preserving `archive/` and `docs/`. |
+| `quasar --fresh` | Clears the current workspace state and archived runs, while preserving `docs/` and hidden caches such as `.rag_index/`. |
+| `quasar --history` | Opens the interactive per-task checkpoint history browser. |
+| `quasar --config` | Shows the current configuration values. |
+| `quasar --config validate` | Verifies required configuration such as `MODEL_API_KEY`. |
+| `quasar --info` | Prints system and workspace information. |
+
+Add `--no-rag` to a run command when you want to disable documentation retrieval for that session.
+
+#### `quasar --history`
 After a run (or when resuming from a checkpoint), the CLI can show **per-task run history** from the current workspace checkpoint. This is useful to review what the operator and evaluator did for each task without re-running.
 
-- **Command:** `quasar history`
+- **Command:** `quasar --history`
 - **Requires:** A workspace with an existing checkpoint (from a current or past run).
 - **Behaviour:** Starts an interactive view that lists all tasks (e.g. `task_1`, `task_2`, …). Use ↑/↓ to select a task and Enter to open it. For the selected task you see the full step-by-step history: task description, operator tool calls (e.g. code snippets, file reads, searches), code outputs, and the evaluator’s summary for that task. Use ESC to go back to the task list; Ctrl+C or Ctrl+D to exit.
 
-If no checkpoint exists, `quasar history` reports that you need to run `quasar` first or resume an interrupted session.
+If no checkpoint exists, `quasar --history` reports that you need to run `quasar` first or resume an interrupted session. The CLI also prevents a new direct prompt from overwriting an existing checkpoint unless you explicitly resume or clear it first.
+
+The legacy browser-based `quasar --web` mode has been removed from the current CLI.
 
 </details>
 
@@ -175,18 +193,33 @@ quasar "Your research prompt here"
 <details>
 <summary><strong>Configuration</strong></summary>
 
-Configure the system via environment variables (Web and CLI):
+Configure the system via environment variables and the interactive CLI settings panel:
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
-| `MODEL_API_KEY` | **Required.** Your API key (Gemini, Claude, OpenAI, etc.). | - |
 | `MODEL` | **Required.** Model name. | - |
-| `ACCURACY` | `eco` (fast/balanced) or `pro` (maximum rigor). | `eco` |
+| `MODEL_API_KEY` | **Required.** Your API key (Gemini, Claude, OpenAI, etc.). | - |
+| `OPENAI_API_BASE` | Optional base URL for OpenAI-compatible endpoints. | - |
+| `ACCURACY` | Planning/execution rigor: `eco`, `standard`, `pro`. | `standard` |
 | `GRANULARITY` | Workflow task breakdown level (`low`, `medium`, `high`). | `medium` |
+| `CONTEXT_THRESHOLD` | Context-compression trigger level (`low`, `medium`, `high`). | `medium` |
 | `ENABLE_RAG` | Enable/disable documentation search. | `true` |
-| `IF_RESTART` | Resume from the last checkpoint. | `false` |
-| `PMG_MAPI_KEY` | Materials Project API key for `pymatgen`. | - |
 | `CHECK_INTERVAL`| Minutes between LLM check-ins for long Python runs. | `15` |
+| `AUTO_IMPROVE_CYCLES` | Automatic auto-improve follow-up runs after a successful user-started run. | `0` |
+| `NUM_CORES` | Override detected physical core count. | `Auto` |
+| `PMG_MAPI_KEY` | Materials Project API key for `pymatgen`. | - |
+| `HF_TOKEN` | Optional Hugging Face token for authenticated RAG/index access. | - |
+| `IF_RESTART` | Resume from the last checkpoint. | `false` |
+
+Interactive CLI users can inspect or edit these values from `\settings`; headless users should export them before launch.
+
+#### Per-Agent Model Overrides
+
+| Agent | Model | API key | Base URL |
+| :--- | :--- | :--- | :--- |
+| Strategist | `STRATEGIST_MODEL` | `STRATEGIST_MODEL_API_KEY` | `STRATEGIST_API_BASE_URL` |
+| Operator | `OPERATOR_MODEL` | `OPERATOR_MODEL_API_KEY` | `OPERATOR_API_BASE_URL` |
+| Evaluator | `EVALUATOR_MODEL` | `EVALUATOR_MODEL_API_KEY` | `EVALUATOR_API_BASE_URL` |
 
 
 </details>
@@ -204,24 +237,27 @@ workspace/
 │   └── summary.md      # Results summary
 ├── logs/               # Execution logs and usage reports
 │   ├── usage_report.md # Token usage and cost breakdown
-│   ├── overview.md     # High-level run summary
+│   ├── execution_overview.md # High-level run summary
 │   ├── input_messages.md # Input prompts sent to the agent
 │   └── conversation/   # Conversation history
+├── archive/            # Historical runs (preserved across normal cleanup)
+│   ├── run_1/          # First completed run
+│   └── run_N/          # Subsequent runs
+├── docs/               # Downloaded documentation (preserved)
+├── .rag_index/         # Cached RAG index and embeddings cache (preserved as a dot-directory)
 ├── checkpoints.sqlite  # Checkpoint database for resumption
 ├── checkpoint_settings.json  # Run settings and token stats
-├── archive/            # Historical runs (preserved across runs)
-│   ├── run_1/          # First completed run
-│   │   ├── final_results/
-│   │   ├── logs/
-│   │   └── ...         # All workspace files from that run
-│   └── run_N/          # Subsequent runs
-└── docs/               # Downloaded documentation (preserved)
+└── ...
 ```
 
 When a run completes:
 1. All workspace files are copied to `archive/run_N/`
 2. Checkpoint files are removed from the workspace
-3. The `archive/` and `docs/` directories are preserved for future runs
+3. The `archive/`, `docs/`, and hidden cache directories such as `.rag_index/` remain available for future runs
+
+Cleanup modes:
+1. `quasar --clear` removes the active checkpoint and current workspace state, but keeps `archive/`, `docs/`, and dot-directories.
+2. `quasar --fresh` removes the active workspace state and archived runs, but still keeps `docs/` and dot-directories.
 
 </details>
 
@@ -230,22 +266,22 @@ When a run completes:
 <details>
 <summary><strong>Restart</strong></summary>
 
-QUASAR automatically checkpoints progress during execution. To resume from the last checkpoint:
+QUASAR automatically checkpoints progress during execution. To resume from the last checkpoint, use `quasar --resume` or the legacy `IF_RESTART=true` environment variable.
 
 **Docker:**
 ```bash
-docker run --rm -e IF_RESTART=true \
+docker run --rm \
   -v "<workspace_path>:/workspace" \
-  fengxuyang/quasar:<tag> quasar
+  fengxuyang/quasar:<tag> \
+  quasar --resume
 ```
 
 **Singularity:**
 ```bash
 singularity exec --cleanenv \
-  --env IF_RESTART=true \
   -B "<workspace_path>:/workspace" \
   --home "<workspace_path>:/workspace" \
-  <tag>.sif quasar
+  <tag>.sif quasar --resume
 ```
 
 **Local Deployment:**
@@ -253,9 +289,10 @@ singularity exec --cleanenv \
 export MODEL_API_KEY=<api_key>
 export MODEL=<model_name>
 export WORKSPACE_DIR=<workspace_directory>
-export IF_RESTART=true
-quasar 
+quasar --resume
 ```
+
+Checkpoint metadata restores non-secret settings such as model, accuracy, granularity, and RAG options. API keys should still be supplied through environment variables or the interactive `\settings` panel before resuming work.
 
 </details>
 
@@ -296,7 +333,7 @@ If you find QUASAR useful for your research, please cite our benchmark paper:
 <details>
 <summary><strong>Contact</strong></summary>
 
-For inquiries, advanced features, or beta access, please reach out to: [j.evans@adelaide.edu.au](mailto:j.evans@adelaide.edu.au)
+We are happy to collaborate. For inquiries, advanced features, beta access, or partnership ideas, please reach out to: [j.evans@adelaide.edu.au](mailto:j.evans@adelaide.edu.au)
 
 
 </details>

@@ -5,11 +5,13 @@ from langgraph.graph import StateGraph, START, END
 
 from .state import State
 from .agents import strategist_initial_node, strategist_review_node, operator_node, evaluator_setup_node, evaluator_loop_node
+from .agents.utils import plan_review_confirm_node
 from .tools import (
     get_all_tools,
     read_file,
     list_directory,
     analyze_image,
+    execute_temporary_python,
     search_web,
     fetch_web_page,
     submit_evaluation,
@@ -39,10 +41,10 @@ def build_graph(llm, agent_llms=None):
     
     all_tools = get_all_tools()
     # Normal mode strategist tools (no web search)
-    strategist_tools_normal = [read_file, list_directory, analyze_image, grep_search]
+    strategist_tools_normal = [read_file, list_directory, analyze_image, execute_temporary_python, grep_search]
     # Replanning mode strategist tools (includes web search)
-    strategist_tools_replanning = [read_file, list_directory, analyze_image, grep_search, search_web, fetch_web_page]
-    evaluator_tools = [read_file, list_directory, analyze_image, search_web, fetch_web_page, submit_evaluation, grep_search]
+    strategist_tools_replanning = [read_file, list_directory, analyze_image, execute_temporary_python, grep_search, search_web, fetch_web_page]
+    evaluator_tools = [read_file, list_directory, analyze_image, execute_temporary_python, search_web, fetch_web_page, submit_evaluation, grep_search]
     operator_tools = all_tools + [complete_task]
     
     # Bind tools once for each agent to ensure proper tool binding
@@ -62,6 +64,7 @@ def build_graph(llm, agent_llms=None):
         strategist_llm_replanning, strategist_tools_replanning
     ))
     graph_builder.add_node("strategist_review", lambda s: strategist_review_node(s, strategist_llm_base))
+    graph_builder.add_node("plan_review_confirm", lambda s: plan_review_confirm_node(s))
     graph_builder.add_node("operator", lambda s: operator_node(s, operator_llm, operator_tools))
     
     # Two evaluator nodes for checkpointing between setup and each iteration
@@ -95,11 +98,17 @@ def build_graph(llm, agent_llms=None):
         return "end"
 
     def route_after_review(state: State) -> str:
-        """Route after review: to operator if plan exists, else end."""
+        """Route after review: confirm gate if plan exists, else end."""
         plan = state.get("plan")
-        result = "operator" if plan else "end"
+        result = "plan_review_confirm" if plan else "end"
         log_route_after_planning(state, result)
         return result
+
+    def route_after_plan_review_confirm(state: State) -> str:
+        """After user confirmation: operator, or end run (CLI returns to input with prompt prefilled)."""
+        if state.get("plan_review_proceed") is False:
+            return "end"
+        return "operator"
 
     def route_after_execution(state: State) -> str:
         messages = state.get('messages', [])
@@ -263,7 +272,16 @@ def build_graph(llm, agent_llms=None):
         "operator": "operator",
         "end": END
     })
-    graph_builder.add_conditional_edges("strategist_review", route_after_review, {"operator": "operator", "end": END})
+    graph_builder.add_conditional_edges(
+        "strategist_review",
+        route_after_review,
+        {"plan_review_confirm": "plan_review_confirm", "end": END},
+    )
+    graph_builder.add_conditional_edges(
+        "plan_review_confirm",
+        route_after_plan_review_confirm,
+        {"operator": "operator", "end": END},
+    )
     
     # Operator edges - now routes to evaluator_setup
     graph_builder.add_conditional_edges("operator", route_after_execution, {
@@ -283,8 +301,9 @@ def build_graph(llm, agent_llms=None):
     })
     
     log_custom("GRAPH", "Graph built successfully", {
-        "nodes": ["strategist_initial", "strategist_review", "operator", "evaluator_setup", "evaluator_loop"],
-        "edges": ["START->strategist_initial", "strategist_initial->review/operator/end", "strategist_review->operator/end", 
+        "nodes": ["strategist_initial", "strategist_review", "plan_review_confirm", "operator", "evaluator_setup", "evaluator_loop"],
+        "edges": ["START->strategist_initial", "strategist_initial->review/operator/end",
+                  "strategist_review->plan_review_confirm/end", "plan_review_confirm->operator/end",
                   "operator->continue/evaluator_setup/end", "evaluator_setup->loop/operator/end", "evaluator_loop->continue/operator/end"]
     })
     

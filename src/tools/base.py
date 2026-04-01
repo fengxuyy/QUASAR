@@ -19,7 +19,6 @@ MULTIMODAL_MODELS = {
     "gemini-2.5-pro",
     "gemini-2.5-flash",
     "gemini-3.1-pro-preview",
-    "gemini-3-pro-preview",
     "gemini-3-flash-preview",
     "gpt-5.1",
     "gpt-5",
@@ -95,7 +94,7 @@ def _find_token_based_matches(old_string: str, content: str) -> List[re.Match]:
 
 
 # Global truncation limits
-MAX_OUTPUT_CHARS = 15000
+MAX_OUTPUT_CHARS = 25000
 
 # Files that should be hidden from directory listings and protected from agent operations
 PROTECTED_SYSTEM_FILES = {

@@ -11,7 +11,7 @@ from langchain_openai import ChatOpenAI
 
 from ..state import State, create_initial_state
 from langchain_core.tools import tool
-from ..tools import WORKSPACE_DIR, LOGS_DIR, read_file, list_directory, analyze_image, search_web, fetch_web_page, grep_search
+from ..tools import WORKSPACE_DIR, LOGS_DIR, read_file, list_directory, analyze_image, execute_temporary_python, search_web, fetch_web_page, grep_search
 from ..tools.base import get_all_files
 from .utils import (
     _write_input_messages,
@@ -25,7 +25,6 @@ from .utils import (
     MAX_LOG_CHARS,
     truncate_content,
     send_agent_event,
-    send_json,
     send_plan_stream,
     send_thought_stream,
     APIConnectionError,
@@ -50,8 +49,7 @@ from ..debug_logger import (
 VALID_GRANULARITY_LEVELS = {"low", "medium", "high"}
 DEFAULT_GRANULARITY_LEVEL = "medium"
 
-VALID_ACCURACY_MODES = {"eco", "pro"}
-DEFAULT_ACCURACY_MODE = "eco"
+VALID_ACCURACY_MODES = {"eco", "standard", "pro"}
 
 # Regex patterns for parsing plan tasks
 TASK_PATTERNS = [
@@ -175,12 +173,13 @@ def _get_granularity_level():
 
 
 def _get_accuracy_mode():
-    """Get and validate accuracy mode from environment."""
-    mode = os.getenv("ACCURACY", DEFAULT_ACCURACY_MODE)
+    """Get and validate accuracy mode from environment. Required."""
+    mode = os.getenv("ACCURACY")
+    if not mode:
+        raise ValueError("ACCURACY environment variable is required. Valid values: 'eco', 'standard', or 'pro'")
     mode = mode.lower()
     if mode not in VALID_ACCURACY_MODES:
-        log_custom("STRATEGIST", f"Warning: Invalid ACCURACY '{mode}', defaulting to '{DEFAULT_ACCURACY_MODE}'")
-        return DEFAULT_ACCURACY_MODE
+        raise ValueError(f"Invalid ACCURACY '{mode}'. Valid values: {VALID_ACCURACY_MODES}")
     return mode
 
 
@@ -206,6 +205,7 @@ STRATEGIST_TOOL_MAP_NORMAL = {
     'read_file': read_file,
     'list_directory': _list_directory_no_docs,
     'analyze_image': analyze_image,
+    'execute_temporary_python': execute_temporary_python,
     'grep_search': grep_search,
 }
 
@@ -214,6 +214,7 @@ STRATEGIST_TOOL_MAP_REPLANNING = {
     'read_file': read_file,
     'list_directory': _list_directory_no_docs,
     'analyze_image': analyze_image,
+    'execute_temporary_python': execute_temporary_python,
     'grep_search': grep_search,
     'search_web': search_web,
     'fetch_web_page': fetch_web_page,
@@ -225,7 +226,7 @@ MAX_TOOL_ITERATIONS = 30
 
 def _execute_tool_calls(tool_calls, is_replanning=False):
     """Execute tool calls and return tool messages."""
-    from .utils import send_tool_status
+    from .utils import update_agent_status
     
     # Select appropriate tool map based on mode
     tool_map = STRATEGIST_TOOL_MAP_REPLANNING if is_replanning else STRATEGIST_TOOL_MAP_NORMAL
@@ -241,8 +242,8 @@ def _execute_tool_calls(tool_calls, is_replanning=False):
         
         log_custom("STRATEGIST", f"Using tool: {tool_name}")
         
-        # Send status update to web UI - starting tool
-        send_tool_status("strategist", tool_name, tool_args, is_complete=False)
+        # Emit tool-start status for downstream clients.
+        update_agent_status("strategist", tool_name, tool_args, is_complete=False)
         
         # Use shared tool execution function
         result, tool_message = execute_tool_with_logging(
@@ -258,13 +259,8 @@ def _execute_tool_calls(tool_calls, is_replanning=False):
         
         log_custom("STRATEGIST", f"Tool '{tool_name}' completed")
         
-        # Send step_complete event to web UI
-        send_tool_status(
-            "strategist", tool_name, tool_args, 
-            is_complete=True, 
-            tool_result=result,
-            idle_status="Analysing Request"
-        )
+        # Emit tool completion status with the result payload.
+        update_agent_status("strategist", tool_name, tool_args, is_complete=True, tool_result=result)
         
         tool_messages.append(tool_message)
     
@@ -389,6 +385,9 @@ You must strictly follow the **accuracy mode** which determines the computationa
 * **pro (High Accuracy):** "Publication-Grade Precision"
     * **Strategy:** Prioritizes physical rigor and strict numerical convergence. This mode aims to minimize approximations, ensuring results meet the standards required for peer-reviewed research and formal documentation.
 
+* **standard (Standard Accuracy):** "Research-Grade Reliability"
+    * **Strategy:** Employs well-established computational methods with standard convergence criteria. Provides reliable, quantitatively accurate results suitable for research and internal reporting, while avoiding the most expensive refinements reserved for publication.
+
 * **eco (Balanced Speed/Accuracy):** "Efficient Discovery"
     * **Strategy:** Optimizes the balance between predictive accuracy and resource consumption. Utilizes validated approximations to maintain qualitative trends and reliable quantitative estimates without redundant overhead.
     
@@ -432,12 +431,18 @@ Create a concise list of high-level scientific tasks that captures the essential
    **Guidance:** [Senior-level scientific insights in executing the task with exceptional intelligence, precision, and foresight. This encompasses a robust methodology, critical key points, and supplementary insights vital for attaining the objective while proactively mitigating risks of failure]
 
 2. **End-of-Workflow Requirement:**  
-   - The final task should aggregate results, create plots if necessary, and write a summary analysis (`summary.md`).  
+   - The final task should aggregate results, create plots if necessary, and write a summary analysis (`summary.md`).
    - All final outputs, including the `summary.md` file and any generated plots, must be saved in a directory named `final_results` located in the root directory.
 
 3. **Computational Efficiency:** 
     - Prioritize reduced computational cost (e.g., minimal unit cells, lower cutoffs for initial screening) when they do not compromise result accuracy.
     - You MUST not plan the use of ML potentials if GPU resources are unavailable.
+
+4. **Software Constraints:**
+    - Do not directly propose the use of another software that is not already installed (refer to the Operator's Profile).
+    - If you must use a software that is not listed, explicitly ask the Operator to install it from the web.
+    - For file inspection, you may use `execute_temporary_python` only to parse existing files and summarise their contents. Never use it to run simulations, launch subprocesses, modify files, or change system state.
+    - Wherever possible, you should initiate multiple parallel tool calls when listing directories, grepping, and reading files.
 """
 
 
@@ -550,32 +555,35 @@ def strategist_initial_node(
         common_sections = _get_common_prompt_sections(granularity_level, accuracy_mode)
         strategist_prompt = f"""# Research Strategist — Replanning Mode
 
-You are the lead computational senior chemist refining a research strategy based on previous computational runs. Use file inspection tools for detailed exploration and search for key information as needed.
-
-## Responsibilities Checklist
-
-- **Assess the Previous Run**
-    - Decide: Did it **Succeed** / **Partially Succeed** / **Fail** in its scientific objective?
-
-- **If the Run Failed:**
-    - Diagnose the root cause, using:
-        1. **User's original message**
-        2. **Archived run context**
-        3. **Logs/output files:**  
-    - Produce a **corrected, improved plan** that directly resolves the issue and increases likelihood of success.
-
-- **If the Run Partially Succeeded:**
-    - Identify: What was achieved?  
-      What still requires work?
-    - Propose **next logical scientific steps** to deepen, extend, or complete the investigation.
+You are the lead computational senior chemist refining a research strategy based on previous computational runs.
 
 ## Context from Previous Runs
 {archived_context}
 
-
 ## Key Directories for Previous Runs
 - `./archive/run_N/`: Full file outputs from run N.
 - `./archive/run_N/final_results/`: Results and analysis files from run N.
+
+## Responsibilities
+
+### Step 1 — Assess the Previous Run
+- Review the provided context and text descriptions to understand the previous run.
+- If the provided information is insufficient to diagnose the problem, you may directly inspect the most diagnostic files, but avoid reading files speculatively.
+- After your assessment, determine the outcome: **Succeeded** / **Partially Succeeded or Failed**.
+
+### Step 2 — Diagnose and Plan
+
+**If the run failed or partially succeeded**, diagnose the root cause following this **strict sequential gate**. You must fully resolve each level before proceeding to the next — do not evaluate later levels until the earlier ones are ruled out:
+
+1. **Wrong or inadequate method** *(primary concern — always check this first)*: Is the chosen method fundamentally incapable of capturing the relevant physics? If yes, the fix is to switch to a more appropriate method (e.g., force-field → DFT, GGA → hybrid functional, adding dispersion corrections). **Do not proceed to step 2 or 3 until you have confirmed the method is appropriate.**
+2. **Flawed workflow logic** *(only if the method is sound)*: Were steps sequenced incorrectly? Are required prior outputs missing or used incorrectly? If yes, fix the workflow ordering or dependencies. **Do not proceed to step 3 until workflow logic is confirmed correct.**
+3. **Parameter misconfiguration** *(only if both method and workflow are sound)*: Do parameter settings deviate from best practices for this method and system? Address these last.
+
+**If the run succeeded**, advance the science rather than just refining what exists. Follow the same **strict sequential gate**:
+
+1. **Method appropriateness** *(check first, even on success)*: Could a more rigorous or appropriate method now be warranted given the results (e.g., upgrading from MLFF to DFT for confirmation, from GGA to hybrid for accuracy)? If yes, plan the upgrade before anything else. **Do not proceed to step 2 or 3 until you have confirmed no method upgrade is needed.**
+2. **Deeper scientific question** *(only if the method is already appropriate)*: What physical insight is still missing, and what calculation would most directly address it?
+3. **Parameter refinement** *(only if method and science goals are already well-served)*: Consider tightening convergence or adjusting settings.
 
 {common_sections}
 """
@@ -620,11 +628,8 @@ You are the lead computational senior chemist designing a computational research
                 
                 # If tools are available, allow tool calling in both normal and replanning modes
                 if llm_with_tools and tools:
-                    iteration_count = 0
-                    MAX_SAFETY_ITERATIONS = 50 # Safety ceiling, but rely on repeated detection logic
-                    
-                    while iteration_count < MAX_SAFETY_ITERATIONS:
-                        iteration_count += 1
+                    # No hard iteration cap — rely on repeated-tool-call detection to prevent loops
+                    while True:
                         
                         # Use shared streaming helper with callback for live UI updates
                         # Use accumulated content for plan_stream (same as no-tools case)
@@ -686,15 +691,20 @@ Do NOT call `{tool_name}` with the same arguments again.
                     # Extract final plan from last AI response
                     response = next((msg for msg in reversed(messages) if isinstance(msg, AIMessage)), None)
                     if not response or not response.content:
-                        return {
-                            'messages': [AIMessage(content="No plan generated after tool exploration.")],
-                            'plan': [],
-                            'completed_steps': [],
-                            'step_results': {},
-                            'initial_plan_content': '',
-                            'is_replanning': is_replanning,
-                        }
-                    content = _extract_text(response.content)
+                        # Fallback: force a final call without tools so we always produce a plan
+                        log_custom("STRATEGIST", "No content in last AI response after tool loop; forcing final call without tools")
+                        fallback_content = ""
+                        def on_fallback_content(text):
+                            nonlocal fallback_content
+                            fallback_content += text
+                            send_plan_stream(fallback_content, is_complete=False, is_replanning=is_replanning)
+                        fallback_full, _, _, _ = stream_with_token_tracking(
+                            llm, messages, on_content=on_fallback_content,
+                            agent_name='strategist'
+                        )
+                        content = fallback_full if fallback_full else fallback_content
+                    else:
+                        content = _extract_text(response.content)
                     
                     # Stream the plan content to CLI for display
                     send_plan_stream(content, is_complete=False, is_replanning=is_replanning)
@@ -806,7 +816,7 @@ Do NOT call `{tool_name}` with the same arguments again.
                         blockquote = '\n'.join(f"> {line}" if line.strip() else ">" for line in lines)
                         _write_to_log(f"{blockquote}\n\n")
                         
-                        # Send initial plan as step_complete for collapsible display in web UI
+                        # Emit the initial plan as a completed step event.
                         send_agent_event("strategist", "step_complete", "Created Initial Plan", output=formatted_initial_plan)
                     
                     # Return state with initial_plan_content for review phase
@@ -940,7 +950,6 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
             events_to_send = [
                 {"type": "plan_stream", "is_complete": True},
                 {"type": "agent_event", "agent": "strategist", "event": "complete", "status": review_label},
-                {"type": "task_progress", "current": 1, "total": len(plan)}
             ]
             log_strategist_events_sent(events_to_send)
             
@@ -954,14 +963,14 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
             
             send_agent_event("strategist", "step_complete", review_label, output=formatted_plan)  # For execution history
             send_agent_event("strategist", "complete")  # For agent state transition (empty status avoids duplicate log)
-            send_json("task_progress", {"current": 1, "total": len(plan)})
+            # task_progress is sent from operator_node when execution starts (after plan confirmation gate)
         
         # Prepare return messages - include ALL messages from initial phase plus review exchange
         # This preserves strategist's tool-calling AIMessages and ToolMessages for history retrieval
         return_messages = list(messages)  # Copy all messages from initial phase
         # Add the review prompt and improved response
         review_prompt = (
-            "Does the plan address all aspects of the original task? Are there any scientific errors or missing critical steps? "
+            "Does the plan address all aspects of the user's request? Are there any scientific errors or missing critical steps? "
             "Please review your plan above and provide an improved version with the same format"
         )
         return_messages.append(HumanMessage(content=review_prompt))
@@ -988,7 +997,6 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
         if plan:
             send_plan_stream(initial_plan_content, is_complete=True, parsed_plan=plan)
             send_agent_event("strategist", "complete", "Initial Plan (Review Failed)")
-            send_json("task_progress", {"current": 1, "total": len(plan)})
         
         return_state = {
             'messages': state.get('messages', []),
@@ -1012,4 +1020,3 @@ def strategist_node(state: State, llm: ChatOpenAI, llm_with_tools=None, tools=No
     from ..debug_logger import log_custom
     log_custom("STRATEGIST", "WARNING: Using deprecated strategist_node, use strategist_initial_node instead")
     return strategist_initial_node(state, llm, llm_with_tools, tools)
-

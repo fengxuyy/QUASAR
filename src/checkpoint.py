@@ -72,6 +72,18 @@ def delete_checkpoint():
         log_exception("CHECKPOINT", e, {"context": "deleting checkpoint"})
 
 
+def release_checkpoint_resources():
+    """Close the SQLite connection and drop saver handles (e.g. before rebuilding the graph)."""
+    global _conn, _checkpointer
+    if _conn is not None:
+        try:
+            _conn.close()
+        except Exception:
+            pass
+    _conn = None
+    _checkpointer = None
+
+
 def is_connection_valid():
     """Check if database connection is valid."""
     if _conn is None:

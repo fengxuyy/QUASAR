@@ -3,15 +3,13 @@
  * Refactored to use extracted renderer components
  */
 import React from 'react';
-import { Box } from 'ink';
-import CodeSnippetPanel from '../CodeSnippetPanel.js';
-import { OFFSET_PLAN, INDENT_AGENT } from '../../utils/constants.js';
 import type { CommittedItem } from '../../hooks/types.js';
 
 // Import extracted renderers
 import {
     PlanPanel,
     EvaluationSummaryPanel,
+    InterruptReasonPanel,
     FinalSummaryPanel,
     ActiveTaskPanel,
     CheckpointResumePanel,
@@ -39,14 +37,12 @@ interface StaticItemRendererProps {
  */
 const StaticItemRenderer: React.FC<StaticItemRendererProps> = ({ item, leftMargin, terminalWidth, availableWidth }) => {
     const key = item._resizeKey || item.id;
-
+    
     switch (item.type) {
         case 'banner':
             return (
                 <BannerRenderer 
                     id={key}
-                    modelName={item.content.modelName} 
-                    pmgConfigured={item.content.pmgConfigured} 
                 />
             );
             
@@ -115,6 +111,17 @@ const StaticItemRenderer: React.FC<StaticItemRendererProps> = ({ item, leftMargi
                     availableWidth={availableWidth}
                 />
             );
+
+        case 'interrupt-reason':
+            return (
+                <InterruptReasonPanel
+                    id={key}
+                    content={typeof item.content === 'string' ? item.content : ''}
+                    leftMargin={leftMargin}
+                    terminalWidth={terminalWidth}
+                    availableWidth={availableWidth}
+                />
+            );
         
         case 'plan':
             return (
@@ -127,19 +134,6 @@ const StaticItemRenderer: React.FC<StaticItemRendererProps> = ({ item, leftMargi
                     terminalWidth={terminalWidth}
                     availableWidth={availableWidth}
                 />
-            );
-            
-        case 'code-snippet':
-            return (
-                <Box key={key} marginLeft={leftMargin + INDENT_AGENT - 1} paddingX={1}>
-                    <CodeSnippetPanel 
-                        name={item.content.name} 
-                        content={item.content.content}
-                        isComplete={item.content.isComplete}
-                        isContinuation={item.content.isContinuation}
-                        parentLeftOffset={OFFSET_PLAN}
-                    />
-                </Box>
             );
             
         case 'agent-status':

@@ -27,10 +27,12 @@ const App: React.FC<AppProps> = ({ command, args, flags }) => {
 	switch (command) {
 		case 'run':
 			return <Run args={args} flags={flags} />;
+		case 'clear':
+			return <Checkpoint args={['clear', ...args]} />;
+		case 'fresh':
+			return <Checkpoint args={['fresh', ...args]} />;
 		case 'config':
 			return <Config args={args} />;
-		case 'checkpoint':
-			return <Checkpoint args={args} />;
 		case 'history':
 			return <History args={args} />;
 		case 'info':
@@ -41,7 +43,7 @@ const App: React.FC<AppProps> = ({ command, args, flags }) => {
                     <Text>
                         <Text color="cyan" bold>QUASAR-CHEM</Text>{' '}
                         <Text dimColor>version</Text>{' '}
-                        <Text color="yellow">1.0.0 (Node.js)</Text>
+                        <Text color="yellow">0.2.0 (Node.js)</Text>
                     </Text>
                 </Box>
             );

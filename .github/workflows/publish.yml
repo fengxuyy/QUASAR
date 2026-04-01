@@ -9,7 +9,6 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
 
@@ -27,7 +26,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Build frontend bundle
+      - name: Build bundled CLI
         run: bash scripts/build_frontend.sh
 
       - name: Build distribution packages

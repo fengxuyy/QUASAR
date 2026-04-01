@@ -19,9 +19,9 @@ from .execution import (
     execute_python,
     resume_execution,
     interrupt_running_execution,
-    has_running_process
+    has_running_process,
 )
-from .execution_check import continue_execution, interrupt_execution
+from .execution_check import continue_execution, interrupt_execution, execute_temporary_python
 from .web import (
     search_web,
     fetch_web_page

@@ -11,6 +11,171 @@ from collections import defaultdict
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 
+CHECKIN_DECISION_TOOLS = {"continue_execution", "interrupt_execution"}
+CHECKIN_CONTROL_PHRASES = (
+    "Continue this execution check-in and finish with either",
+    "Please call either `continue_execution(summary='...')` or",
+    'Please call either `continue_execution(summary="...")` or',
+)
+
+
+def _is_checkin_prompt_text(content: str) -> bool:
+    """Return True when the message is the periodic execution check-in prompt."""
+    return (
+        content.startswith("The Python script `")
+        and "has been running for" in content
+        and "**Current Resource Usage:**" in content
+    )
+
+
+def _is_checkin_control_text(content: str) -> bool:
+    """Return True for helper prompts emitted only inside a check-in session."""
+    return any(phrase in content for phrase in CHECKIN_CONTROL_PHRASES)
+
+
+def _filter_checkin_session_messages(messages: list) -> list:
+    """Remove transient check-in transcript entries from checkpoint history."""
+    filtered_messages = []
+    in_checkin_session = False
+    skipped_tool_call_ids = set()
+
+    for msg in messages:
+        msg_type = _get_message_type(msg)
+        content = _get_content(msg).strip()
+        tool_calls = _get_tool_calls(msg) if msg_type == "AIMessage" else []
+        tool_names = {
+            _extract_tool_info(tc)[0]
+            for tc in tool_calls
+            if _extract_tool_info(tc)[0]
+        }
+
+        if msg_type == "HumanMessage" and (
+            _is_checkin_prompt_text(content) or _is_checkin_control_text(content)
+        ):
+            in_checkin_session = True
+            continue
+
+        if msg_type == "AIMessage":
+            starts_checkin_without_prompt = (
+                "execute_temporary_python" in tool_names
+                or bool(tool_names & CHECKIN_DECISION_TOOLS)
+            )
+            if starts_checkin_without_prompt:
+                in_checkin_session = True
+
+            if in_checkin_session:
+                for tc in tool_calls:
+                    _, _, tool_id = _extract_tool_info(tc)
+                    if tool_id:
+                        skipped_tool_call_ids.add(tool_id)
+                if tool_names & CHECKIN_DECISION_TOOLS:
+                    in_checkin_session = False
+                continue
+
+        if msg_type == "ToolMessage":
+            if isinstance(msg, dict):
+                tool_call_id = msg.get("tool_call_id")
+            else:
+                tool_call_id = getattr(msg, "tool_call_id", None)
+
+            if tool_call_id in skipped_tool_call_ids:
+                skipped_tool_call_ids.discard(tool_call_id)
+                continue
+
+            if in_checkin_session and (
+                content.startswith("CONTINUE_EXECUTION")
+                or content.startswith("INTERRUPT_EXECUTION:")
+            ):
+                in_checkin_session = False
+                continue
+
+        if in_checkin_session and msg_type == "HumanMessage":
+            continue
+
+        filtered_messages.append(msg)
+
+    return filtered_messages
+
+
+def _parse_checkin_summary_message(content: str) -> dict | None:
+    """Extract fields from a compact operator check-in summary message."""
+    if "[EXECUTION CHECK-IN SUMMARY]" not in content:
+        return None
+
+    parsed = {"decision": "", "reason": "", "summary": ""}
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Decision:"):
+            parsed["decision"] = stripped.partition(":")[2].strip()
+        elif stripped.startswith("Reason:"):
+            parsed["reason"] = stripped.partition(":")[2].strip()
+        elif stripped.startswith("Summary:"):
+            parsed["summary"] = stripped.partition(":")[2].strip()
+
+    return parsed
+
+
+def _extract_interrupt_reason_items(current_task_messages: list) -> list[dict]:
+    """Build synthetic history items for compact interrupt decisions."""
+    items = []
+    seen_reasons = set()
+
+    for msg in current_task_messages or []:
+        if _get_message_type(msg) != "HumanMessage":
+            continue
+
+        parsed = _parse_checkin_summary_message(_get_content(msg).strip())
+        if not parsed or parsed.get("decision") != "interrupt_execution":
+            continue
+
+        reason = (parsed.get("reason") or "").strip()
+        if not reason or reason in seen_reasons:
+            continue
+
+        seen_reasons.add(reason)
+        items.append({
+            "type": "tool",
+            "content": "Interrupted Execution",
+            "output": reason,
+            "agent": "operator",
+            "isError": True,
+        })
+
+    return items
+
+
+def _extract_target_name(val) -> str:
+    """Convert a path value to string, handling list-typed values from tool args.
+    Formats multiple paths as 'path1, path2' or 'N items' for display."""
+    if isinstance(val, list):
+        if not val:
+            return ''
+        import os
+        names = []
+        for v in val:
+            if not v:
+                continue
+            v_str = str(v).strip().rstrip('/')
+            if v_str.startswith('./'):
+                v_str = v_str[2:]
+            if os.path.isabs(v_str):
+                names.append(os.path.basename(v_str))
+            else:
+                names.append(v_str or os.path.basename(str(v)))
+        if len(names) <= 3:
+            return ', '.join(names)
+        return f"{len(names)} items"
+    
+    import os
+    if val is None:
+        return ''
+    target_str = str(val).strip().rstrip('/')
+    if target_str.startswith('./'):
+        target_str = target_str[2:]
+    if os.path.isabs(target_str):
+        return os.path.basename(target_str)
+    return target_str or os.path.basename(str(val))
+
 
 def _extract_text(content_obj) -> str:
     """Normalize provider-specific chunk content into plain text."""
@@ -60,7 +225,7 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
     if tool_name == 'read_file' and tool_args:
         keyword = tool_args.get('keyword')
         file_path = tool_args.get('file_path', 'file')
-        file_name = os.path.basename(file_path) if file_path else 'file'
+        file_name = _extract_target_name(file_path) if file_path else 'file'
         
         if keyword:
             return f"Read {file_name} ({keyword})"
@@ -110,7 +275,7 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
         if pattern:
             display_pattern = pattern[:50] + '...' if len(pattern) > 50 else pattern
             if directory_path and directory_path != '.':
-                dir_name = os.path.basename(str(directory_path).rstrip('/'))
+                dir_name = _extract_target_name(directory_path)
                 return f"Grepped files {display_pattern} in {dir_name}"
             return f"Grepped files {display_pattern}"
     
@@ -122,7 +287,7 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
         trial_suffix = ' [Trial]' if is_trial else ''
         
         if file_path:
-            file_name = os.path.basename(file_path)
+            file_name = _extract_target_name(file_path)
             return f"Executed {file_name}{trial_suffix}"
         elif code:
             # Truncate to first line, max 50 chars
@@ -144,9 +309,8 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
                 break
     
     if target:
-        target_str = str(target).rstrip('/')
-        target_name = os.path.basename(target_str)
-        if not target_name or target_str == '.':
+        target_name = _extract_target_name(target)
+        if not target_name or target_name == '.':
             target_name = 'workspace'
         if target_name:
             return f"{base_msg} {target_name}"
@@ -198,7 +362,7 @@ def _get_content(msg) -> str:
 def _create_code_snippet_item(tool_args: dict) -> dict:
     """Create a code-snippet item for write_file tool calls."""
     file_path = tool_args.get('file_path', 'file')
-    file_name = os.path.basename(file_path) if file_path else 'file'
+    file_name = _extract_target_name(file_path) if file_path else 'file'
     return {
         "type": "code-snippet",
         "content": {
@@ -264,7 +428,7 @@ def _format_error_content(tool_name: str, tool_args: dict, content_str: str) -> 
     if tool_name == "list_directory":
         path = tool_args.get("directory_path", ".")
         pattern = tool_args.get("pattern", "*")
-        path_display = os.path.basename(path.rstrip('/')) if path and path != '.' else 'workspace'
+        path_display = _extract_target_name(path) if path and path != '.' else 'workspace'
         
         if "no files found" in content_lower:
             if pattern and pattern != '*':
@@ -274,7 +438,7 @@ def _format_error_content(tool_name: str, tool_args: dict, content_str: str) -> 
     
     elif tool_name == "read_file":
         file_path = tool_args.get("file_path", "file")
-        file_name = os.path.basename(file_path) if file_path else "file"
+        file_name = _extract_target_name(file_path) if file_path else "file"
         keyword = tool_args.get("keyword")
         
         if "file" in content_lower and ("not found" in content_lower or "does not exist" in content_lower):
@@ -314,7 +478,7 @@ def _format_error_content(tool_name: str, tool_args: dict, content_str: str) -> 
     
     elif tool_name in ("execute_code", "execute_python"):
         file_path = tool_args.get("file_path", "script.py")
-        file_name = os.path.basename(file_path) if file_path else 'script'
+        file_name = _extract_target_name(file_path) if file_path else 'script'
         is_trial = tool_args.get('is_trial_run', False)
         trial_suffix = ' [Trial]' if is_trial else ''
         if "syntaxerror" in content_lower:
@@ -331,7 +495,7 @@ def _format_error_content(tool_name: str, tool_args: dict, content_str: str) -> 
         elif "no matches found" in content_lower:
             return f"No matches for {pattern}"
         elif "not a directory" in content_lower or "does not exist" in content_lower:
-            dir_name = os.path.basename(str(directory_path).rstrip('/')) if directory_path != '.' else 'directory'
+            dir_name = _extract_target_name(directory_path) if directory_path != '.' else 'directory'
             return f"{dir_name} not found"
         return f"Grep failed for {pattern}"
     
@@ -354,7 +518,7 @@ def _format_success_content(tool_name: str, tool_args: dict, content_str: str) -
     if tool_name == "read_file" and tool_args.get("keyword"):
         keyword = tool_args.get("keyword")
         file_path = tool_args.get("file_path", "file")
-        file_name = os.path.basename(file_path) if file_path else "file"
+        file_name = _extract_target_name(file_path) if file_path else "file"
         
         match_re = re.search(r"at line\(s\) ([\d,\s]+)", content_str)
         if match_re:
@@ -405,7 +569,7 @@ def _format_success_content(tool_name: str, tool_args: dict, content_str: str) -
         # No matches: tool returns "No matches found for pattern ..." - don't count that line as a match
         if "no matches found" in content_lower:
             if directory_path and directory_path != '.':
-                dir_name = os.path.basename(str(directory_path).rstrip('/'))
+                dir_name = _extract_target_name(directory_path)
                 return f"Grepped files {pattern} in {dir_name}"
             return f"Grepped files {pattern}"
         
@@ -417,13 +581,13 @@ def _format_success_content(tool_name: str, tool_args: dict, content_str: str) -
             match_word = "match" if match_count == 1 else "matches"
             truncated_text = " (truncated)" if is_truncated else ""
             if directory_path and directory_path != '.':
-                dir_name = os.path.basename(str(directory_path).rstrip('/'))
+                dir_name = _extract_target_name(directory_path)
                 return f"Grepped files {pattern} in {dir_name} ({match_count} {match_word}{truncated_text})"
             return f"Grepped files {pattern} ({match_count} {match_word}{truncated_text})"
         
         # Fallback: no "Found X matches" and no "no matches found"
         if directory_path and directory_path != '.':
-            dir_name = os.path.basename(str(directory_path).rstrip('/'))
+            dir_name = _extract_target_name(directory_path)
             return f"Grepped files {pattern} in {dir_name}"
         return f"Grepped files {pattern}"
     
@@ -442,8 +606,11 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
     Returns:
         Dictionary with plan, completed_steps, operator/evaluator/strategist items grouped by task
     """
+    messages = _filter_checkin_session_messages(messages)
+
     plan = state_values.get('plan', [])
     completed_steps = state_values.get('completed_steps', [])
+    current_task_messages = state_values.get('current_task_messages', [])
     step_results = state_values.get('step_results', {})
     
     # Primacy: 1. state_values flag, 2. is_replan argument, 3. message-based heuristic
@@ -623,14 +790,6 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
                     agent_name = "operator"
                     target_list = operator_items_by_task[current_task_in_history]
                 
-                # Add code snippet for write_file (only for operator)
-                if tool_name == 'write_file' and 'content' in tool_args:
-                    if agent_name == "operator":
-                        item = _create_code_snippet_item(tool_args)
-                        item["agent"] = agent_name
-                        target_list.append(item)
-                        ordered_items_by_task[current_task_in_history].append(item)
-                
                 # Add tool item
                 display_str = format_tool_display(tool_name, tool_args)
                 tool_item = {
@@ -742,15 +901,12 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
                 
                 # Add code-result for execute_code/execute_python
                 if tool_name in ("execute_code", "execute_python"):
-                    # Include code in output for inline execution (no file_path)
-                    output_content = content_str
-                    code = tool_args.get('code')
-                    if code and not tool_args.get('file_path'):
-                        output_content = f"**Code:**\n```python\n{code}\n```\n\n{content_str}"
+                    # Match runtime behavior: the code-result panel should show the
+                    # execution output, not the inline script source.
                     code_result = {
                         "type": "code-result",
                         "content": {
-                            "output": output_content,
+                            "output": content_str,
                             "filePath": tool_args.get("file_path", "")
                         },
                         "isError": is_error,
@@ -954,6 +1110,11 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
                         if len(content_str) > 5000:
                             truncated += "\n\n... [Results truncated for display]"
                         matching_tool["output"] = truncated
+
+    current_task_index = len(completed_steps)
+    for item in _extract_interrupt_reason_items(current_task_messages):
+        operator_items_by_task[current_task_index].append(item)
+        ordered_items_by_task[current_task_index].append(item)
     
     # Build backward-compatible flat list
     operator_tools = []

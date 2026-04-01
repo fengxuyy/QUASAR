@@ -124,33 +124,62 @@ class TestInitializeLLM:
 
 
 class TestInitializeLLMForAgent:
-    """Test per-agent LLM initialization in the free tier."""
+    """Test per-agent LLM initialization."""
     
-    def test_always_returns_fallback(self):
-        """In the free tier, should always return the fallback regardless of env vars."""
+    def test_fallback_when_no_agent_env_var(self):
+        """When no agent-specific MODEL is set, should return fallback."""
+        from src.llm_config import initialize_llm_for_agent
+        
+        mock_llm = MagicMock()
+        with patch.dict(os.environ, {}, clear=True):
+            llm, model = initialize_llm_for_agent("strategist", mock_llm, "primary-model")
+            assert llm is mock_llm
+            assert model == "primary-model"
+    
+    @patch('src.llm_config.ChatGoogleGenerativeAI')
+    def test_agent_override_uses_dedicated_model(self, mock_gemini):
+        """When STRATEGIST_MODEL is set, should create a new LLM."""
+        mock_agent_llm = MagicMock()
+        mock_gemini.return_value = mock_agent_llm
+        
         from src.llm_config import initialize_llm_for_agent
         
         mock_primary_llm = MagicMock()
-        primary_model = "primary-model"
-        
-        # Test with no env vars
-        with patch.dict(os.environ, {}, clear=True):
-            llm, model = initialize_llm_for_agent("strategist", mock_primary_llm, primary_model)
-            assert llm is mock_primary_llm
-            assert model == primary_model
-            
-        # Test with agent-specific env vars set - should still return primary
         with patch.dict(os.environ, {
             "STRATEGIST_MODEL": "gemini-2.5-flash",
-            "STRATEGIST_MODEL_API_KEY": "agent-key",
-            "OPERATOR_MODEL": "claude-sonnet-4"
+            "MODEL_API_KEY": "primary-key"
         }, clear=True):
-            # Check strategist
-            llm, model = initialize_llm_for_agent("strategist", mock_primary_llm, primary_model)
-            assert llm is mock_primary_llm
-            assert model == primary_model
-            
-            # Check operator
-            llm, model = initialize_llm_for_agent("operator", mock_primary_llm, primary_model)
-            assert llm is mock_primary_llm
-            assert model == primary_model
+            llm, model = initialize_llm_for_agent("strategist", mock_primary_llm, "primary-model")
+            assert llm is mock_agent_llm
+            assert model == "gemini-2.5-flash"
+            mock_gemini.assert_called_once()
+    
+    @patch('src.llm_config.ChatAnthropic')
+    def test_agent_specific_api_key(self, mock_claude):
+        """When agent-specific API key is set, it should be used over primary."""
+        mock_agent_llm = MagicMock()
+        mock_claude.return_value = mock_agent_llm
+        
+        from src.llm_config import initialize_llm_for_agent
+        
+        with patch.dict(os.environ, {
+            "OPERATOR_MODEL": "claude-sonnet-4",
+            "MODEL_API_KEY": "primary-key",
+            "OPERATOR_MODEL_API_KEY": "operator-key"
+        }, clear=True):
+            llm, model = initialize_llm_for_agent("operator", MagicMock(), "primary")
+            mock_claude.assert_called_once_with(
+                model="claude-sonnet-4",
+                api_key="operator-key",
+                temperature=0.7
+            )
+    
+    def test_agent_override_missing_api_key_raises(self):
+        """When agent model is set but no API key is available, should raise."""
+        from src.llm_config import initialize_llm_for_agent
+        
+        with patch.dict(os.environ, {
+            "EVALUATOR_MODEL": "gemini-2.5-pro"
+        }, clear=True):
+            with pytest.raises(ValueError, match="API key required"):
+                initialize_llm_for_agent("evaluator", MagicMock(), "primary")

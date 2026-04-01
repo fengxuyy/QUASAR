@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Text } from 'ink';
 import { registerAnimationSubscriber } from '../animationTick.js';
 
-const frames = ['△', '▴', '▲', '▴'];
+const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 const TriangleSpinner: React.FC = () => {
     const [frameIndex, setFrameIndex] = useState(0);

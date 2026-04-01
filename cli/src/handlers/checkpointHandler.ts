@@ -21,6 +21,138 @@ export interface CheckpointHandlerContext {
     resumingWithEvaluatorRef: React.MutableRefObject<boolean>;
 }
 
+function normalizeHistoryAgentName(agentName: unknown, fallback: 'operator' | 'evaluator' | 'strategist'): 'operator' | 'evaluator' | 'strategist' {
+    if (agentName === 'operator' || agentName === 'evaluator' || agentName === 'strategist') {
+        return agentName;
+    }
+    return fallback;
+}
+
+interface BuildHistoryTimelineOptions {
+    idPrefix: string;
+    defaultAgentName?: 'operator' | 'evaluator' | 'strategist';
+    taskNum?: number;
+    includeEvaluatorHeader?: boolean;
+}
+
+/**
+ * Convert checkpoint-history timeline entries into the same committed item types
+ * the runtime renderer already understands.
+ */
+export function buildCommittedTimelineItems(historyItems: any[], options: BuildHistoryTimelineOptions): CommittedItem[] {
+    const committedItems: CommittedItem[] = [];
+    const defaultAgentName = options.defaultAgentName ?? 'operator';
+    let evaluatorHeaderShown = false;
+    let pendingCodeResult: CommittedItem | null = null;
+
+    const ensureEvaluatorHeader = (idx: number) => {
+        if (options.includeEvaluatorHeader === false || evaluatorHeaderShown) return;
+        evaluatorHeaderShown = true;
+        committedItems.push({
+            id: `${options.idPrefix}-evaluator-header-${idx}`,
+            type: 'evaluator-header',
+            content: 'evaluator',
+            agentName: 'evaluator',
+            taskNum: options.taskNum
+        });
+    };
+
+    const flushPendingCodeResult = () => {
+        if (!pendingCodeResult) return;
+        committedItems.push(pendingCodeResult);
+        pendingCodeResult = null;
+    };
+
+    const isInterruptReasonTool = (item: any): boolean => (
+        item?.type === 'tool' &&
+        typeof item?.content === 'string' &&
+        item.content.trim().toLowerCase() === 'interrupted execution' &&
+        typeof item?.output === 'string' &&
+        item.output.trim().length > 0
+    );
+
+    for (let idx = 0; idx < historyItems.length; idx++) {
+        const item = historyItems[idx];
+        const itemType = item?.type;
+        const agentName = normalizeHistoryAgentName(item?.agent, defaultAgentName);
+        const isError = item?.isError === true;
+
+        if (itemType === 'evaluation-failed') {
+            flushPendingCodeResult();
+            ensureEvaluatorHeader(idx);
+            committedItems.push({
+                id: `${options.idPrefix}-evaluator-status-${idx}`,
+                type: 'evaluator-status',
+                content: item?.content ?? 'Evaluation Failed',
+                agentName: 'evaluator',
+                taskNum: options.taskNum
+            });
+
+            if (item?.summary) {
+                committedItems.push({
+                    id: `${options.idPrefix}-evaluation-summary-${idx}`,
+                    type: 'evaluation-summary',
+                    content: item.summary,
+                    agentName: 'evaluator',
+                    taskNum: options.taskNum
+                });
+            }
+            continue;
+        }
+
+        if (agentName === 'evaluator') {
+            ensureEvaluatorHeader(idx);
+        }
+
+        if (itemType === 'tool' || itemType === 'log' || itemType === 'model-text') {
+            if (itemType !== 'tool') {
+                flushPendingCodeResult();
+            }
+            committedItems.push({
+                id: `${options.idPrefix}-${itemType}-${idx}`,
+                type: itemType,
+                content: item?.content ?? '',
+                agentName,
+                isError,
+                taskNum: options.taskNum
+            });
+
+            if (itemType === 'tool' && pendingCodeResult && pendingCodeResult.agentName === agentName) {
+                committedItems.push(pendingCodeResult);
+                pendingCodeResult = null;
+            }
+            if (itemType === 'tool' && isInterruptReasonTool(item)) {
+                committedItems.push({
+                    id: `${options.idPrefix}-interrupt-reason-${idx}`,
+                    type: 'interrupt-reason',
+                    content: item.output,
+                    agentName,
+                    isError: true,
+                    taskNum: options.taskNum
+                });
+            }
+            continue;
+        }
+
+        if (itemType === 'code-result') {
+            pendingCodeResult = {
+                id: `${options.idPrefix}-code-result-${idx}`,
+                type: 'code-result',
+                content: item?.content,
+                agentName,
+                isError,
+                taskNum: options.taskNum
+            };
+            continue;
+        }
+
+        flushPendingCodeResult();
+    }
+
+    flushPendingCodeResult();
+    return committedItems;
+}
+
 /**
  * Build committed items from checkpoint history
  */
@@ -41,6 +173,17 @@ export function buildHistoryItems(history: any): CommittedItem[] {
         });
     };
 
+    const addReviewedPlanSequence = (reviewLabel: 'Reviewed Plan' | 'Reviewed Replan', planText: string) => {
+        newItems.push({
+            id: 'strategist-complete',
+            type: 'tool',
+            content: reviewLabel,
+            agentName: 'strategist'
+        });
+
+        addPlanItem('checkpoint-history-plan', planText);
+    };
+
     // Build plan items
     const finalPlanRaw = (history.plan?.length > 0)
         ? history.plan.join('\n\n')
@@ -49,8 +192,15 @@ export function buildHistoryItems(history: any): CommittedItem[] {
     const finalPlanContent = normalizePlanText(finalPlanRaw);
     const initialPlanContent = normalizePlanText(initialPlanRaw);
     
-    if (finalPlanContent || initialPlanContent) {
+    const strategistItems = buildCommittedTimelineItems(history.strategist_items || [], {
+        idPrefix: 'strategist-history',
+        defaultAgentName: 'strategist',
+        includeEvaluatorHeader: false
+    });
+
+    if (strategistItems.length > 0 || finalPlanContent || initialPlanContent) {
         newItems.push({ id: 'strategist-header', type: 'agent-header', content: 'strategist', agentName: 'strategist' });
+        newItems.push(...strategistItems);
         
         if (history.is_replan) {
             if (initialPlanContent) {
@@ -59,12 +209,10 @@ export function buildHistoryItems(history: any): CommittedItem[] {
 
             // Show only the reviewed plan. If final equals initial, use whichever is available.
             if (finalPlanContent) {
-                addPlanItem('checkpoint-history-plan', finalPlanContent);
+                addReviewedPlanSequence('Reviewed Replan', finalPlanContent);
             } else if (initialPlanContent) {
-                addPlanItem('checkpoint-history-plan', initialPlanContent);
+                addReviewedPlanSequence('Reviewed Replan', initialPlanContent);
             }
-
-            newItems.push({ id: 'strategist-complete', type: 'tool', content: 'Reviewed Replan', agentName: 'strategist' });
         } else {
             if (initialPlanContent) {
                 newItems.push({ id: 'strategist-initial-complete', type: 'tool', content: 'Created Initial Plan', agentName: 'strategist' });
@@ -72,12 +220,10 @@ export function buildHistoryItems(history: any): CommittedItem[] {
 
             // Show only the reviewed plan. If final equals initial, use whichever is available.
             if (finalPlanContent) {
-                addPlanItem('checkpoint-history-plan', finalPlanContent);
+                addReviewedPlanSequence('Reviewed Plan', finalPlanContent);
             } else if (initialPlanContent) {
-                addPlanItem('checkpoint-history-plan', initialPlanContent);
+                addReviewedPlanSequence('Reviewed Plan', initialPlanContent);
             }
-
-            newItems.push({ id: 'strategist-complete', type: 'tool', content: 'Reviewed Plan', agentName: 'strategist' });
         }
     }
     
@@ -86,7 +232,7 @@ export function buildHistoryItems(history: any): CommittedItem[] {
     // Build completed task items
     for (let i = 0; i < completedCount; i++) {
         const taskNum = i + 1;
-        newItems.push({ id: `operator-header-task${taskNum}-history`, type: 'agent-header', content: 'operator', agentName: 'operator' });
+        newItems.push({ id: `operator-header-task${taskNum}-history`, type: 'agent-header', content: 'operator', agentName: 'operator', taskNum });
         
         // For completed tasks, keep only a compact header panel in restore view.
         // Full step-by-step details are available via `quasar history`.
@@ -98,23 +244,29 @@ export function buildHistoryItems(history: any): CommittedItem[] {
                     id: `operator-task-panel-${taskNum}-history`,
                     type: 'active-task-panel', 
                     content: { description: cleanDescription, taskNum },
-                    agentName: 'operator'
+                    agentName: 'operator',
+                    taskNum
                 });
             }
         }
         
         const summary = history.step_results?.[String(i)];
         if (summary) {
-            newItems.push({ id: `evaluation-summary-task${taskNum}-history`, type: 'evaluation-summary', content: summary, agentName: 'evaluator' });
+            newItems.push({ id: `evaluation-summary-task${taskNum}-history`, type: 'evaluation-summary', content: summary, agentName: 'evaluator', taskNum });
         }
     }
     
     // Build remaining (in-progress) task items
     const currentTaskNum = completedCount + 1;
+    const orderedTaskItems = history.ordered_items_by_task?.[String(completedCount)] || [];
     const remainingOpItems = history.operator_items_by_task?.[String(completedCount)] || [];
+    const remainingEvalItems = history.evaluator_items_by_task?.[String(completedCount)] || [];
+    const remainingTaskItems = orderedTaskItems.length > 0
+        ? orderedTaskItems
+        : [...remainingOpItems, ...remainingEvalItems];
     
-    if (remainingOpItems.length > 0) {
-        newItems.push({ id: `operator-header-task${currentTaskNum}-history`, type: 'agent-header', content: 'operator', agentName: 'operator' });
+    if (remainingTaskItems.length > 0) {
+        newItems.push({ id: `operator-header-task${currentTaskNum}-history`, type: 'agent-header', content: 'operator', agentName: 'operator', taskNum: currentTaskNum });
         
         if (history.plan && history.plan.length >= currentTaskNum) {
             const rawTask = history.plan[currentTaskNum - 1];
@@ -124,38 +276,19 @@ export function buildHistoryItems(history: any): CommittedItem[] {
                     id: `operator-task-panel-${currentTaskNum}-history`,
                     type: 'active-task-panel', 
                     content: { description: cleanDescription, taskNum: currentTaskNum },
-                    agentName: 'operator'
+                    agentName: 'operator',
+                    taskNum: currentTaskNum
                 });
             }
         }
 
-        for (let j = 0; j < remainingOpItems.length; j++) {
-            const item = remainingOpItems[j];
-            newItems.push({ 
-                id: `operator-item-task${currentTaskNum}-${j}-history`, 
-                type: item.type as any, 
-                content: item.content, 
-                agentName: 'operator',
-                isError: item.isError
-            });
-        }
-        
-        // Also show evaluator items for in-progress task (e.g., failed evaluation feedback)
-        const remainingEvalItems = history.evaluator_items_by_task?.[String(completedCount)] || [];
-        if (remainingEvalItems.length > 0) {
-            newItems.push({ id: `evaluator-header-task${currentTaskNum}-history`, type: 'evaluator-header', content: 'evaluator', agentName: 'evaluator' });
-            
-            for (let j = 0; j < remainingEvalItems.length; j++) {
-                const item = remainingEvalItems[j];
-                newItems.push({ 
-                    id: `evaluator-item-task${currentTaskNum}-${j}-history`, 
-                    type: item.type as any, 
-                    content: item.content, 
-                    agentName: 'evaluator',
-                    isError: item.isError
-                });
-            }
-        }
+        newItems.push(
+            ...buildCommittedTimelineItems(remainingTaskItems, {
+                idPrefix: `task${currentTaskNum}-history`,
+                defaultAgentName: 'operator',
+                taskNum: currentTaskNum
+            })
+        );
     }
     
     return newItems;

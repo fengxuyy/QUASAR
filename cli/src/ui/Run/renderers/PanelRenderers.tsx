@@ -54,7 +54,7 @@ export function processLinesForPanel(
             });
         }
         
-        const originalLine = lines[i];
+        const originalLine = line.originalLine;
         const wrapped = processSummaryLine(originalLine, contentWidth, stripTaskPrefix, line.inCodeBlock);
         
         for (const w of wrapped) {
@@ -82,7 +82,7 @@ interface PlanPanelProps extends PanelProps {
  * Execution Plan Panel
  */
 export function PlanPanel({ planContent, isPlanComplete, isContinuation, id, leftMargin, terminalWidth, availableWidth }: PlanPanelProps): React.ReactElement {
-    const planParentOffset = OFFSET_PLAN;
+    const planParentOffset = OFFSET_PLAN + 3;
     const bannerAvailableWidth = Math.max(20, terminalWidth - 14);
     const planPanelWidth = Math.max(10, bannerAvailableWidth - planParentOffset);
     const planContentWidth = Math.max(5, planPanelWidth - 4);
@@ -93,7 +93,7 @@ export function PlanPanel({ planContent, isPlanComplete, isContinuation, id, lef
     const { top: topBorder, bottom: bottomBorder } = createPanelBorders('Execution Plan', planPanelWidth);
     
     return (
-        <Box key={id} marginLeft={leftMargin + INDENT_AGENT - 1} paddingX={1} flexDirection="column" marginTop={1}>
+        <Box key={id} marginLeft={leftMargin + INDENT_AGENT + 2} paddingX={1} flexDirection="column">
             {!isContinuation && <Text color="cyan">{topBorder}</Text>}
             {allProcessedLines.map((line, idx) => (
                 <Text key={idx}>
@@ -116,7 +116,7 @@ interface EvaluationSummaryPanelProps extends PanelProps {
  * Evaluation Summary Panel
  */
 export function EvaluationSummaryPanel({ content, id, leftMargin, terminalWidth, availableWidth }: EvaluationSummaryPanelProps): React.ReactElement {
-    const summaryParentOffset = OFFSET_SUMMARY;
+    const summaryParentOffset = OFFSET_SUMMARY + 3;
     const summaryPanelWidth = Math.max(30, availableWidth - summaryParentOffset);
     const summaryContentWidth = Math.max(20, summaryPanelWidth - 4);
     
@@ -135,7 +135,7 @@ export function EvaluationSummaryPanel({ content, id, leftMargin, terminalWidth,
     const processedSummaryLines = processLinesForPanel(filteredLines, summaryContentWidth, false);
     
     return (
-        <Box key={id} marginLeft={leftMargin + INDENT_EVALUATOR - 1} paddingX={1} flexDirection="column">
+        <Box key={id} marginLeft={leftMargin + INDENT_EVALUATOR + 2} paddingX={1} flexDirection="column">
             <Text color="cyan">{summaryTopBorder}</Text>
             {processedSummaryLines.map((line, idx) => (
                 <Text key={idx}>
@@ -145,6 +145,36 @@ export function EvaluationSummaryPanel({ content, id, leftMargin, terminalWidth,
                 </Text>
             ))}
             <Text color="cyan">{summaryBottomBorder}</Text>
+        </Box>
+    );
+}
+
+interface InterruptReasonPanelProps extends PanelProps {
+    content: string;
+    id: string;
+}
+
+/**
+ * Interrupt Reason Panel
+ */
+export function InterruptReasonPanel({ content, id, leftMargin, terminalWidth, availableWidth }: InterruptReasonPanelProps): React.ReactElement {
+    const reasonParentOffset = OFFSET_PLAN + 3;
+    const reasonPanelWidth = Math.max(30, availableWidth - reasonParentOffset);
+    const reasonContentWidth = Math.max(20, reasonPanelWidth - 4);
+    const { top: topBorder, bottom: bottomBorder } = createPanelBorders('Interrupt Reason', reasonPanelWidth);
+    const processedLines = processLinesForPanel(content.split('\n'), reasonContentWidth, false);
+
+    return (
+        <Box key={id} marginLeft={leftMargin + INDENT_AGENT + 2} paddingX={1} flexDirection="column">
+            <Text color="red">{topBorder}</Text>
+            {processedLines.map((line, idx) => (
+                <Text key={idx}>
+                    <Text color="red">│ </Text>
+                    <RenderLine segments={line.segments} isHeader={line.isHeader} isTask={line.isTask} />
+                    <Text color="red">{' '.repeat(Math.max(0, reasonContentWidth - getVisualLength(line.plainText)))} │</Text>
+                </Text>
+            ))}
+            <Text color="red">{bottomBorder}</Text>
         </Box>
     );
 }
@@ -358,7 +388,7 @@ function extractFileSystemChanges(output: string): string {
  * Code Execution Result Panel
  */
 export function CodeResultPanel({ output, filePath, isError, id, leftMargin, terminalWidth, availableWidth }: CodeResultPanelProps): React.ReactElement {
-    const codeResultParentOffset = OFFSET_PLAN;
+    const codeResultParentOffset = OFFSET_PLAN + 3;
     const codeResultPanelWidth = Math.max(30, availableWidth - codeResultParentOffset);
     const codeResultContentWidth = Math.max(20, codeResultPanelWidth - 4);
     const borderColor = isError ? 'red' : 'cyan';
@@ -452,7 +482,7 @@ export function CodeResultPanel({ output, filePath, isError, id, leftMargin, ter
     const { top: codeTopBorder, bottom: codeBottomBorder } = createPanelBorders(headerText, codeResultPanelWidth);
     
     return (
-        <Box key={id} marginLeft={leftMargin + INDENT_AGENT - 1} paddingX={1} flexDirection="column" marginTop={1} marginBottom={0} paddingBottom={0}>
+        <Box key={id} marginLeft={leftMargin + INDENT_AGENT + 2} paddingX={1} flexDirection="column">
             <Text color={borderColor}>{codeTopBorder}</Text>
             {displayLines.length === 0 ? (
                 <Text>

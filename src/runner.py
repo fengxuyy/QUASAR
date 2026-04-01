@@ -1,6 +1,7 @@
 """Main execution runner."""
 
 import sys
+from dataclasses import dataclass
 from langchain_core.messages import AIMessage
 
 from .tools.base import WORKSPACE_DIR, LOGS_DIR
@@ -37,6 +38,14 @@ Review what was accomplished, identify any issues or areas for enhancement, and 
 _graph = None
 
 
+@dataclass(frozen=True)
+class PromptRunResult:
+    """Structured outcome for a single prompt execution."""
+
+    status: str
+    auto_improve_eligible: bool
+
+
 def get_or_create_graph(llm, agent_llms=None):
     """Get existing graph or create new one."""
     global _graph
@@ -44,6 +53,14 @@ def get_or_create_graph(llm, agent_llms=None):
         graph_builder = build_graph(llm, agent_llms=agent_llms)
         _graph = create_checkpoint_infrastructure(graph_builder)
     return _graph
+
+
+def invalidate_graph_cache():
+    """Drop the compiled graph and DB handles so the next run uses fresh LLM clients."""
+    global _graph
+    _graph = None
+    from .checkpoint import release_checkpoint_resources
+    release_checkpoint_resources()
 
 
 def log_conversation(user_input: str, overwrite: bool = False):
@@ -57,10 +74,10 @@ def log_conversation(user_input: str, overwrite: bool = False):
         pass
 
 
-def process_prompt(user_input: str, llm, if_restart: bool = False, agent_llms: dict = None) -> bool:
+def process_prompt(user_input: str, llm, if_restart: bool = False, agent_llms: dict = None) -> PromptRunResult:
     """
     Process user prompt and execute the agent workflow.
-    Returns: True if execution completed/aborted, False if interrupted by user (second press).
+    Returns structured outcome metadata for the completed run.
     """
     global _graph
     
@@ -215,11 +232,23 @@ def process_prompt(user_input: str, llm, if_restart: bool = False, agent_llms: d
                         "completed_steps": len(node_state.get('completed_steps', []))
                     })
         
+        # Get final state while checkpointer is still valid
+        state_values = graph.get_state(config).values
+
+        # User declined plan confirmation: drop checkpoint so the next prompt starts clean
+        plan_declined = False
+        try:
+            import bridge
+            if bridge.consume_plan_declined() is not None:
+                plan_declined = True
+                from .checkpoint import delete_checkpoint
+                delete_checkpoint()
+                _graph = None
+        except (ImportError, AttributeError):
+            pass
+        
         # Task completion cleanup (handled by bridge in bridge mode)
         pass
-        
-        # Get final state
-        state_values = graph.get_state(config).values
         # Removed "EXECUTION COMPLETE" Header as requested (stop loading implicitly signals completion)
         
         # DEBUG: Log final state
@@ -318,6 +347,18 @@ def process_prompt(user_input: str, llm, if_restart: bool = False, agent_llms: d
         # End run timing (always called, even on interruption)
         end_run()
 
-    log_custom("RUNNER", "process_prompt completed", {"returning": True})
-    return True
+    if all_tasks_done:
+        status = "success"
+    elif should_delete_checkpoint:
+        status = "fail"
+    elif plan_declined:
+        status = "plan_declined"
+    else:
+        status = "incomplete"
 
+    result = PromptRunResult(
+        status=status,
+        auto_improve_eligible=all_tasks_done,
+    )
+    log_custom("RUNNER", "process_prompt completed", {"result": result.status})
+    return result

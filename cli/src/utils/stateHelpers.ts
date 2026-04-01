@@ -2,6 +2,7 @@
  * State Helper Utilities
  * Extracted from Run.tsx for maintainability
  */
+import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type { CommittedItem, TaskProgress, FileContent } from '../hooks/types.js';
 
 /**
@@ -119,4 +120,66 @@ export function applyInterruptResetState(
     setters.setIsPlanComplete(false);
     setters.setTaskProgress(null);
     setters.isInterruptedRef.current = false;
+}
+
+/**
+ * Clear strategist/plan UI and redraw after user declines the reviewed plan (restart planning).
+ */
+export function applyPlanRestartState(
+    setters: {
+        setCommittedItems: Dispatch<SetStateAction<CommittedItem[]>>;
+        setBannerCommitted: (committed: boolean) => void;
+        setPlanContent: (content: string) => void;
+        setIsPlanComplete: (complete: boolean) => void;
+        setTaskProgress: (progress: TaskProgress | null) => void;
+        taskProgressRef: MutableRefObject<TaskProgress | null>;
+        setAgents: Dispatch<SetStateAction<any[]>>;
+        activeFileContentRef: MutableRefObject<FileContent | null>;
+        setSystemStatus: (status: 'idle' | 'running' | 'completed') => void;
+        setStaticKey: Dispatch<SetStateAction<number>>;
+        itemIdCounterRef: MutableRefObject<number>;
+    }
+): void {
+    process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+    setters.setCommittedItems([]);
+    setters.setBannerCommitted(false);
+    setters.setPlanContent('');
+    setters.setIsPlanComplete(false);
+    setters.setTaskProgress(null);
+    setters.taskProgressRef.current = null;
+    setters.setAgents([]);
+    setters.activeFileContentRef.current = null;
+    setters.setSystemStatus('running');
+    setters.setStaticKey((k) => k + 1);
+    setters.itemIdCounterRef.current = 0;
+}
+
+/** After user declines reviewed plan: clear run UI and return to idle input (no auto-restart). */
+export function applyPlanDeclinedState(
+    setters: {
+        setCommittedItems: Dispatch<SetStateAction<CommittedItem[]>>;
+        setBannerCommitted: (committed: boolean) => void;
+        setPlanContent: (content: string) => void;
+        setIsPlanComplete: (complete: boolean) => void;
+        setTaskProgress: (progress: TaskProgress | null) => void;
+        taskProgressRef: MutableRefObject<TaskProgress | null>;
+        setAgents: Dispatch<SetStateAction<any[]>>;
+        activeFileContentRef: MutableRefObject<FileContent | null>;
+        setSystemStatus: (status: 'idle' | 'running' | 'completed') => void;
+        setStaticKey: Dispatch<SetStateAction<number>>;
+        itemIdCounterRef: MutableRefObject<number>;
+    }
+): void {
+    process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
+    setters.setCommittedItems([]);
+    setters.setBannerCommitted(false);
+    setters.setPlanContent('');
+    setters.setIsPlanComplete(false);
+    setters.setTaskProgress(null);
+    setters.taskProgressRef.current = null;
+    setters.setAgents([]);
+    setters.activeFileContentRef.current = null;
+    setters.setSystemStatus('idle');
+    setters.setStaticKey((k) => k + 1);
+    setters.itemIdCounterRef.current = 0;
 }

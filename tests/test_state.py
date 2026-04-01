@@ -22,6 +22,7 @@ def test_create_initial_state():
     assert state["initial_plan_content"] == ""
     assert state["is_replanning"] is False
     assert state["evaluation_messages"] == []
+    assert "plan_review_proceed" not in state
 
 
 def test_create_initial_state_empty_input():
@@ -46,6 +47,7 @@ def test_state_has_correct_keys():
         "initial_plan_content",
         "is_replanning",
         "evaluation_messages",
+        "plan_review_proceed",
     }
     
     # Get keys from annotations

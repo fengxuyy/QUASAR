@@ -11,6 +11,7 @@ export interface ProcessedLine {
     segments: TextSegment[];
     isHeader: boolean;
     isTask: boolean;
+    isTable?: boolean;
 }
 
 /**
@@ -24,12 +25,13 @@ export function processSummaryLine(
 ): ProcessedLine[] {
     const formatted = formatLine(line, stripTaskPrefix, inCodeBlock);
     
-    if (formatted.plainText.length <= contentWidth) {
+    if (formatted.plainText.length <= contentWidth || formatted.isTable) {
         return [{
             plainText: formatted.plainText,
             segments: formatted.segments,
             isHeader: formatted.isHeader,
-            isTask: formatted.isTask
+            isTask: formatted.isTask,
+            isTable: formatted.isTable
         }];
     }
     
@@ -130,14 +132,15 @@ export function processFormattedLines(
     
     for (let i = 0; i < formattedLines.length; i++) {
         const line = formattedLines[i];
-        const originalLine = lines[i];
+        const originalLine = line.originalLine;
         
         const wrapped = processSummaryLine(originalLine, contentWidth, stripTaskPrefix, line.inCodeBlock);
         for (const w of wrapped) {
             allProcessedLines.push({
                 ...w,
                 isTask: line.isTask || line.isTaskContinuation || w.isTask,
-                isHeader: line.isHeader || w.isHeader
+                isHeader: line.isHeader || w.isHeader,
+                isTable: line.isTable || w.isTable
             });
         }
     }

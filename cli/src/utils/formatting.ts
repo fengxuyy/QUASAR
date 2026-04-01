@@ -62,6 +62,35 @@ export function parseStyledSegments(line: string): TextSegment[] {
         }
     }
     
+    // Find italic segments (*...* or _..._)
+    let italicRegex = /(?<!\*)\*([^*]+)\*(?!\*)/g;
+    while ((match = italicRegex.exec(line)) !== null) {
+        const overlaps = markers.some(m => 
+            (match!.index >= m.start && match!.index < m.end) ||
+            (match!.index + match![0].length > m.start && match!.index + match![0].length <= m.end) ||
+            (match!.index <= m.start && match!.index + match![0].length >= m.end)
+        );
+        if (!overlaps) {
+            markers.push({ start: match.index, end: match.index + match[0].length, style: 'italic' });
+        }
+    }
+    
+    let italicRegex2 = /(^|\s|\W)_([^_]+)_($|\s|\W)/g;
+    while ((match = italicRegex2.exec(line)) !== null) {
+        const startIndex = match.index + match[1].length;
+        const endIndex = startIndex + match[2].length + 2;
+        italicRegex2.lastIndex = endIndex;
+        
+        const overlaps = markers.some(m => 
+            (startIndex >= m.start && startIndex < m.end) ||
+            (endIndex > m.start && endIndex <= m.end) ||
+            (startIndex <= m.start && endIndex >= m.end)
+        );
+        if (!overlaps) {
+            markers.push({ start: startIndex, end: endIndex, style: 'italic' });
+        }
+    }
+    
     // Handle unclosed ** at start of line (rest of line is bold)
     const unclosedBoldMatch = line.match(/^\*\*([^*]*)$/);
     if (unclosedBoldMatch && !markers.some(m => m.start === 0)) {
@@ -95,6 +124,14 @@ export function parseStyledSegments(line: string): TextSegment[] {
                 // Unclosed bold - just strip the leading **
                 content = fullMatch.replace(/^\*\*/, '');
             }
+        } else if (marker.style === 'italic') {
+            if (fullMatch.startsWith('_') && fullMatch.endsWith('_')) {
+                 content = fullMatch.replace(/_([^_]+)_/, '$1');
+            } else if (fullMatch.startsWith('*') && fullMatch.endsWith('*')) {
+                 content = fullMatch.replace(/\*([^*]+)\*/, '$1');
+            } else {
+                 content = fullMatch;
+            }
         } else {
             content = fullMatch;
         }
@@ -117,8 +154,12 @@ export function parseStyledSegments(line: string): TextSegment[] {
 function applyLatexTransformations(text: string): string {
     let result = text;
     
-    // General LaTeX cleanup (strip $ delimiters)
-    result = result.replace(/\$/g, '');
+    // General LaTeX cleanup: strip $ delimiters that are NOT escaped
+    // Using lookbehind to ensure we don't match \$
+    result = result.replace(/(?<!\\)\$/g, '');
+    
+    // Unescape common LaTeX/Markdown characters
+    result = result.replace(/\\([%&#$])/g, '$1');
     
     // Unwrap \text{...} -> ... and add space if needed
     const textBeforeUnwrap = result;
@@ -189,7 +230,9 @@ export function formatLine(line: string, stripTaskPrefix: boolean = false, inCod
     isHeader: boolean; 
     isTask: boolean; 
     addEmptyBefore: boolean; 
-    segments: TextSegment[] 
+    segments: TextSegment[];
+    isHorizontalRule?: boolean;
+    isTable?: boolean;
 } {
     // If in code block, return as is with 'code' style (but preserving the whole line content)
     // We treat the whole line as code style
@@ -199,7 +242,8 @@ export function formatLine(line: string, stripTaskPrefix: boolean = false, inCod
             isHeader: false,
             isTask: false,
             addEmptyBefore: false,
-            segments: [{ text: line, style: 'code' }]
+            segments: [{ text: line, style: 'code' }],
+            isTable: false
         };
     }
 
@@ -210,6 +254,21 @@ export function formatLine(line: string, stripTaskPrefix: boolean = false, inCod
     
     // Global cleanup of U+2800 to normal space
     text = text.replace(/\u2800/g, ' ');
+
+    // Detect horizontal rule
+    if (/^[\u2800\s]*[-_*]{3,}[\u2800\s]*$/.test(text) && !inCodeBlock) {
+        return {
+            plainText: '---',
+            isHeader: false,
+            isTask: false,
+            addEmptyBefore: true,
+            segments: [{ text: '---', style: 'normal' }],
+            isHorizontalRule: true,
+            isTable: false
+        };
+    }
+
+    const isTable = isTableLine(text) && !inCodeBlock;
 
     // Handle blockquotes (> text)
     // Strip the leading > and optional space for markdown blockquotes
@@ -298,7 +357,7 @@ export function formatLine(line: string, stripTaskPrefix: boolean = false, inCod
         return prefix + seg.text;
     }).join('');
     
-    return { plainText, isHeader, isTask, addEmptyBefore, segments: transformedSegments };
+    return { plainText, isHeader, isTask, addEmptyBefore, segments: transformedSegments, isTable };
 }
 
 /**
@@ -319,6 +378,112 @@ export function getPlainTextFromSegments(segments: TextSegment[]): string {
     }).join('');
 }
 
+function isTableLine(line: string): boolean {
+    const trimmed = line.trim();
+    return trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.length > 1;
+}
+
+function isSeparatorLine(line: string): boolean {
+    if (!isTableLine(line)) return false;
+    const trimmed = line.trim();
+    const content = trimmed.slice(1, -1).trim();
+    if (!content) return false;
+    return /^[\s\-:|]+$/.test(content) && content.includes('-');
+}
+
+function formatTableBlock(lines: string[]): string[] {
+    const rows = lines.map(line => {
+        const trimmed = line.trim();
+        const inner = trimmed.substring(1, trimmed.length - 1);
+        return inner.split('|').map(cell => cell.trim());
+    });
+    
+    const numCols = Math.max(...rows.map(r => r.length));
+    const colWidths = new Array(numCols).fill(0);
+    
+    for (let r = 0; r < rows.length; r++) {
+        if (isSeparatorLine(lines[r])) continue;
+        for (let c = 0; c < rows[r].length; c++) {
+            const cellText = rows[r][c] || '';
+            const visualLen = formatLine(cellText, false, false).plainText.length;
+            colWidths[c] = Math.max(colWidths[c], visualLen);
+        }
+    }
+    
+    return lines.map((line, r) => {
+        const isSep = isSeparatorLine(line);
+        const cells = rows[r];
+        let newLine = '|';
+        for (let c = 0; c < numCols; c++) {
+            const cell = cells[c] || '';
+            let formattedCell = '';
+            if (isSep) {
+                const isLeft = cell.startsWith(':');
+                const isRight = cell.endsWith(':');
+                const width = colWidths[c];
+                let dashCount = Math.max(1, width);
+                let dashStr = '-'.repeat(dashCount);
+                if (isLeft && isRight) {
+                    dashStr = ':' + '-'.repeat(Math.max(1, width - 2)) + ':';
+                } else if (isLeft) {
+                    dashStr = ':' + '-'.repeat(Math.max(1, width - 1));
+                } else if (isRight) {
+                    dashStr = '-'.repeat(Math.max(1, width - 1)) + ':';
+                }
+                formattedCell = '\u00A0' + dashStr + '\u00A0';
+            } else {
+                const visualLen = formatLine(cell, false, false).plainText.length;
+                const padding = Math.max(0, colWidths[c] - visualLen);
+                formattedCell = '\u00A0' + cell + '\u00A0'.repeat(padding) + '\u00A0';
+            }
+            newLine += formattedCell + '|';
+        }
+        const leadingSpaceMatch = line.match(/^\s*/);
+        const leadingSpace = leadingSpaceMatch ? leadingSpaceMatch[0] : '';
+        return leadingSpace + newLine;
+    });
+}
+
+function alignTableBlocks(lines: string[]): string[] {
+    const result: string[] = [];
+    let i = 0;
+    let inCodeBlock = false;
+    
+    while (i < lines.length) {
+        const line = lines[i];
+        if (/^\s*```/.test(line)) {
+            inCodeBlock = !inCodeBlock;
+            result.push(line);
+            i++;
+            continue;
+        }
+        
+        if (!inCodeBlock && isTableLine(line)) {
+            let j = i;
+            let hasSeparator = false;
+            while (j < lines.length && !/^\s*```/.test(lines[j]) && isTableLine(lines[j])) {
+                if (isSeparatorLine(lines[j])) {
+                    hasSeparator = true;
+                }
+                j++;
+            }
+            if ((j - i) >= 2 && hasSeparator) {
+                const tableLines = lines.slice(i, j);
+                result.push(...formatTableBlock(tableLines));
+            } else {
+                for (let k = i; k < j; k++) {
+                    result.push(lines[k]);
+                }
+            }
+            i = j;
+        } else {
+            result.push(line);
+            i++;
+        }
+    }
+    return result;
+}
+
 /**
  * Format multiple lines with task block tracking
  * Lines following a task header (until the next task or section) are marked as isTaskContinuation
@@ -331,6 +496,9 @@ export function formatLines(lines: string[], stripTaskPrefix: boolean = false): 
     addEmptyBefore: boolean;
     inCodeBlock: boolean;
     segments: TextSegment[];
+    isHorizontalRule?: boolean;
+    isTable?: boolean;
+    originalLine: string;
 }> {
     const results: Array<{
         plainText: string;
@@ -340,12 +508,17 @@ export function formatLines(lines: string[], stripTaskPrefix: boolean = false): 
         addEmptyBefore: boolean;
         inCodeBlock: boolean;
         segments: TextSegment[];
+        isHorizontalRule?: boolean;
+        isTable?: boolean;
+        originalLine: string;
     }> = [];
+    
+    const alignedLines = alignTableBlocks(lines);
     
     let inTaskBlock = false;
     let inCodeBlock = false;
     
-    for (const line of lines) {
+    for (const line of alignedLines) {
         // Check for code block markers (``` with optional language identifier)
         // This handles both opening (```python) and closing (```) markers
         // We skip these lines entirely to omit the markers from display
@@ -359,20 +532,20 @@ export function formatLines(lines: string[], stripTaskPrefix: boolean = false): 
         // Check if this line starts a new task block (only if not in code block)
         if (!inCodeBlock && formatted.isTask) {
             inTaskBlock = true;
-            results.push({ ...formatted, isTaskContinuation: false, inCodeBlock });
+            results.push({ ...formatted, isTaskContinuation: false, inCodeBlock, originalLine: line });
         } 
         // Check if this line starts a new section (only if not in code block)
         else if (!inCodeBlock && (formatted.isHeader || line.trim().toLowerCase().startsWith('guidance:'))) {
             inTaskBlock = false;
-            results.push({ ...formatted, isTaskContinuation: false, inCodeBlock });
+            results.push({ ...formatted, isTaskContinuation: false, inCodeBlock, originalLine: line });
         }
         // If we're in a task block, mark as continuation
         else if (inTaskBlock) {
-            results.push({ ...formatted, isTaskContinuation: true, isTask: true, inCodeBlock });
+            results.push({ ...formatted, isTaskContinuation: true, isTask: true, inCodeBlock, originalLine: line });
         }
         // Regular line
         else {
-            results.push({ ...formatted, isTaskContinuation: false, inCodeBlock });
+            results.push({ ...formatted, isTaskContinuation: false, inCodeBlock, originalLine: line });
         }
     }
     

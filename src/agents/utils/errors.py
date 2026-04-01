@@ -201,8 +201,14 @@ def handle_api_retry(
         # Raise fatal error to terminate the run
         raise FatalAPIError(final_msg)
     
-    # Wait before retry
-    time.sleep(wait_seconds)
+    # Wait before retry, but do not count retry backoff as active run time.
+    from ...usage_tracker import begin_excluded_interval, end_excluded_interval
+
+    begin_excluded_interval()
+    try:
+        time.sleep(wait_seconds)
+    finally:
+        end_excluded_interval()
     return True
 
 
@@ -227,4 +233,3 @@ def _save_stats_on_system_interrupt():
         end_run()
     except Exception:
         pass  # Fail silently - don't disrupt the error handling flow
-

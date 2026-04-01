@@ -6,6 +6,7 @@ export { RenderLine, processSummaryLine, wrapText, type ProcessedLine } from './
 export { 
     PlanPanel, 
     EvaluationSummaryPanel, 
+    InterruptReasonPanel,
     FinalSummaryPanel, 
     ActiveTaskPanel, 
     CheckpointResumePanel, 

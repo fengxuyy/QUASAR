@@ -1,12 +1,7 @@
 import React from 'react';
 import { Box, Text, useStdout } from 'ink';
 
-interface BannerProps {
-    modelName?: string;
-    pmgConfigured?: boolean;
-}
-
-const Banner: React.FC<BannerProps> = ({ modelName, pmgConfigured }) => {
+const Banner: React.FC = () => {
     const { stdout } = useStdout();
 
     
@@ -40,7 +35,6 @@ const Banner: React.FC<BannerProps> = ({ modelName, pmgConfigured }) => {
     // Calculate the actual logo width (longest line, capped by available content space)
     // Ensure we don't pass negative length if screen is super small
     const safeContentWidth = Math.max(0, maxContentWidth);
-    const logoWidth = Math.min(logoLines[0].length, safeContentWidth);
     
     // Truncate each line from the right to fit available width safely
     const truncatedLogo = logoLines.map(line => {
@@ -55,8 +49,7 @@ const Banner: React.FC<BannerProps> = ({ modelName, pmgConfigured }) => {
         ? subtitle.substring(0, Math.max(0, safeContentWidth - 3)) + '...'
         : subtitle;
     
-    // Generate separator line to match logo width
-    const separatorLine = '─'.repeat(logoWidth);
+    const version = 'v0.2.0';
 
 	return (
 		<Box flexDirection="column" marginLeft={leftMargin}>
@@ -65,35 +58,7 @@ const Banner: React.FC<BannerProps> = ({ modelName, pmgConfigured }) => {
                     <Text color="cyan" bold>{truncatedLogo}</Text>
                     <Text>{'\n'}</Text>
                     <Text color="white">{truncatedSubtitle}</Text>
-                    
-                    {(modelName || pmgConfigured) && (
-                        <Box flexDirection="column" marginTop={1} alignItems="flex-start" width={logoWidth}>
-                            <Text dimColor>{separatorLine}</Text>
-                            {modelName && (
-                                <Box>
-                                    <Text dimColor>Model: </Text>
-                                    <Text color="cyan">{
-                                        ('Model: ' + modelName).length > logoWidth 
-                                            ? modelName.substring(0, logoWidth - 10) + '...'
-                                            : modelName
-                                    }</Text>
-                                </Box>
-                            )}
-                            {pmgConfigured && (
-                                <Box>
-                                    <Text dimColor>{
-                                        'Materials Project API: Configured'.length > logoWidth
-                                            ? 'Materials Project API: Configured'.substring(0, logoWidth - 3) + '...'
-                                            : 'Materials Project API: '
-                                    }</Text>
-                                    {'Materials Project API: Configured'.length <= logoWidth && (
-                                        <Text color="green">Configured</Text>
-                                    )}
-                                </Box>
-                            )}
-                            <Text dimColor>{separatorLine}</Text>
-                        </Box>
-                    )}
+                    <Text color="dim">{version}</Text>
                 </Box>
             </Box>
 		</Box>

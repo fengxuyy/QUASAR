@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useStdout, useInput } from 'ink';
 import { truncateText } from '../utils/helpers.js';
 import { registerAnimationSubscriber } from './animationTick.js';
+import type { ContextUsage } from '../hooks/types.js';
 
 // Star spinner frames (from cli-spinners)
 const STAR_SPINNER = {
@@ -33,18 +34,27 @@ interface PromptInputProps {
     onSubmit: (value: string) => void;
     isLoading: boolean;
     taskProgress?: { current: number; total: number } | null;
+    contextUsage?: ContextUsage | null;
     checkpointPrompt?: boolean;
     completedRunPrompt?: boolean;
     confirmDeleteArchive?: boolean;
+    startRequestConfirm?: boolean;
+    pendingSubmitPreview?: string;
+    planAwaitingConfirm?: boolean;
+    prefillRevision?: number;
+    prefillText?: string;
     previousInput?: string;
     showInterruptWarning?: boolean;
     showExitWarning?: boolean;
 }
 
-const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProgress, checkpointPrompt, completedRunPrompt, confirmDeleteArchive, previousInput, showInterruptWarning, showExitWarning }) => {
+const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProgress, contextUsage, checkpointPrompt, completedRunPrompt, confirmDeleteArchive, startRequestConfirm, pendingSubmitPreview, planAwaitingConfirm, prefillRevision, prefillText, previousInput, showInterruptWarning, showExitWarning }) => {
     const [query, setQuery] = useState('');
     const [lastQuery, setLastQuery] = useState('');
     const [cursorPosition, setCursorPosition] = useState(0);
+    // Ref so that useInput callbacks always read the latest cursor position
+    // (avoids stale closure that scrambles pasted text)
+    const cursorPositionRef = useRef(0);
     const { stdout } = useStdout();
     const terminalWidth = stdout?.columns || 100;
 
@@ -60,23 +70,54 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
     // Generate separator line to match full banner box width
     const separatorLine = '─'.repeat(bannerBoxWidth);
 
-    // Calculate max width for input text (accounting for star icon and task progress)
-    const taskProgressWidth = taskProgress && taskProgress.total > 0 
-        ? `Task ${taskProgress.current}/${taskProgress.total}`.length + 2 // +2 for spacing
-        : 0;
-    const inputTextMaxWidth = Math.max(10, bannerBoxWidth - 4 - taskProgressWidth); // -4 for star icon and spacing
+    const tokenUsageLabel = contextUsage?.is_supported_model
+        ? `Ctx ${Math.round(contextUsage.usage_percent ?? 0)}%`
+        : 'Ctx --';
+    const hasTaskProgress = !!(taskProgress && taskProgress.total > 0);
+    const taskProgressLabel = hasTaskProgress ? `Task ${taskProgress?.current}/${taskProgress?.total}` : '';
+    const rightStatusWidth =
+        tokenUsageLabel.length +
+        (hasTaskProgress ? taskProgressLabel.length + 2 : 0);
+    const inputTextMaxWidth = Math.max(10, bannerBoxWidth - 4 - rightStatusWidth); // -4 for star icon and spacing
+    const tokenUsageColor = !contextUsage?.is_supported_model
+        ? 'gray'
+        : (contextUsage.usage_percent ?? 0) >= 100
+            ? 'red'
+            : (contextUsage.usage_percent ?? 0) >= 75
+                ? 'yellow'
+                : 'green';
+
+    // Keep cursorPositionRef in sync so useInput callbacks always see the latest value
+    useEffect(() => {
+        cursorPositionRef.current = cursorPosition;
+    }, [cursorPosition]);
+
+    // Prefill input (e.g. after user declines reviewed plan and returns to compose)
+    useEffect(() => {
+        if (prefillRevision && prefillRevision > 0) {
+            const text = prefillText ?? '';
+            setQuery(text);
+            const len = text.length;
+            setCursorPosition(len);
+            cursorPositionRef.current = len;
+        }
+    }, [prefillRevision, prefillText]);
 
     // Handle paste events using useInput
     // Note: This will intercept ALL input, so we need to handle both paste and typing
     useInput((input, key) => {
         if (isLoading) return;
         
+        // Always read the ref so we never use a stale closure value
+        const pos = cursorPositionRef.current;
+
         // Handle Enter key - submit
         if (key.return) {
             if (query.trim() || completedRunPrompt) {
                 setLastQuery(query);
                 const submitValue = query;
                 setQuery('');
+                cursorPositionRef.current = 0;
                 setCursorPosition(0);
                 onSubmit(submitValue);
             }
@@ -85,22 +126,32 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
         
         // Handle left arrow - move cursor left
         if (key.leftArrow) {
-            setCursorPosition(prev => Math.max(0, prev - 1));
+            setCursorPosition(prev => {
+                const next = Math.max(0, prev - 1);
+                cursorPositionRef.current = next;
+                return next;
+            });
             return;
         }
         
         // Handle right arrow - move cursor right
         if (key.rightArrow) {
-            setCursorPosition(prev => Math.min(query.length, prev + 1));
+            setCursorPosition(prev => {
+                const next = Math.min(query.length, prev + 1);
+                cursorPositionRef.current = next;
+                return next;
+            });
             return;
         }
         
         // Handle backspace/delete - delete character before cursor
         // On Mac, the "delete" key sends backspace, so we handle both
         if (key.backspace || key.delete) {
-            if (cursorPosition > 0) {
-                setQuery(prev => prev.slice(0, cursorPosition - 1) + prev.slice(cursorPosition));
-                setCursorPosition(prev => prev - 1);
+            if (pos > 0) {
+                setQuery(prev => prev.slice(0, pos - 1) + prev.slice(pos));
+                const next = pos - 1;
+                cursorPositionRef.current = next;
+                setCursorPosition(next);
             }
             return;
         }
@@ -110,7 +161,10 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
             return; // Let it pass through or handle exit
         }
         
-        // Detect paste: when input.length > 1, it's a paste event
+        // Detect paste: when input.length > 1, it's a paste event.
+        // We MUST use cursorPositionRef here because terminals can split a
+        // paste into multiple rapid useInput calls - each must see the
+        // position left by the previous chunk, not a stale closure value.
         if (input.length > 1) {
             // Clean the pasted input - remove control characters and normalize
             const cleanedInput = input
@@ -121,17 +175,21 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
                 .trim();
             
             if (cleanedInput) {
-                // Insert pasted text at cursor position
-                setQuery(prev => prev.slice(0, cursorPosition) + cleanedInput + prev.slice(cursorPosition));
-                setCursorPosition(prev => prev + cleanedInput.length);
+                const insertPos = cursorPositionRef.current;
+                setQuery(prev => prev.slice(0, insertPos) + cleanedInput + prev.slice(insertPos));
+                const next = insertPos + cleanedInput.length;
+                cursorPositionRef.current = next;
+                setCursorPosition(next);
             }
             return;
         }
         
         // Single character input - insert at cursor position
         if (input && input.length === 1) {
-            setQuery(prev => prev.slice(0, cursorPosition) + input + prev.slice(cursorPosition));
-            setCursorPosition(prev => prev + 1);
+            setQuery(prev => prev.slice(0, pos) + input + prev.slice(pos));
+            const next = pos + 1;
+            cursorPositionRef.current = next;
+            setCursorPosition(next);
         }
     }, { isActive: !isLoading });
 
@@ -140,9 +198,13 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
         ? "⚠ This will DELETE all archives! Type 'yes' to confirm or 'no' to cancel"
         : completedRunPrompt
             ? "Previous results found. Enter to auto-improve (or 'no' to start fresh)"
-            : checkpointPrompt 
-                ? "Resume from checkpoint? (yes/no)"
-                : "Type your request here...";
+            : startRequestConfirm
+                ? "Submit this request? (yes/no)"
+                : planAwaitingConfirm
+                    ? "Proceed with this plan? (yes/no)"
+                    : checkpointPrompt 
+                        ? "Resume from checkpoint? (yes/no)"
+                        : "Type your request here...";
     
     // Truncate placeholder if needed
     const truncatedPlaceholder = truncateText(placeholderText, inputTextMaxWidth);
@@ -172,8 +234,14 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
                                 ) : (
                                     <>
                                         <Text>{query.slice(0, cursorPosition)}</Text>
-                                        <Text inverse> </Text>
-                                        <Text>{query.slice(cursorPosition)}</Text>
+                                        {cursorPosition < query.length ? (
+                                            <>
+                                                <Text inverse>{query[cursorPosition]}</Text>
+                                                <Text>{query.slice(cursorPosition + 1)}</Text>
+                                            </>
+                                        ) : (
+                                            <Text inverse> </Text>
+                                        )}
                                     </>
                                 )}
                             </>
@@ -181,18 +249,21 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
                     </Text>
                 </Box>
                 <Box>
-                    {taskProgress && taskProgress.total > 0 ? (
-                        <Text dimColor>{`Task ${taskProgress.current}/${taskProgress.total}`}</Text>
+                    <Text color={tokenUsageColor as any} dimColor={!contextUsage?.is_supported_model}>
+                        {tokenUsageLabel}
+                    </Text>
+                    {hasTaskProgress ? (
+                        <Text dimColor>{`  ${taskProgressLabel}`}</Text>
                     ) : null}
                 </Box>
             </Box>
             <Text dimColor>{separatorLine}</Text>
-            {(checkpointPrompt || completedRunPrompt) && previousInput && (
+            {startRequestConfirm && pendingSubmitPreview ? (
                 <Box paddingX={1}>
-                    <Text dimColor>Previous Input: </Text>
-                    <Text color="yellow">{truncateText(previousInput, inputTextMaxWidth - 16)}</Text>
+                    <Text dimColor>Request to send: </Text>
+                    <Text color="yellow">{truncateText(pendingSubmitPreview, inputTextMaxWidth - 18)}</Text>
                 </Box>
-            )}
+            ) : null}
             {showInterruptWarning ? (
                 <Box paddingX={1}>
                     <Text color="yellow">⚠ Press ESC again to interrupt</Text>
@@ -203,7 +274,7 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
                 </Box>
             ) : (
                 <Box paddingX={1}>
-                    <Text dimColor>Shortcuts: ESC interrupt · Ctrl+D/Ctrl+C exit</Text>
+                    <Text dimColor>Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit</Text>
                 </Box>
             )}
         </Box>

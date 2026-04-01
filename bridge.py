@@ -6,9 +6,200 @@ import io
 import threading
 import traceback
 import signal
+from typing import Optional
 
 # Global interrupt event for coordinated interruption
 interrupt_event = threading.Event()
+
+# Plan review confirmation (runner thread blocks until main thread receives plan_confirm)
+_plan_confirm_lock = threading.Lock()
+_plan_confirm_event = threading.Event()
+_plan_confirm_result: Optional[bool] = None
+
+AUTO_IMPROVE_STATE_KEY = "_auto_improve_state"
+DEFAULT_AUTO_IMPROVE_STATE = {
+    "remaining_cycles": 0,
+    "current_run_is_automatic": False,
+}
+_auto_improve_state_lock = threading.Lock()
+_auto_improve_state = DEFAULT_AUTO_IMPROVE_STATE.copy()
+
+
+def begin_plan_confirmation_wait() -> bool:
+    """Block the graph runner until the CLI sends plan_confirm (or headless auto-confirms)."""
+    if _get_auto_improve_state().get("current_run_is_automatic"):
+        return True
+    global _plan_confirm_result
+    with _plan_confirm_lock:
+        _plan_confirm_event.clear()
+        _plan_confirm_result = None
+    send_json("plan_awaiting_confirm", {})
+    _plan_confirm_event.wait()
+    with _plan_confirm_lock:
+        if _plan_confirm_result is None:
+            return True
+        return bool(_plan_confirm_result)
+
+
+def set_plan_confirmation(proceed: bool) -> None:
+    """Resume the graph after plan_review_confirm_node."""
+    global _plan_confirm_result
+    with _plan_confirm_lock:
+        _plan_confirm_result = proceed
+    _plan_confirm_event.set()
+
+
+_plan_declined_flag = False
+_plan_declined_user_input = ""
+
+
+def mark_plan_declined(user_input: str) -> None:
+    """Record that the user declined the reviewed plan (runner deletes checkpoint after graph ends)."""
+    global _plan_declined_flag, _plan_declined_user_input
+    _plan_declined_flag = True
+    _plan_declined_user_input = user_input or ""
+
+
+def consume_plan_declined() -> Optional[str]:
+    """If plan was declined, return the original user request and clear; else None."""
+    global _plan_declined_flag, _plan_declined_user_input
+    if not _plan_declined_flag:
+        return None
+    _plan_declined_flag = False
+    text = _plan_declined_user_input
+    _plan_declined_user_input = ""
+    return text
+
+
+def _parse_auto_improve_cycles(value) -> int:
+    """Parse AUTO_IMPROVE_CYCLES as a non-negative integer."""
+    try:
+        return max(int(str(value).strip()), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _get_checkpoint_settings_path():
+    from src.tools.base import WORKSPACE_DIR
+    return WORKSPACE_DIR / "checkpoint_settings.json"
+
+
+def _load_checkpoint_settings() -> dict:
+    settings_path = _get_checkpoint_settings_path()
+    if not settings_path.exists():
+        return {}
+    try:
+        return json.loads(settings_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_checkpoint_settings(settings: dict) -> None:
+    settings_path = _get_checkpoint_settings_path()
+    try:
+        settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _normalize_auto_improve_state(state: Optional[dict]) -> dict:
+    raw = state or {}
+    return {
+        "remaining_cycles": _parse_auto_improve_cycles(raw.get("remaining_cycles", 0)),
+        "current_run_is_automatic": bool(raw.get("current_run_is_automatic", False)),
+    }
+
+
+def _get_auto_improve_state() -> dict:
+    with _auto_improve_state_lock:
+        return dict(_auto_improve_state)
+
+
+def _set_auto_improve_state(
+    state: Optional[dict],
+    *,
+    persist: bool = True,
+    configured_cycles: Optional[int] = None,
+) -> dict:
+    normalized = _normalize_auto_improve_state(state)
+    with _auto_improve_state_lock:
+        _auto_improve_state.update(normalized)
+    if persist:
+        settings = _load_checkpoint_settings()
+        if configured_cycles is not None:
+            settings["AUTO_IMPROVE_CYCLES"] = str(_parse_auto_improve_cycles(configured_cycles))
+        settings[AUTO_IMPROVE_STATE_KEY] = normalized
+        _write_checkpoint_settings(settings)
+    return normalized
+
+
+def _clear_auto_improve_state(*, persist: bool = True) -> None:
+    with _auto_improve_state_lock:
+        _auto_improve_state.update(DEFAULT_AUTO_IMPROVE_STATE)
+    if persist:
+        settings = _load_checkpoint_settings()
+        settings.pop(AUTO_IMPROVE_STATE_KEY, None)
+        _write_checkpoint_settings(settings)
+
+
+def _load_auto_improve_state_from_checkpoint() -> dict:
+    settings = _load_checkpoint_settings()
+    state = settings.get(AUTO_IMPROVE_STATE_KEY)
+    if state is None:
+        normalized = DEFAULT_AUTO_IMPROVE_STATE.copy()
+        with _auto_improve_state_lock:
+            _auto_improve_state.update(normalized)
+        return normalized
+    return _set_auto_improve_state(state, persist=False)
+
+
+def _seed_auto_improve_state_for_new_run() -> dict:
+    configured_cycles = _parse_auto_improve_cycles(os.getenv("AUTO_IMPROVE_CYCLES", "0"))
+    return _set_auto_improve_state(
+        {
+            "remaining_cycles": configured_cycles,
+            "current_run_is_automatic": False,
+        },
+        configured_cycles=configured_cycles,
+    )
+
+
+def _prepare_auto_improve_state_for_prompt(*, restart: bool) -> dict:
+    from src.checkpoint import checkpoint_file_exists, delete_checkpoint
+
+    if restart and checkpoint_file_exists():
+        delete_checkpoint()
+    if restart or not checkpoint_file_exists():
+        return _seed_auto_improve_state_for_new_run()
+    return _load_auto_improve_state_from_checkpoint()
+
+
+def _prepare_next_auto_improve_cycle(run_result) -> Optional[str]:
+    state = _get_auto_improve_state()
+    if not getattr(run_result, "auto_improve_eligible", False):
+        return None
+    remaining_cycles = state.get("remaining_cycles", 0)
+    if remaining_cycles <= 0:
+        return None
+    _set_auto_improve_state(
+        {
+            "remaining_cycles": remaining_cycles - 1,
+            "current_run_is_automatic": True,
+        }
+    )
+    return runner.AUTO_IMPROVE_MESSAGE
+
+
+def _finalize_auto_improve_state_after_run(run_result) -> None:
+    from src.checkpoint import checkpoint_file_exists
+
+    if checkpoint_file_exists():
+        return
+    if getattr(run_result, "status", "") != "success":
+        _clear_auto_improve_state()
+        return
+    _clear_auto_improve_state()
+
 
 if __name__ == "__main__":
     # Alias this module as 'bridge' so that 'import bridge' anywhere in the application
@@ -176,6 +367,35 @@ def send_thought_stream(agent: str, content: str, is_complete: bool = False):
         "is_complete": is_complete
     })
 
+
+def send_context_usage_snapshot(
+    *,
+    input_tokens: Optional[int] = None,
+    agent_name: Optional[str] = None,
+    model_name: Optional[str] = None,
+    reset: bool = False,
+) -> None:
+    """Send the current restricted context-window usage snapshot."""
+    try:
+        from src.agents.utils.bridge import (
+            build_replayed_context_usage_payload,
+            remember_context_usage_payload,
+            reset_context_usage_seed,
+        )
+
+        if reset:
+            reset_context_usage_seed()
+
+        payload = build_replayed_context_usage_payload(
+            input_tokens=input_tokens,
+            agent_name=agent_name,
+            model_name=model_name,
+        )
+        remember_context_usage_payload(payload)
+        send_json("context_usage", payload)
+    except Exception:
+        pass
+
 # --- Environment Setup ---
 from dotenv import load_dotenv
 load_dotenv()
@@ -183,6 +403,7 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
 os.environ["TQDM_DISABLE"] = "1"
 os.environ["TERM"] = "xterm-256color"
 
@@ -191,6 +412,52 @@ from src import runner
 from src.llm_config import initialize_llm, initialize_llm_for_agent
 from src.usage_tracker import generate_report, reset as reset_usage_tracker
 from src.tools.base import LOGS_DIR
+
+# Mutable LLM handles (rebuilt after CLI `update_env` for model-related keys).
+_bridge_llm_state = {"llm": None, "agent_llms": None}
+_graph_cache_stale = False
+
+# Env keys that require new LangChain clients and a fresh compiled graph.
+_LLM_ENV_KEYS = frozenset({
+    "MODEL",
+    "MODEL_API_KEY",
+    "OPENAI_API_BASE",
+    "API_BASE_URL",
+    "STRATEGIST_MODEL",
+    "STRATEGIST_MODEL_API_KEY",
+    "STRATEGIST_API_BASE_URL",
+    "OPERATOR_MODEL",
+    "OPERATOR_MODEL_API_KEY",
+    "OPERATOR_API_BASE_URL",
+    "EVALUATOR_MODEL",
+    "EVALUATOR_MODEL_API_KEY",
+    "EVALUATOR_API_BASE_URL",
+})
+
+
+def _refresh_llm_clients_from_env(*, mark_graph_stale: bool = False) -> dict:
+    """Rebuild primary and per-agent LLMs from ``os.environ``."""
+    global _graph_cache_stale
+    llm, model_name = initialize_llm()
+    strategist_llm, strategist_model = initialize_llm_for_agent("strategist", llm, model_name)
+    operator_llm, operator_model = initialize_llm_for_agent("operator", llm, model_name)
+    evaluator_llm, evaluator_model = initialize_llm_for_agent("evaluator", llm, model_name)
+    _bridge_llm_state["llm"] = llm
+    _bridge_llm_state["agent_llms"] = {
+        "strategist": strategist_llm,
+        "operator": operator_llm,
+        "evaluator": evaluator_llm,
+    }
+    model_info = {"model": model_name}
+    if strategist_model != model_name:
+        model_info["strategist_model"] = strategist_model
+    if operator_model != model_name:
+        model_info["operator_model"] = operator_model
+    if evaluator_model != model_name:
+        model_info["evaluator_model"] = evaluator_model
+    if mark_graph_stale:
+        _graph_cache_stale = True
+    return model_info
 
 
 class BridgeConsole:
@@ -261,36 +528,111 @@ def _read_previous_input_from_conversation():
     return ""
 
 
+def _emit_final_summary_if_needed() -> None:
+    """Send the final summary for active checkpoint runs."""
+    try:
+        from src.tools.base import WORKSPACE_DIR
+        from src.checkpoint import checkpoint_file_exists
+
+        has_checkpoint = checkpoint_file_exists()
+        if has_checkpoint:
+            summary_path = WORKSPACE_DIR / "final_results" / "summary.md"
+            if summary_path.exists():
+                summary_content = summary_path.read_text(encoding="utf-8")
+                if summary_content.strip():
+                    send_json("final_summary", {"content": summary_content})
+    except Exception:
+        pass
+
+
+def _clear_auto_improve_state_if_terminal() -> None:
+    """Drop runtime auto-improve state when the run cannot resume."""
+    try:
+        from src.checkpoint import checkpoint_file_exists
+
+        if not checkpoint_file_exists():
+            _clear_auto_improve_state()
+    except Exception:
+        _clear_auto_improve_state()
+
+
+def _done_status_for_result(run_result, run_error: Optional[Exception]) -> str:
+    if run_error:
+        return "error"
+    if getattr(run_result, "status", "") == "fail":
+        return "gave_up"
+    return "completed"
+
+
+def _execute_prompt_sequence(prompt: str, restart: bool) -> None:
+    """Execute one user-initiated prompt plus any automatic follow-up cycles."""
+    global _graph_cache_stale
+
+    send_system_status("running")
+    run_error = None
+    final_result = None
+    current_prompt = prompt
+    current_restart = restart
+
+    try:
+        _prepare_auto_improve_state_for_prompt(restart=restart)
+
+        while True:
+            if _graph_cache_stale:
+                runner.invalidate_graph_cache()
+                _graph_cache_stale = False
+
+            final_result = runner.process_prompt(
+                current_prompt,
+                _bridge_llm_state["llm"],
+                if_restart=current_restart,
+                agent_llms=_bridge_llm_state["agent_llms"],
+            )
+
+            next_prompt = _prepare_next_auto_improve_cycle(final_result)
+            if next_prompt is None:
+                _finalize_auto_improve_state_after_run(final_result)
+                break
+
+            current_prompt = next_prompt
+            current_restart = False
+
+    except KeyboardInterrupt:
+        send_json("done", {"status": "interrupted"})
+        send_system_status("completed")
+        return
+    except RuntimeError as e:
+        if "cannot schedule new futures" in str(e):
+            send_json("done", {"status": "interrupted"})
+            send_system_status("completed")
+            return
+        raise
+    except Exception as e:
+        run_error = e
+        _clear_auto_improve_state_if_terminal()
+        tb = traceback.format_exc()
+        send_json("error", {"message": str(e), "traceback": tb})
+
+    send_system_status("completed")
+    _emit_final_summary_if_needed()
+    send_json("done", {"status": _done_status_for_result(final_result, run_error)})
+
+    if _HAS_DEBUG_LOGGER:
+        log_custom("BRIDGE", "Prompt command completed")
+
+
 def main():
     send_json("ready", {})
     
     try:
-        llm, model_name = initialize_llm()
-        
-        # Initialize per-agent LLM overrides (falls back to primary if not configured)
-        strategist_llm, strategist_model = initialize_llm_for_agent("strategist", llm, model_name)
-        operator_llm, operator_model = initialize_llm_for_agent("operator", llm, model_name)
-        evaluator_llm, evaluator_model = initialize_llm_for_agent("evaluator", llm, model_name)
-        
-        agent_llms = {
-            "strategist": strategist_llm,
-            "operator": operator_llm,
-            "evaluator": evaluator_llm,
-        }
-        
-        # Report model info including any per-agent overrides
-        model_info = {"model": model_name}
-        if strategist_model != model_name:
-            model_info["strategist_model"] = strategist_model
-        if operator_model != model_name:
-            model_info["operator_model"] = operator_model
-        if evaluator_model != model_name:
-            model_info["evaluator_model"] = evaluator_model
-        
+        model_info = _refresh_llm_clients_from_env()
         send_json("init", model_info)
     except Exception as e:
-        send_json("error", {"message": str(e)})
-        return
+        # Don't crash on startup if just missing environment variables.
+        # The CLI handles displaying Settings if MODEL/MODEL_API_KEY are missing on prompt.
+        send_json("init", {"model": None, "warning": str(e)})
+
+    send_context_usage_snapshot()
     
     # Initialize RAG system
     enable_rag = os.getenv("ENABLE_RAG", "true").lower() in ("true", "1", "yes", "on")
@@ -306,7 +648,7 @@ def main():
             
             from src.rag import initialize_embeddings, initialize_rag
             from src.tools.base import WORKSPACE_DIR
-
+            
             # Pass status_tracker to initialization functions
             # Note: The function signature updates for initialize_embeddings and initialize_rag will be done in subsequent steps
             initialize_embeddings(workspace_dir=WORKSPACE_DIR, status_tracker=status_tracker)
@@ -331,70 +673,20 @@ def main():
                 prompt = data.get("content", "")
                 restart = data.get("restart", False)
                 
+                if _bridge_llm_state.get("llm") is None:
+                    send_json("error", {"message": "Language model is not properly initialized. Please check your CLI Settings (e.g., verify your API_BASE_URL if using a custom model, or ensure your MODEL_API_KEY is valid).", "traceback": ""})
+                    continue
+                
                 if _HAS_DEBUG_LOGGER:
                     log_custom("BRIDGE", "Prompt command received", {
                         "prompt_length": len(prompt) if prompt else 0,
                         "restart": restart
                     })
+
+                send_context_usage_snapshot(reset=True)
                 
                 def run_prompt_in_thread():
-                    send_system_status("running")
-                    run_error = None
-                    try:
-                        runner.process_prompt(prompt, llm, if_restart=restart, agent_llms=agent_llms)
-                    except KeyboardInterrupt:
-                         # Handled interruption
-                         send_json("done", {"status": "interrupted"})
-                         send_system_status("completed")
-                         return
-                    except RuntimeError as e:
-                        if "cannot schedule new futures" in str(e):
-                             # This happens when interpreter is shutting down, treat as interrupt
-                             send_json("done", {"status": "interrupted"})
-                             send_system_status("completed")
-                             return
-                        # Re-raise other RuntimeErrors
-                        raise e
-                    except Exception as e:
-                        run_error = e
-                        tb = traceback.format_exc()
-                        send_json("error", {"message": str(e), "traceback": tb})
-                    
-                    send_system_status("completed")
-                    
-                    # usage_report.md generation moved to runner.py to ensure it is archived
-                    
-                    # Read and send final summary if it exists
-                    # Only send if checkpoint exists (active run), otherwise completed_run_info will handle it
-                    try:
-                        from src.tools.base import WORKSPACE_DIR
-                        from src.checkpoint import checkpoint_file_exists
-                        from src.results import final_results_exists_and_not_empty
-                        
-                        # Only send final_summary if checkpoint exists (active run completion)
-                        # If no checkpoint but final_results exists, completed_run_info will send it instead
-                        has_checkpoint = checkpoint_file_exists()
-                        if has_checkpoint:
-                            summary_path = WORKSPACE_DIR / "final_results" / "summary.md"
-                            if summary_path.exists():
-                                summary_content = summary_path.read_text(encoding='utf-8')
-                                if summary_content.strip():
-                                    send_json("final_summary", {"content": summary_content})
-                        # If no checkpoint but final_results exists, let completed_run_info handle it
-                        # (which is sent when CLI calls check_checkpoint)
-                    except Exception:
-                        pass
-                    
-                    # Send appropriate done status based on whether run succeeded or errored
-                    # "completed" = successful run, "error" = exception occurred
-                    # Both should trigger EXIT_ON_COMPLETION, but "interrupted" should not
-                    if run_error:
-                        send_json("done", {"status": "error"})
-                    else:
-                        send_json("done", {"status": "completed"})
-                    
-                    if _HAS_DEBUG_LOGGER:
-                        log_custom("BRIDGE", "Prompt command completed")
+                    _execute_prompt_sequence(prompt, restart)
 
                 # Start execution in a separate thread so main loop remains responsive to interrupts
                 exec_thread = threading.Thread(target=run_prompt_in_thread)
@@ -428,18 +720,20 @@ def main():
                     previous_input = _read_previous_input_from_conversation()
                     
                     # Extract history from checkpoint state
-                    try:
-                        graph_builder = build_graph(llm)
-                        graph = create_checkpoint_infrastructure(graph_builder)
-                        config = get_thread_config()
-                        state = graph.get_state(config)
-                        
-                        if state and state.values:
-                            # Use is_replanning from state (most reliable)
-                            is_replan = state.values.get('is_replanning', False)
-                            history = extract_checkpoint_history(state.values, state.values.get('messages', []), is_replan=is_replan)
-                    except Exception:
-                        traceback.print_exc()
+                    # Skip if LLM is not yet configured (MODEL/MODEL_API_KEY unset)
+                    if _bridge_llm_state["llm"] is not None:
+                        try:
+                            graph_builder = build_graph(_bridge_llm_state["llm"])
+                            graph = create_checkpoint_infrastructure(graph_builder)
+                            config = get_thread_config()
+                            state = graph.get_state(config)
+                            
+                            if state and state.values:
+                                # Use is_replanning from state (most reliable)
+                                is_replan = state.values.get('is_replanning', False)
+                                history = extract_checkpoint_history(state.values, state.values.get('messages', []), is_replan=is_replan)
+                        except Exception:
+                            traceback.print_exc()
                 
                 send_json("checkpoint_info", {
                     "exists": exists,
@@ -499,6 +793,7 @@ def main():
                 from src.checkpoint import delete_checkpoint
                 
                 try:
+                    _clear_auto_improve_state(persist=False)
                     cleanup_workspace_for_fresh_start()
                     delete_checkpoint()
                     send_json("fresh_start_complete", {"success": True})
@@ -512,6 +807,7 @@ def main():
                 from src.tools.base import WORKSPACE_DIR
                 
                 try:
+                    _clear_auto_improve_state(persist=False)
                     cleanup_workspace_keep_archive()
                     delete_checkpoint()
                     
@@ -558,11 +854,16 @@ def main():
                 from src.results import setup_final_results_folder
                 
                 try:
+                    _clear_auto_improve_state(persist=False)
                     setup_final_results_folder()
                     send_json("archive_complete", {"success": True})
                 except Exception as e:
                     send_json("archive_complete", {"success": False, "error": str(e)})
                 
+            elif command == "plan_confirm":
+                proceed = data.get("proceed", True)
+                set_plan_confirmation(bool(proceed))
+
             elif command == "interrupt":
                 interrupt_event.set()
                 
@@ -605,6 +906,23 @@ def main():
                         log_custom("BRIDGE", f"Failed to save stats on interrupt: {e}")
                 
                 send_json("interrupt_acknowledged", {"success": True})
+                
+            elif command == "update_env":
+                # Update environment variables in the Python process
+                updates = data.get("updates", {})
+                for key, val in updates.items():
+                    if val is None or val == '':
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = str(val)
+                send_json("env_updated", {"success": True, "keys": list(updates.keys())})
+                if updates and any(k in _LLM_ENV_KEYS for k in updates):
+                    try:
+                        model_info = _refresh_llm_clients_from_env(mark_graph_stale=True)
+                        send_json("init", model_info)
+                    except Exception as e:
+                        send_json("init", {"model": None, "warning": f"Model client refresh failed: {e}"})
+                send_context_usage_snapshot()
                 
             elif command == "exit":
                 break

@@ -60,31 +60,14 @@ export function ToolRenderer({ content, agentName, isError, id, leftMargin, term
     const bannerWidth = Math.max(20, terminalWidth - 14);
     const parentOffset = agentName === 'evaluator' ? OFFSET_SUMMARY : OFFSET_PLAN;
     const toolMaxWidth = Math.max(10, bannerWidth - parentOffset - 4 - 2);
-    const isPanelTool = content.toLowerCase().includes('wrote');
-    const isExecuteTool = content.toLowerCase().includes('executed');
     
     let toolColor: string;
     let icon: string;
     let displayContent = content;
     
-    // Plan/replan milestone statuses should use the triangle indicator.
-    const isReviewedPlan =
-        content === 'Created Initial Plan' ||
-        content === 'Reviewed Plan' ||
-        content === 'Reviewed Replan' ||
-        content === 'Created Replan' ||
-        content === 'Created Initial Replan';
-    
-    if (isError && isExecuteTool) {
-        toolColor = 'red';
-        icon = '▲';
-        displayContent = 'Error ' + content;
-    } else if (isError) {
+    if (isError) {
         toolColor = 'red';
         icon = '✗';
-    } else if (isPanelTool || isExecuteTool || isReviewedPlan) {
-        toolColor = 'cyan';
-        icon = '▲';
     } else {
         toolColor = 'green';
         icon = '✓';
@@ -142,7 +125,7 @@ export function AgentStatusRenderer({ content, id, leftMargin }: AgentStatusRend
     return (
         <Box key={id} marginLeft={leftMargin + INDENT_AGENT} paddingX={1}>
             <Text>{chalk.ansi256(253)('L ')}</Text>
-            <Text color="cyan" bold>▲ {content.replace('Creating', 'Created')}</Text>
+            <Text color="green" bold>✓ {content.replace('Creating', 'Created')}</Text>
         </Box>
     );
 }
@@ -154,8 +137,8 @@ export function EvaluatorStatusRenderer({ content, id, leftMargin }: AgentStatus
     const isRetry = content.includes('Retry');
     const isFinalFailure = content.includes('Task Skipped');
     const isFailure = content.includes('Failed');
-    const statusColor = isRetry ? 'yellow' : (isFinalFailure || isFailure ? 'red' : 'cyan');
-    const icon = isRetry ? '⟳' : (isFailure ? '✗' : '▲');
+    const statusColor = isRetry ? 'yellow' : (isFinalFailure || isFailure ? 'red' : 'green');
+    const icon = isRetry ? '⟳' : (isFailure ? '✗' : '✓');
     
     return (
         <Box key={id} marginLeft={leftMargin + INDENT_EVALUATOR} paddingX={1}>
@@ -212,18 +195,16 @@ export function ModelTextRenderer({ content, agentName, id, leftMargin, terminal
 // ========== BANNER RENDERER ==========
 
 interface BannerRendererProps {
-    modelName: string;
-    pmgConfigured: boolean;
     id: string;
 }
 
 /**
  * Banner renderer (delegates to Banner component)
  */
-export function BannerRenderer({ modelName, pmgConfigured, id }: BannerRendererProps): React.ReactElement {
+export function BannerRenderer({ id }: BannerRendererProps): React.ReactElement {
     return (
         <Box key={id} flexDirection="column">
-            <Banner modelName={modelName} pmgConfigured={pmgConfigured} />
+            <Banner />
         </Box>
     );
 }

@@ -1,0 +1,11 @@
+<nav class="site-nav" aria-label="Documentation navigation">
+  {% for item in site.data.navigation %}
+    {% assign is_active = false %}
+    {% if page.url == item.url %}
+      {% assign is_active = true %}
+    {% endif %}
+    <a class="nav-link{% if is_active %} is-active{% endif %}" href="{{ item.url | relative_url }}">
+      <span>{{ item.title }}</span>
+    </a>
+  {% endfor %}
+</nav>

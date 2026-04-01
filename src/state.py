@@ -3,7 +3,7 @@ State definition for the strategist-operator architecture.
 """
 
 from typing import Annotated
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, NotRequired
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
 
@@ -21,6 +21,7 @@ class State(TypedDict):
     initial_plan_content: str  # Raw LLM response from initial planning (for checkpoint between phases)
     is_replanning: bool  # Whether in replanning mode (skip review phase)
     evaluation_messages: list[BaseMessage]  # Messages accumulated during evaluation (for checkpoint)
+    plan_review_proceed: NotRequired[bool]  # Set by plan_review_confirm gate for routing
 
 
 def create_initial_state(user_input: str) -> State:

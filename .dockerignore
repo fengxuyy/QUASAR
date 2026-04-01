@@ -11,6 +11,8 @@ build/
 
 # Node.js
 **/node_modules/
+docs/
+quasar_node/
 
 # Virtual environments
 .venv/

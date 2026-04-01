@@ -14,10 +14,11 @@ const Config: React.FC<ConfigProps> = ({ args }) => {
     const subCommand = args[0] || 'show';
 
     const configData = {
-        "MODEL": process.env.MODEL || "gemini-3-pro-preview",
+        "MODEL": process.env.MODEL || "gemini-3.1-pro-preview",
         "MODEL_API_KEY": process.env.MODEL_API_KEY ? "✓" : null,
-        "ACCURACY": process.env.ACCURACY || "eco",
+        "ACCURACY": process.env.ACCURACY || "standard",
         "GRANULARITY": process.env.GRANULARITY || "medium",
+        "CONTEXT_THRESHOLD": process.env.CONTEXT_THRESHOLD || "medium",
         "ENABLE_RAG": process.env.ENABLE_RAG || "true",
         "IF_RESTART": process.env.IF_RESTART || "false",
         "PMG_MAPI_KEY": process.env.PMG_MAPI_KEY ? "✓" : null,

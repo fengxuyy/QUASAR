@@ -16,11 +16,20 @@ def get_usable_physical_cores() -> int:
     
     Handles Slurm, Docker, taskset restrictions on Linux.
     Falls back to psutil for Windows/Mac/unrestricted Linux.
+    Allows testing override via NUM_CORES environment variable.
     
     Returns:
         Number of usable physical cores, or None if unavailable.
     """
-
+    # Allow override via environment variable
+    num_cores_override = os.environ.get('NUM_CORES')
+    if num_cores_override:
+        try:
+            cores = int(num_cores_override)
+            if cores > 0:
+                return cores
+        except ValueError:
+            pass  # Fall back to auto-detection if invalid
 
     system = platform.system()
     
@@ -155,12 +164,15 @@ def get_resource_usage(pid: int = None) -> str:
     
     Collects:
     - Process-specific CPU% and RSS memory (when pid is provided)
-    - System-wide CPU and RAM (always)
+    - System-wide RAM (always)
+    - System-wide CPU (only when pid is not provided)
     - GPU utilization and VRAM (if CUDA or ROCm GPUs are available)
     
     Returns a formatted string like:
-        Process CPU: 780% (across 8 processes) | Process RAM: 12.4 GB
-        System CPU: 87% | System RAM: 14.2/31.9 GB (45%)
+        Execution Process Tree (8 processes):
+          ...
+          Total: CPU 780% | RAM 12.4 GB
+        System RAM: 14.2/31.9 GB (45%)
         GPU 0: 92% util | VRAM: 35.1/40.0 GB (88%)
     """
     lines = []
@@ -218,17 +230,23 @@ def get_resource_usage(pid: int = None) -> str:
         except Exception:
             lines.append("Process: N/A")
     
-    # System-wide CPU and RAM (always included for context)
+    # Keep memory context for OOM debugging, but only show host-wide CPU
+    # when we're not already reporting a specific execution process tree.
     try:
-        cpu_percent = psutil.cpu_percent(interval=0.5)
         mem = psutil.virtual_memory()
         mem_used_gb = mem.used / (1024 ** 3)
         mem_total_gb = mem.total / (1024 ** 3)
-        lines.append(
-            f"System CPU: {cpu_percent:.0f}% | System RAM: {mem_used_gb:.1f}/{mem_total_gb:.1f} GB ({mem.percent:.0f}%)"
-        )
+        if pid is None:
+            cpu_percent = psutil.cpu_percent(interval=0.5)
+            lines.append(
+                f"System CPU: {cpu_percent:.0f}% | System RAM: {mem_used_gb:.1f}/{mem_total_gb:.1f} GB ({mem.percent:.0f}%)"
+            )
+        else:
+            lines.append(
+                f"System RAM: {mem_used_gb:.1f}/{mem_total_gb:.1f} GB ({mem.percent:.0f}%)"
+            )
     except Exception:
-        lines.append("System CPU: N/A | System RAM: N/A")
+        lines.append("System CPU: N/A | System RAM: N/A" if pid is None else "System RAM: N/A")
     
     # GPU utilization & VRAM — try CUDA (nvidia-smi) first, then ROCm
     gpu_found = False

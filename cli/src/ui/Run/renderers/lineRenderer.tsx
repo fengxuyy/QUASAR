@@ -83,6 +83,7 @@ export interface ProcessedLine {
     segments: TextSegment[];
     isHeader: boolean;
     isTask: boolean;
+    isTable?: boolean;
 }
 
 /**
@@ -96,7 +97,17 @@ export function processSummaryLine(
 ): ProcessedLine[] {
     const formatted = formatLine(line, stripTaskPrefix, inCodeBlock);
     
-    if (formatted.plainText.length <= contentWidth) {
+    if (formatted.isHorizontalRule) {
+        const hrText = '─'.repeat(contentWidth);
+        return [{
+            plainText: hrText,
+            isHeader: false,
+            isTask: false,
+            segments: [{ text: hrText, style: 'normal' }]
+        }];
+    }
+    
+    if (formatted.plainText.length <= contentWidth || formatted.isTable) {
         return [formatted];
     }
     

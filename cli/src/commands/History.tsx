@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { cleanTaskDescription } from '../utils/stateHelpers.js';
+import { buildCommittedTimelineItems } from '../handlers/checkpointHandler.js';
 import StaticItemRenderer from '../ui/Run/StaticItemRenderer.js';
 import type { CommittedItem } from '../hooks/types.js';
 
@@ -20,6 +21,7 @@ interface HistoryData {
     operator_items_by_task?: Record<string, any[]>;
     evaluator_items_by_task?: Record<string, any[]>;
     step_results?: Record<string, string>;
+    strategist_items?: any[];
 }
 
 const WORKSPACE_DIR = process.env.WORKSPACE_DIR || '/workspace';
@@ -221,20 +223,17 @@ const History: React.FC<HistoryProps> = ({ args: _args }) => {
         ...(history.evaluator_items_by_task?.[taskKey] || [])
     ];
     const taskItemsRaw = orderedItems.length > 0 ? orderedItems : fallbackItems;
-    const taskItems = taskItemsRaw.filter(item =>
-        ['tool', 'code-snippet', 'code-result', 'log', 'model-text'].includes(item?.type)
-    );
     const evalSummary = history.step_results?.[taskKey];
     const rawTask = history.plan?.[taskNumToShow - 1] || '';
     const taskDescription = rawTask ? cleanTaskDescription(rawTask) : '';
-    let evaluatorHeaderShown = false;
 
     const renderItems: CommittedItem[] = [];
     renderItems.push({
         id: `history-operator-header-${taskNumToShow}`,
         type: 'agent-header',
         content: 'operator',
-        agentName: 'operator'
+        agentName: 'operator',
+        taskNum: taskNumToShow
     });
 
     if (taskDescription) {
@@ -242,57 +241,26 @@ const History: React.FC<HistoryProps> = ({ args: _args }) => {
             id: `history-task-panel-${taskNumToShow}`,
             type: 'active-task-panel',
             content: { description: taskDescription, taskNum: taskNumToShow },
-            agentName: 'operator'
+            agentName: 'operator',
+            taskNum: taskNumToShow
         });
     }
 
-    for (let idx = 0; idx < taskItems.length; idx++) {
-        const item = taskItems[idx];
-        const isEvaluator = item?.agent === 'evaluator';
-
-        if (isEvaluator && !evaluatorHeaderShown) {
-            evaluatorHeaderShown = true;
-            renderItems.push({
-                id: `history-evaluator-header-${taskNumToShow}`,
-                type: 'evaluator-header',
-                content: 'evaluator',
-                agentName: 'evaluator'
-            });
-        }
-
-        const itemType = item?.type;
-        if (itemType === 'tool' || itemType === 'log' || itemType === 'model-text') {
-            renderItems.push({
-                id: `history-${itemType}-${taskNumToShow}-${idx}`,
-                type: itemType,
-                content: item?.content ?? '',
-                agentName: isEvaluator ? 'evaluator' : 'operator',
-                isError: item?.isError === true
-            });
-        } else if (itemType === 'code-snippet') {
-            renderItems.push({
-                id: `history-code-snippet-${taskNumToShow}-${idx}`,
-                type: 'code-snippet',
-                content: item?.content,
-                agentName: isEvaluator ? 'evaluator' : 'operator'
-            });
-        } else if (itemType === 'code-result') {
-            renderItems.push({
-                id: `history-code-result-${taskNumToShow}-${idx}`,
-                type: 'code-result',
-                content: item?.content,
-                agentName: isEvaluator ? 'evaluator' : 'operator',
-                isError: item?.isError === true
-            });
-        }
-    }
+    renderItems.push(
+        ...buildCommittedTimelineItems(taskItemsRaw, {
+            idPrefix: `history-task${taskNumToShow}`,
+            defaultAgentName: 'operator',
+            taskNum: taskNumToShow
+        })
+    );
 
     if (evalSummary) {
         renderItems.push({
             id: `history-summary-${taskNumToShow}`,
             type: 'evaluation-summary',
             content: String(evalSummary),
-            agentName: 'evaluator'
+            agentName: 'evaluator',
+            taskNum: taskNumToShow
         });
     }
 

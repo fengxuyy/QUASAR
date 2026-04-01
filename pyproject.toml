@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quasar-core"
-version = "0.1.0"
-description = "QUASAR: Quantum Universal Autonomous System for Atomistic Research"
+version = "0.2.0"
+description = "QUASAR: Universal Autonomous System for Atomistic Research"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "GPL-3.0-only" }
@@ -13,17 +13,23 @@ authors = [
   { name = "Fengxu Yang" },
   { name = "Jack Evans" },
 ]
-keywords = ["computational chemistry", "autonomous agent", "DFT", "molecular dynamics", "materials science"]
+keywords = [
+  "computational chemistry",
+  "autonomous agent",
+  "materials science",
+  "molecular dynamics",
+  "quantum chemistry",
+]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
-  "Topic :: Scientific/Engineering :: Chemistry",
-  "Topic :: Scientific/Engineering :: Physics",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Topic :: Scientific/Engineering :: Physics",
 ]
 dependencies = [
   "langchain>=1.0.2",
@@ -62,26 +68,20 @@ dependencies = [
 quasar = "quasar_launcher:main"
 
 [project.urls]
-Homepage = "https://github.com/fengxuyang/QUASAR"
-"Bug Tracker" = "https://github.com/fengxuyang/QUASAR/issues"
+Homepage = "https://github.com/fengxuyy/QUASAR"
+Documentation = "https://fengxuyy.github.io/QUASAR-CHEM/"
+"Bug Tracker" = "https://github.com/fengxuyy/QUASAR/issues"
 Paper = "https://arxiv.org/abs/2602.00185"
 
-# ---------------------------------------------------------------------------
-# Wheel: include the Python backend, bridge scripts, launcher, and the
-# pre-built Node frontend bundle (quasar_node/ produced by build_frontend.sh)
-# ---------------------------------------------------------------------------
 [tool.hatch.build.targets.wheel]
 packages = ["src"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"bridge.py"         = "bridge.py"
+"bridge.py" = "bridge.py"
 "bridge_history.py" = "bridge_history.py"
 "quasar_launcher.py" = "quasar_launcher.py"
-"quasar_node"       = "quasar_node"
+"quasar_node" = "quasar_node"
 
-# ---------------------------------------------------------------------------
-# SDist: include everything needed to rebuild from source (Node src + scripts)
-# ---------------------------------------------------------------------------
 [tool.hatch.build.targets.sdist]
 include = [
   "src",
@@ -93,6 +93,7 @@ include = [
   "scripts",
   "requirements.txt",
   "README.md",
+  "LICENSE",
   "pyproject.toml",
 ]
 

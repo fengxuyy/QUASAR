@@ -1,0 +1,15 @@
+title: QUASAR-CHEM
+description: Documentation for QUASAR-CHEM, the Universal Autonomous System for Atomistic Research.
+url: https://fengxuyy.github.io
+baseurl: /QUASAR-CHEM
+markdown: kramdown
+highlighter: rouge
+permalink: pretty
+kramdown:
+  input: GFM
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+repository_url: https://github.com/fengxuyy/QUASAR-CHEM

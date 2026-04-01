@@ -29,6 +29,7 @@ from ..tools import (
     has_running_process,
     continue_execution,
     interrupt_execution,
+    execute_temporary_python,
     search_web,
     fetch_web_page,
     complete_task,
@@ -67,8 +68,10 @@ from .utils import (
     detect_repeated_tool_calls,
     MAX_REPEATED_TOOL_CALLS,
     stream_with_token_tracking,
+    format_tool_status,
 )
 from ..tools.base import get_all_files
+from ..context_summarizer import maybe_summarize_messages
 
 # Tool execution mapping
 TOOL_MAP = {
@@ -92,6 +95,85 @@ TOOL_MAP = {
 OTHER_TOOL_TIMEOUT = 600
 LLM_RESPONSE_TIMEOUT = 600
 MAX_RETRIES = 2
+
+
+def _send_checkin_tool_status(
+    tool_name: str,
+    tool_args: dict,
+    *,
+    is_complete: bool = False,
+    tool_result: str | None = None,
+    elapsed_display: str | None = None,
+) -> None:
+    """Emit transient operator check-in tool events using shared status formatting."""
+    status_text, is_error = format_tool_status(
+        tool_name,
+        tool_args,
+        is_complete=is_complete,
+        tool_result=tool_result,
+    )
+
+    if is_complete:
+        send_agent_event("operator", "step_complete", status_text, is_error=is_error)
+        if elapsed_display:
+            send_agent_event("operator", "update", f"Awaiting decision after {elapsed_display}")
+    else:
+        send_agent_event("operator", "update", status_text, is_error=is_error)
+
+
+def _extract_checkin_summary_text(
+    provided_summary: str,
+    decision_response,
+    checkin_messages: list,
+    *,
+    default_summary: str,
+) -> str:
+    """Return a compact human-readable summary for a completed check-in."""
+    summary = (provided_summary or "").strip()
+    if summary:
+        return truncate_content(summary, 2000, "\n... [summary truncated]\n").strip()
+
+    decision_text = _extract_text(getattr(decision_response, "content", ""))
+    if decision_text.strip():
+        return truncate_content(decision_text.strip(), 2000, "\n... [summary truncated]\n").strip()
+
+    recent_findings = []
+    for msg in reversed(checkin_messages):
+        if not isinstance(msg, ToolMessage):
+            continue
+        content = getattr(msg, "content", "")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        recent_findings.append(content.strip())
+        if len(recent_findings) >= 3:
+            break
+
+    if recent_findings:
+        joined = "\n\n".join(reversed(recent_findings))
+        return truncate_content(joined, 2000, "\n... [summary truncated]\n").strip()
+
+    return default_summary
+
+
+def _build_checkin_history_message(
+    script_name: str,
+    elapsed_display: str,
+    *,
+    decision: str,
+    summary: str,
+    reason: str = "",
+) -> HumanMessage:
+    """Build the single compact operator-history message for a completed check-in."""
+    lines = [
+        "[EXECUTION CHECK-IN SUMMARY]",
+        f"Script: `{script_name}`",
+        f"Elapsed: {elapsed_display}",
+        f"Decision: {decision}",
+    ]
+    if reason:
+        lines.append(f"Reason: {reason}")
+    lines.append(f"Summary: {summary.strip() if summary else 'No summary provided.'}")
+    return HumanMessage(content="\n".join(lines))
 
 
 def operator_node(state: State, llm_with_tools, all_tools) -> State:
@@ -165,6 +247,11 @@ def operator_node(state: State, llm_with_tools, all_tools) -> State:
         
         pmg_mapi_available = "; `Materials Project API` (env: PMG_MAPI_KEY); " if os.getenv("PMG_MAPI_KEY") else "."
         rag_enabled = is_rag_enabled()
+
+        # Read accuracy mode from environment (same source as strategist)
+        _accuracy_raw = os.getenv("ACCURACY", "").lower()
+        _valid_accuracy_modes = {"eco", "standard", "pro"}
+        accuracy_mode = _accuracy_raw if _accuracy_raw in _valid_accuracy_modes else "standard"
         
         if rag_enabled:
             level_2_section = """ELSE
@@ -248,19 +335,32 @@ Apply parallelization intelligently based on the software and your specific calc
 
 **Job Concurrency:**
     * **RASPA3:**
-        * **Core Configure:** Single-core executable. To utilize multiple cores, write Python scripts using `multiprocessing` or `concurrent.futures` to run distinct simulations (e.g., different pressure points) simultaneously
-        * **Execution:** Run via `raspa3` command in python for the folder containing the required input files.
+        * **Core Configure:** Single-core executable and it does not support MPI or OpenMP. To utilize multiple cores, write Python scripts using `multiprocessing` or `concurrent.futures` to run distinct simulations (e.g., different pressure points) simultaneously
+        * **Execution:** Run the raspa3 command in the folder containing the necessary input files to execute the simulation. For examples of these input files, see ./docs/RASPA3/examples/
         
 IMPORTANT: Always use `get_hardware_info` function to check available cores before running simulations. Avoid hard-coding core counts; ensure the parallelization strategy scales dynamically with the detected hardware. Do NOT attempt to detect hardware using Python code (e.g., multiprocessing.cpu_count(), os.cpu_count(), psutil) - these return incorrect values in containerized/Slurm environments. ONLY use the `get_hardware_info` tool.
 
-### 4. Execution Rules (CRITICAL)
+### 4. Accuracy Mode
+The **assigned accuracy mode** controls how aggressively you set numerical parameters within the method the Strategist has already chosen. **Do not change the chosen method** (e.g. functional, force-field, engine) — only calibrate the numerical settings accordingly. This applies across all simulation types (DFT, MD, GCMC, MLFF, etc.): sampling density, timestep, cutoffs, convergence thresholds, equilibration length, number of cycles, etc.
+
+* **pro (High Accuracy — Publication-Grade Precision):** Use rigorous numerical settings — fine sampling, high cutoffs, tight convergence criteria, long equilibration and production runs. Necessary parameter should meet peer-reviewed publication standards.
+
+* **standard (Standard Accuracy — Research-Grade Reliability):** Use moderate numerical settings — intermediate sampling density, moderate cutoffs, and standard convergence criteria. Results should be reliably quantitative and suitable for research and internal reporting.
+
+* **eco (Balanced Speed/Accuracy — Efficient Discovery):** Use coarse numerical settings (within physically reasonable limits) to reduce cost. Prioritize speed while retaining qualitative correctness and meaningful trends.
+
+**Assigned Accuracy Mode:** {accuracy_mode}
+
+> **Override rule:** If the current task explicitly specifies a parameter value (e.g. a particular k-point grid, timestep, cutoff, or number of steps), always honour that value — the accuracy mode only governs parameters the task leaves unspecified.
+
+### 5. Execution Rules
 1. **Simulation Verification:** Before running the production calculation, you must do the following:
     * **Step 1: Input Parameters:** Verify that the simulation parameters are appropriate for achieving high-quality results and reasonable computational speed.
-    * **Step 2: Execute Script:** Run the script using `execute_python` function.
+    * **Step 2: Execute Script:** Run the script using `execute_python` function, always supplying a positive `timeout` value for both trial and production runs.
     * **Step 3: Analyze Output:** Inspect the output to confirm error-free execution, correct physics, and reasonable computational performance. If errors, bottlenecks, or poor scaling are observed, adjust runtime parameters and re-run.
 
-2. **Restart Calculations:** You should and must enable the restart mode for all calculations to ensure recovery from long or interrupted jobs
-    - Quantum ESPRESSO: Set `restart_mode = 'restart'` in the input file even for the first run.
+2. **Restart Calculations:** If a simulation is interrupted or fails and valid partial data exists, resume execution from the last checkpoint rather than starting from scratch:
+    - Quantum ESPRESSO: Enable restart functionality in the input file. For example, set `restart_mode = 'restart'` for `pw.x` or `recover = .true.` for `ph.x` to resume from previously saved data.
     - LAMMPS: enable periodic restart writing using the command `restart <Nsteps> <restart_filename>` in the input file.
     - RASPA3: restart files are written automatically.
 
@@ -269,14 +369,17 @@ IMPORTANT: Always use `get_hardware_info` function to check available cores befo
     - Once the designated task is finished, you MUST call the `complete_task` tool to officially mark it as complete.
     - Do NOT use `pymatgen` or `ase` wrappers such as `ase.calculators.espresso` for running qe or lammps calculations. You must generate input files in their native format.
     - Concurrent Jobs x MPI_ranks x OMP_NUM_THREADS <= Total Physical cores.
-    - Remove outdated or failed scripts, as well as any temporary files (e.g., DFT restart files) after the task is completed.
+    - Upon task completion, remove outdated or failed scripts and any temporary files (e.g., DFT restart files), while retaining all files necessary for reproducibility.
     - Do NOT run commands in the background (no `&`, `nohup`, or `subprocess.Popen`). Always execute synchronously (e.g., `subprocess.run`) so `execute_python` owns the process and captures output.
     - NEVER kill generic processes like `python` (e.g. via `pkill python` or `killall python`), as this will forcefully terminate the agent framework computing your actions and permanently break the system. Only target specific, individual process IDs or explicitly named non-python executable processes (like `pw.x`).
 
-4. **Golden Rules:**
-    - A simulation completion does not mean the outputs are correct, always verify the output quality
-    - If a simulation is interrupted or fails and valid partial data exists, resume execution from the last checkpoint rather than restarting from scratch.
-    - If exhaustive checks determine that the task requirements are infeasible, identify and implement an appropriate workaround or alternative solution.
+5. **Golden Rules:**
+    - Completion of a simulation does not guarantee correct outputs; always verify output quality and report results faithfully.
+    - If exhaustive checks determine the task requirements are infeasible, identify and implement an appropriate workaround or alternative solution.
+    - You can invoke multiple tools in a single response. For independent information requests likely to succeed, execute in parallel to maximize efficiency and performance.
+    - When reading, listing, or deleting multiple files or directories, batch them into a single read_file, list_directory, or delete_file call where supported. Otherwise, initiate multiple parallel tool calls to minimize overhead and boost efficiency.
+    - Be precise with your tool calls and obtain and execute exactly what is needed in as few steps as possible to avoid unnecessary overhead.
+    - When generating plots, ensure a high resolution by setting the DPI to at least 400.
 """
         
         current_task_messages = [
@@ -428,8 +531,8 @@ Do NOT call `{tool_name}` with the same arguments again.
                         # Check timeout during streaming
                         if time.time() - start_time > LLM_RESPONSE_TIMEOUT:
                             raise StreamingTimeoutError(f"LLM response generation timed out (exceeded {LLM_RESPONSE_TIMEOUT // 60} minutes)")
-                        # Stream text to UI for real-time display
-                        send_text_stream("operator", accumulated_text, is_complete=False)
+                        # Stream delta to UI — frontend accumulates progressively
+                        send_text_stream("operator", text, is_complete=False)
                     
                     def on_thought(text):
                         nonlocal accumulated_thoughts
@@ -595,7 +698,7 @@ Do NOT call `{tool_name}` with the same arguments again.
                         _update_operator_status(tool_name, tool_args, is_complete=False, tool_result=None)
                 else:
                     # Skip these tools here - we handle them specially after execution to pass tool_result for error detection
-                    skip_step_complete = tool_name in ('complete_task', 'read_file', 'query_rag', 'list_directory', 'search_web', 'fetch_web_page', 'grep_search', 'get_hardware_info')
+                    skip_step_complete = tool_name in ('complete_task', 'read_file', 'query_rag', 'list_directory', 'delete_file', 'search_web', 'fetch_web_page', 'grep_search', 'get_hardware_info')
                     if not skip_step_complete:
                         _update_operator_status(tool_name, tool_args, is_complete=True, tool_result=None)
 
@@ -639,58 +742,120 @@ Do NOT call `{tool_name}` with the same arguments again.
                         resource_usage = result.get('resource_usage', 'N/A')
                         
                         # Create check-in prompt for LLM
-                        checkin_prompt = f"""The Python script `{os.path.basename(file_path_display)}` has been running for {elapsed_display}.
+                        script_name = os.path.basename(file_path_display)
+                        checkin_prompt = f"""The Python script `{script_name}` has been running for {elapsed_display}.
 
 **Current Resource Usage:**
 {resource_usage}
 
-Use the `read_file`, `grep_search` and `list_directory` tools to review the current outputs for the script and evaluate the simulation status:
+Follow this reasoning guide to reach a decision:
 
-1. Convergence/Progress: Is the simulation actually moving toward a valid and stable termination?
+### Step 1 — Is the output growing?
 
-2. Anomalies: Are there any unexpected values or warnings that contradict the simulation's goals?
+Check the output/log files.
 
-3. Resource Health: Is the system actively computing (high CPU/GPU utilisation suggests healthy progress) or idle (low utilisation may indicate the process is stuck or waiting)?
+**IF the output IS growing → go to Step 2.**
+**IF the output is NOT growing → go to Step 3.**
 
-Based on this assessment, determine whether execution should proceed or be terminated.
+### Step 2 — Output is growing: is there a problem?
 
-After you have performed the internal assessment, you must submit a decision by invoking exactly one of the following tools:
-- `continue_execution()` — Allow the simulation to proceed (status will be re-evaluated at the next interval).
-- `interrupt_execution(reason="...")` — Halt execution and retrieve partial results. A clear justification for interruption is required.
+Inspect the content for signs of trouble:
+- **Unconverged / diverging calculation** — e.g. SCF not converging in QE (energy oscillating or blowing up), LAMMPS energy drifting wildly, RASPA not equilibrating.
+- **Unphysical values** — negative energies where positive is expected, extreme forces, NaN/Inf.
+- **Excessive wall-time per step** — compare elapsed time vs. expected time-per-iteration; if each step is far slower than expected, consider whether input parameters need adjustment.
+
+**IF a problem is detected:**
+→ `interrupt_execution(reason="...")`
+  Include a concise reason that cites the current execution stage, the evidence you inspected, and why it should stop.
+
+**IF everything looks healthy (output growing, values converging, no warnings):**
+→ `continue_execution(summary="...")`
+  Include a concise summary of the current execution stage and the evidence that supports continuing.
+
+### Step 3 — Output is NOT growing: check resource health
+
+Refer to the resource usage snapshot above (CPU %, GPU %, memory).
+
+**IF there IS active resource usage (high CPU/GPU utilisation):**
+The process is still alive but has not written new output recently. Consider:
+- Is this an inherently long job? (e.g. HSE06 hybrid DFT, large AIMD cell, high-pressure GCMC) — expected to be slow → `continue_execution(summary="...")`.
+- Is the runtime disproportionately long for the job scope? In that case, input parameters may need optimisation → `interrupt_execution(reason="...")`.
+
+**IF there is NO active resource usage (CPU/GPU near 0 %, idle):**
+The process has likely finished or exited silently. Inspect the log for:
+- A normal completion marker (e.g. `JOB DONE` in QE, `Normal termination` in LAMMPS, RASPA convergence summary)?
+- Error messages or a non-zero exit code?
+
+  → Completed successfully: `interrupt_execution(reason="...")`.
+  → Crashed / broken: `interrupt_execution(reason="...")`.
+
+### Evaluation Rules
+1) You can invoke multiple tools in a single response. For independent information requests likely to succeed, execute in parallel to maximize efficiency and performance.
+2) When reading, listing, or deleting multiple files or directories, batch them into a single read_file, list_directory, or delete_file call where supported. Otherwise, initiate multiple parallel tool calls to minimize overhead and boost efficiency.
+3) If you need structured parsing of existing outputs to decide simulation status, you may also use `execute_temporary_python` for short-lived temporary analysis snippets only. Do NOT use it to run simulations, launch subprocesses, or modify files/system state.
+4) Be highly precise about your tool calls, extracting exactly what you need in minimal steps to avoid unnecessary overhead.
 """
                         
-                        # Create tool set for check-in decision (includes filesystem tools for inspection)
-                        checkin_tools = [continue_execution, interrupt_execution, read_file, list_directory, grep_search]
+                        # Create tool set for check-in decision (includes inspection helpers)
+                        checkin_tools = [
+                            continue_execution,
+                            interrupt_execution,
+                            read_file,
+                            list_directory,
+                            grep_search,
+                            execute_temporary_python,
+                        ]
                         checkin_llm = llm_with_tools.bind_tools(checkin_tools)
                         
-                        # Tool map for check-in filesystem tools
+                        # Tool map for check-in inspection tools
                         checkin_tool_map = {
                             'read_file': read_file,
                             'list_directory': list_directory,
                             'grep_search': grep_search,
+                            'execute_temporary_python': execute_temporary_python,
                         }
                         
                         # Build check-in messages (add to current context)
                         checkin_human_msg = HumanMessage(content=checkin_prompt)
                         checkin_messages = current_task_messages + [checkin_human_msg]
                         
+                        decision_response = None
                         try:
                             # Loop until LLM makes a continue/interrupt decision
                             # LLM may call filesystem tools first to inspect output files
                             decision_made = False
                             should_continue = True  # Default to continue
                             interrupt_reason = ""
-                            max_checkin_iterations = 15  # Prevent infinite loops
+                            decision_summary = ""
+                            max_checkin_iterations = 25  # Prevent infinite loops
                             checkin_iteration = 0
                             
                             while not decision_made and checkin_iteration < max_checkin_iterations:
                                 checkin_iteration += 1
+
+                                checkin_messages, did_summarize_checkin, effective_model, trigger_input = maybe_summarize_messages(
+                                    checkin_messages,
+                                    checkin_llm,
+                                    agent_name='operator',
+                                )
+                                if did_summarize_checkin:
+                                    log_custom(
+                                        "OPERATOR",
+                                        f"Check-in context summarized for {effective_model}: {trigger_input:,} input tokens",
+                                    )
+                                    send_agent_event("operator", "update", "Summarizing check-in context (token limit approaching)")
+                                    checkin_messages = checkin_messages + [HumanMessage(
+                                        content=(
+                                            "Continue this execution check-in and finish with either "
+                                            "`continue_execution(summary=\"...\")` or "
+                                            "`interrupt_execution(reason=\"...\")`."
+                                        )
+                                    )]
                                 
                                 # Get LLM decision with timeout (default to continue if timeout)
                                 start_decision_time = time.time()
                                 decision_timeout = 120  # 2 minutes per iteration
                                 
-                                decision_response = None
                                 decision_tool_calls = []
                                 
                                 # Stream the decision
@@ -727,10 +892,11 @@ After you have performed the internal assessment, you must submit a decision by 
                                         if dtc_name == 'continue_execution':
                                             decision_made = True
                                             should_continue = True
+                                            decision_summary = dtc_args.get('summary', '') if isinstance(dtc_args, dict) else ''
                                             _write_to_log("\n[OPERATOR] LLM decided to continue execution.\n")
                                             # Add tool message for continue_execution
                                             checkin_tool_messages.append(ToolMessage(
-                                                content="CONTINUE_EXECUTION",
+                                                content=f"CONTINUE_EXECUTION\nSUMMARY: {decision_summary or 'No summary provided.'}",
                                                 tool_call_id=dtc_id
                                             ))
                                             break
@@ -738,7 +904,16 @@ After you have performed the internal assessment, you must submit a decision by 
                                             decision_made = True
                                             should_continue = False
                                             interrupt_reason = dtc_args.get('reason', 'No reason provided') if isinstance(dtc_args, dict) else 'No reason provided'
+                                            decision_summary = ""
                                             _write_to_log(f"\n[OPERATOR] LLM decided to interrupt execution. Reason: {interrupt_reason}\n")
+                                            send_agent_event(
+                                                "operator",
+                                                "step_complete",
+                                                "Interrupted Execution",
+                                                is_error=True,
+                                                output=interrupt_reason,
+                                            )
+                                            send_agent_event("operator", "update", "Interrupting execution")
                                             # Add tool message for interrupt_execution
                                             checkin_tool_messages.append(ToolMessage(
                                                 content=f"INTERRUPT_EXECUTION: {interrupt_reason}",
@@ -748,21 +923,28 @@ After you have performed the internal assessment, you must submit a decision by 
                                         elif dtc_name in checkin_tool_map:
                                             # Execute filesystem tool
                                             _write_to_log(f"\n[OPERATOR] Check-in: Executing {dtc_name}...\n")
-                                            _update_operator_status(dtc_name, dtc_args if isinstance(dtc_args, dict) else {}, is_complete=False)
+                                            checkin_args = dtc_args if isinstance(dtc_args, dict) else {}
+                                            _send_checkin_tool_status(dtc_name, checkin_args, is_complete=False)
                                             
                                             try:
                                                 tool_func = checkin_tool_map[dtc_name]
                                                 tool_result = execute_with_timeout(
                                                     tool_func.invoke, 
-                                                    180,  # 3 minute timeout for filesystem tools
-                                                    dtc_args if isinstance(dtc_args, dict) else {}
+                                                    180,  # 3 minute timeout for check-in inspection tools
+                                                    checkin_args
                                                 )
                                                 checkin_tool_messages.append(ToolMessage(
                                                     content=str(tool_result)[:10000],  # Limit result size
                                                     tool_call_id=dtc_id
                                                 ))
                                                 _write_to_log(f"\n[OPERATOR] Check-in {dtc_name} result:\n{str(tool_result)[:2000]}\n")
-                                                _update_operator_status(dtc_name, dtc_args if isinstance(dtc_args, dict) else {}, is_complete=True, tool_result=str(tool_result))
+                                                _send_checkin_tool_status(
+                                                    dtc_name,
+                                                    checkin_args,
+                                                    is_complete=True,
+                                                    tool_result=str(tool_result),
+                                                    elapsed_display=elapsed_display,
+                                                )
                                             except Exception as tool_err:
                                                 error_result = f"Error executing {dtc_name}: {str(tool_err)}"
                                                 checkin_tool_messages.append(ToolMessage(
@@ -770,7 +952,7 @@ After you have performed the internal assessment, you must submit a decision by 
                                                     tool_call_id=dtc_id
                                                 ))
                                                 _write_to_log(f"\n[OPERATOR] Check-in {dtc_name} error: {str(tool_err)}\n")
-                                                _update_operator_status(dtc_name, dtc_args if isinstance(dtc_args, dict) else {}, is_complete=True, tool_result=error_result)
+                                                send_agent_event("operator", "update", f"Check-in tool error, awaiting decision after {elapsed_display}")
                                     
                                     # Add tool messages to conversation
                                     if checkin_tool_messages:
@@ -778,18 +960,40 @@ After you have performed the internal assessment, you must submit a decision by 
                                 else:
                                     # No tool calls - LLM responded with text only, prompt again
                                     _write_to_log("\n[OPERATOR] Check-in: LLM responded without tool call, prompting for decision...\n")
-                                    reminder_msg = HumanMessage(content="Please call either `continue_execution()` or `interrupt_execution(reason='...')` to submit your decision.")
+                                    reminder_msg = HumanMessage(
+                                        content=(
+                                            "Please call either `continue_execution(summary='...')` or "
+                                            "`interrupt_execution(reason='...')` to submit your decision."
+                                        )
+                                    )
                                     checkin_messages = checkin_messages + [reminder_msg]
                             
                             # Check if we hit max iterations without decision
                             if not decision_made:
                                 _write_to_log(f"\n[OPERATOR] Check-in max iterations ({max_checkin_iterations}) reached, defaulting to continue.\n")
                                 should_continue = True
+                                decision_summary = (
+                                    f"Defaulted to continue after {max_checkin_iterations} check-in iterations "
+                                    f"while assessing the current execution state."
+                                )
                             
-                            # Always persist the check-in interaction to operator history
-                            current_task_messages = current_task_messages + [checkin_human_msg]
-                            for msg in checkin_messages[len(current_task_messages):]:
-                                current_task_messages = current_task_messages + [msg]
+                            history_message = _build_checkin_history_message(
+                                script_name,
+                                elapsed_display,
+                                decision="continue_execution" if should_continue else "interrupt_execution",
+                                reason=interrupt_reason,
+                                summary=_extract_checkin_summary_text(
+                                    decision_summary,
+                                    decision_response,
+                                    checkin_messages,
+                                    default_summary=(
+                                        "Execution appears healthy and should continue."
+                                        if should_continue else
+                                        "Execution should be interrupted based on the inspected outputs."
+                                    ),
+                                ),
+                            )
+                            current_task_messages = current_task_messages + [history_message]
                             _write_input_messages(current_task_messages, "OPERATOR", current_task_index)
 
                             if should_continue:
@@ -797,17 +1001,25 @@ After you have performed the internal assessment, you must submit a decision by 
                                 send_agent_event("operator", "update", executing_status)
                                 result = resume_execution()
                             else:
-                                result = interrupt_running_execution()
+                                result = interrupt_running_execution(interrupt_reason)
                                 
                         except (StreamingTimeoutError, ValueError) as e:
                             # Default to continue on any error/timeout (including empty response errors)
                             error_msg = str(e)
                             _write_to_log(f"\n[OPERATOR] Check-in decision error: {error_msg}. Defaulting to continue.\n")
                             
-                            # Log whatever check-in history we gathered so far before the exception
-                            current_task_messages = current_task_messages + [checkin_human_msg]
-                            for msg in checkin_messages[len(current_task_messages):]:
-                                current_task_messages = current_task_messages + [msg]
+                            current_task_messages = current_task_messages + [_build_checkin_history_message(
+                                script_name,
+                                elapsed_display,
+                                decision="continue_execution",
+                                summary=_extract_checkin_summary_text(
+                                    "",
+                                    decision_response,
+                                    checkin_messages,
+                                    default_summary=f"Defaulted to continue after check-in error: {error_msg}",
+                                ),
+                                reason=f"Decision error: {error_msg}",
+                            )]
                             _write_input_messages(current_task_messages, "OPERATOR", current_task_index)
 
                             send_agent_event("operator", "update", f"Check-in error ({error_msg[:50]}), continuing execution")
@@ -818,10 +1030,18 @@ After you have performed the internal assessment, you must submit a decision by 
                             error_msg = str(e)
                             _write_to_log(f"\n[OPERATOR] Unexpected check-in error: {error_msg}. Defaulting to continue.\n")
                             
-                            # Log whatever check-in history we gathered so far before the exception
-                            current_task_messages = current_task_messages + [checkin_human_msg]
-                            for msg in checkin_messages[len(current_task_messages):]:
-                                current_task_messages = current_task_messages + [msg]
+                            current_task_messages = current_task_messages + [_build_checkin_history_message(
+                                script_name,
+                                elapsed_display,
+                                decision="continue_execution",
+                                summary=_extract_checkin_summary_text(
+                                    "",
+                                    decision_response,
+                                    checkin_messages,
+                                    default_summary=f"Defaulted to continue after unexpected check-in error: {error_msg}",
+                                ),
+                                reason=f"Unexpected decision error: {error_msg}",
+                            )]
                             _write_input_messages(current_task_messages, "OPERATOR", current_task_index)
 
                             send_agent_event("operator", "update", f"Unexpected error, continuing execution")
@@ -830,20 +1050,6 @@ After you have performed the internal assessment, you must submit a decision by 
                     
                     # Clear pending execution after completion
                     clear_pending_execution()
-                    
-                    if result and isinstance(result, str):
-                        is_error = 'exit code: 1' in result.lower() or ('error' in result.lower() and 'successfully' not in result.lower())
-                        if 'executed successfully' in result.lower():
-                            is_error = False
-                        elif 'executed failed' in result.lower() or 'code executed failed' in result.lower():
-                            is_error = True
-                        elif 'was interrupted' in result.lower():
-                            is_error = False  # Intentional interruption is not an error
-                        send_json("code_result", {
-                            "output": result,
-                            "success": not is_error,
-                            "file_path": tool_args.get('file_path', '') if isinstance(tool_args, dict) else ''
-                        })
                     
                     log_tool_call(tool_name, target_name, status="completed", agent="operator")
                     
@@ -854,17 +1060,34 @@ After you have performed the internal assessment, you must submit a decision by 
                             MAX_LOG_CHARS, 
                             "\n\n*... [Output truncated for log brevity]*"
                         )
-                        # Wrap content in blockquotes
                         lines = truncated_log.split('\n')
                         blockquote = '\n'.join(f"> {line}" if line.strip() else ">" for line in lines)
                         _write_to_log(f"\n{blockquote}\n\n")
                     
                     _update_operator_status(tool_name, tool_args, is_complete=True, tool_result=result)
                     
+                    if result and isinstance(result, str):
+                        is_error = False
+                        result_lower = result.lower()
+                        exit_code_match = re.search(r'exit code:\s*(-?\d+)', result_lower)
+                        if exit_code_match:
+                            is_error = int(exit_code_match.group(1)) != 0
+                        elif 'error executing code' in result_lower:
+                            is_error = True
+                        elif result.startswith("Error:") or result.startswith("**Execution Error:**"):
+                            is_error = True
+                        if 'was interrupted' in result_lower:
+                            is_error = False
+                        send_json("code_result", {
+                            "output": result,
+                            "success": not is_error,
+                            "file_path": tool_args.get('file_path', '') if isinstance(tool_args, dict) else ''
+                        })
+                    
                     if isinstance(result, list):
                         tool_messages.append(ToolMessage(content=result, tool_call_id=tool_call_id))
                     else:
-                        max_tool_content_chars = 20000
+                        max_tool_content_chars = 10000
                         truncated_result = result if len(result) <= max_tool_content_chars else (
                             result[:max_tool_content_chars] + "... [truncated]"
                         )
@@ -911,7 +1134,7 @@ After you have performed the internal assessment, you must submit a decision by 
                     )
                     
                     # These tools are skipped in callback - handle step_complete here with tool_result for error detection
-                    if tool_name in ('read_file', 'query_rag', 'list_directory', 'search_web', 'fetch_web_page', 'grep_search', 'get_hardware_info'):
+                    if tool_name in ('read_file', 'query_rag', 'list_directory', 'delete_file', 'search_web', 'fetch_web_page', 'grep_search', 'get_hardware_info'):
                         _update_operator_status(tool_name, tool_args, is_complete=True, tool_result=result)
 
                     
@@ -945,6 +1168,19 @@ After you have performed the internal assessment, you must submit a decision by 
         
         # Log updated messages (including AI response and tool results) to input_messages.md
         _write_input_messages(updated_task_messages, "OPERATOR", current_task_index)
+        
+        updated_task_messages, did_summarize_context, effective_model, trigger_input = maybe_summarize_messages(
+            updated_task_messages,
+            llm_with_tools,
+            agent_name='operator',
+        )
+        if did_summarize_context:
+            log_custom(
+                "OPERATOR",
+                f"Context summarization triggered for {effective_model}: {trigger_input:,} input tokens exceeds threshold",
+            )
+            send_agent_event("operator", "update", "Summarizing context (token limit approaching)")
+            log_custom("OPERATOR", f"Context summarized, new message count: {len(updated_task_messages)}")
         
         update = {
             "messages": messages_update,

@@ -22,8 +22,11 @@ class UsageStats:
     """Track usage statistics for a run."""
     start_time: float = 0.0
     end_time: float = 0.0
-    cumulative_elapsed_time: float = 0.0  # Total elapsed time across all sessions (excluding interruptions)
+    cumulative_elapsed_time: float = 0.0  # Total elapsed time across all sessions (excluding interruptions and excluded waits)
     last_session_start: float = 0.0  # Start time of current session
+    current_session_excluded_time: float = 0.0  # Wall time to exclude from current session elapsed
+    excluded_interval_start: float = 0.0  # Start timestamp of the active excluded interval
+    active_excluded_interval_count: int = 0  # Nested excluded intervals pause elapsed-time accumulation once
     api_request_count: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -56,6 +59,24 @@ _hardware_changed_on_resume: bool = False
 _previous_hardware_signature: Optional[dict] = None
 
 
+def _get_current_session_elapsed_locked(current_time: Optional[float] = None) -> float:
+    """Return current session elapsed time, excluding active excluded intervals.
+
+    Must be called with ``_lock`` held.
+    """
+    if _tracker.last_session_start <= 0:
+        return 0.0
+
+    now = current_time if current_time is not None else time.time()
+    excluded_time = _tracker.current_session_excluded_time
+
+    if _tracker.active_excluded_interval_count > 0 and _tracker.excluded_interval_start > 0:
+        excluded_time += now - _tracker.excluded_interval_start
+
+    elapsed = now - _tracker.last_session_start - excluded_time
+    return max(0.0, elapsed)
+
+
 def was_hardware_changed_on_resume() -> bool:
     """Return True if hardware changed between the interrupted run and this resume."""
     return _hardware_changed_on_resume
@@ -83,7 +104,7 @@ def start_run(model_name: str = "", preserve_start_time: bool = False) -> None:
         
         # If resuming, add elapsed time from previous session to cumulative
         if preserve_start_time and _tracker.last_session_start > 0:
-            session_elapsed = current_time - _tracker.last_session_start
+            session_elapsed = _get_current_session_elapsed_locked(current_time)
             _tracker.cumulative_elapsed_time += session_elapsed
         
         # Set start_time only for the very first start
@@ -93,6 +114,9 @@ def start_run(model_name: str = "", preserve_start_time: bool = False) -> None:
         
         # Start new session
         _tracker.last_session_start = current_time
+        _tracker.current_session_excluded_time = 0.0
+        _tracker.excluded_interval_start = 0.0
+        _tracker.active_excluded_interval_count = 0
         _tracker.end_time = 0.0
         _tracker.run_status = None  # Reset status when starting
         
@@ -117,6 +141,32 @@ def start_run(model_name: str = "", preserve_start_time: bool = False) -> None:
         _tracker.hardware_signature = hw_sig
 
 
+# Gemini model pricing ($ per 1M tokens, ≤200k context)
+_GEMINI_PRICING = {
+    "gemini-2.5-pro": (1.25, 10.00),
+    "gemini-3-flash-preview": (0.50, 3.00),
+    "gemini-3.1-pro-preview": (1.25, 10.00),
+    "gemini-2.5-flash": (0.30, 2.50),
+}
+
+
+def _get_cost_rates_for_model(model_name: str) -> tuple:
+    """Return (input_cost_per_million, output_cost_per_million) for a model name.
+    
+    Uses exact then partial matching against known pricing. Returns (None, None)
+    for unknown models.
+    """
+    model_lower = model_name.lower() if model_name else ""
+    if not model_lower:
+        return (None, None)
+    if model_lower in _GEMINI_PRICING:
+        return _GEMINI_PRICING[model_lower]
+    for model_key, rates in _GEMINI_PRICING.items():
+        if model_key in model_lower or model_lower in model_key:
+            return rates
+    return (None, None)
+
+
 def _set_cost_rates(model_name: str) -> None:
     """Set cost rates based on model name (called within lock).
     
@@ -124,31 +174,9 @@ def _set_cost_rates(model_name: str) -> None:
     Pricing uses ≤200k context rates for context-dependent models.
     """
     global _tracker
-    model_lower = model_name.lower() if model_name else ""
-    
-    # Gemini model pricing ($ per 1M tokens, ≤200k context)
-    GEMINI_PRICING = {
-        "gemini-3-pro-preview": (2.00, 12.00),
-        "gemini-2.5-pro": (1.25, 10.00),
-        "gemini-3-flash-preview": (0.50, 3.00),
-        "gemini-2.5-flash": (0.30, 2.50),
-    }
-    
-    # Check for exact model match
-    if model_lower in GEMINI_PRICING:
-        _tracker.input_cost_per_million, _tracker.output_cost_per_million = GEMINI_PRICING[model_lower]
-        return
-    
-    # Check for partial match (e.g., "gemini-2.5-pro-exp" matches "gemini-2.5-pro")
-    for model_key, (input_cost, output_cost) in GEMINI_PRICING.items():
-        if model_key in model_lower or model_lower in model_key:
-            _tracker.input_cost_per_million = input_cost
-            _tracker.output_cost_per_million = output_cost
-            return
-    
-    # Unknown model - set to None (will display as N/A)
-    _tracker.input_cost_per_million = None
-    _tracker.output_cost_per_million = None
+    in_rate, out_rate = _get_cost_rates_for_model(model_name)
+    _tracker.input_cost_per_million = in_rate
+    _tracker.output_cost_per_million = out_rate
 
 
 def end_run() -> None:
@@ -159,9 +187,12 @@ def end_run() -> None:
             current_time = time.time()
             # Add current session elapsed time to cumulative before ending
             if _tracker.last_session_start > 0:
-                session_elapsed = current_time - _tracker.last_session_start
+                session_elapsed = _get_current_session_elapsed_locked(current_time)
                 _tracker.cumulative_elapsed_time += session_elapsed
                 _tracker.last_session_start = 0.0  # Clear session start
+                _tracker.current_session_excluded_time = 0.0
+                _tracker.excluded_interval_start = 0.0
+                _tracker.active_excluded_interval_count = 0
             _tracker.end_time = current_time
 
 
@@ -218,13 +249,42 @@ def record_api_call(input_tokens: int = 0, output_tokens: int = 0, agent_name: s
     save_stats_to_checkpoint()
 
 
+def begin_excluded_interval() -> None:
+    """Pause elapsed-time accumulation for a retry/backoff interval."""
+    with _lock:
+        if _tracker.last_session_start <= 0:
+            return
+
+        _tracker.active_excluded_interval_count += 1
+        if _tracker.active_excluded_interval_count == 1:
+            _tracker.excluded_interval_start = time.time()
+
+
+def end_excluded_interval() -> None:
+    """Resume elapsed-time accumulation after a retry/backoff interval."""
+    with _lock:
+        if _tracker.active_excluded_interval_count <= 0:
+            _tracker.active_excluded_interval_count = 0
+            _tracker.excluded_interval_start = 0.0
+            return
+
+        _tracker.active_excluded_interval_count -= 1
+        if _tracker.active_excluded_interval_count == 0:
+            if _tracker.excluded_interval_start > 0:
+                _tracker.current_session_excluded_time += max(
+                    0.0,
+                    time.time() - _tracker.excluded_interval_start,
+                )
+            _tracker.excluded_interval_start = 0.0
+
+
 def get_stats() -> UsageStats:
     """Get a copy of current usage statistics."""
     with _lock:
         # Calculate current session elapsed time if running
         current_elapsed = 0.0
         if _tracker.last_session_start > 0 and _tracker.end_time == 0:
-            current_elapsed = time.time() - _tracker.last_session_start
+            current_elapsed = _get_current_session_elapsed_locked()
         
         return UsageStats(
             start_time=_tracker.start_time,
@@ -317,7 +377,7 @@ def save_stats_to_checkpoint() -> None:
         # We need to include this in cumulative so it's preserved across interruptions
         current_session_elapsed = 0.0
         if _tracker.last_session_start > 0:
-            current_session_elapsed = time.time() - _tracker.last_session_start
+            current_session_elapsed = _get_current_session_elapsed_locked()
         
         # Get hardware signature (call outside lock context - but we're already in lock)
         # Cache the hardware signature to avoid repeated calls
@@ -683,7 +743,9 @@ def _generate_report_from_stats(stats: UsageStats, completed_steps_count: Option
 | Model | {settings.get('MODEL', 'N/A')} |
 | Accuracy Mode | {settings.get('ACCURACY', 'N/A')} |
 | Granularity | {settings.get('GRANULARITY', 'N/A')} |
-| Check-in Interval | {settings.get('CHECK_INTERVAL', '15')} minutes |
+| Context Threshold | {settings.get('CONTEXT_THRESHOLD', 'N/A')} |
+| Check-in Interval | {f"{settings.get('CHECK_INTERVAL')} minutes" if settings.get('CHECK_INTERVAL') not in ('Disabled', '') else 'Disabled'} |
+| Auto-Improve Cycles | {settings.get('AUTO_IMPROVE_CYCLES', '0')} |
 | RAG Enabled | {settings.get('ENABLE_RAG', 'N/A')} |
 | Materials Project API | {mp_api_available} |
 
@@ -701,19 +763,23 @@ def _generate_report_from_stats(stats: UsageStats, completed_steps_count: Option
 | **Total Tokens** | **{total_tokens:,}** |
 """
     
-    # Add per-agent breakdown if data is available
-    if stats.per_agent_stats:
+    # Determine whether agents use different models (only then show breakdown)
+    agents_use_different_models = any(
+        (a.get('model_name') or stats.model_name) != stats.model_name
+        for a in stats.per_agent_stats.values()
+    ) if stats.per_agent_stats else False
+
+    # Add per-agent breakdown only when agents actually use different models
+    if stats.per_agent_stats and agents_use_different_models:
         report += """\n### Per-Agent Breakdown\n\n| Agent | Model | API Calls | Input Tokens | Output Tokens | Total Tokens |\n|-------|-------|-----------|-------------|--------------|--------------|\n"""
         for agent_name in ['strategist', 'operator', 'evaluator']:
             if agent_name in stats.per_agent_stats:
                 a = stats.per_agent_stats[agent_name]
                 a_model = a.get('model_name', '') or stats.model_name
                 a_total = a.get('input_tokens', 0) + a.get('output_tokens', 0)
-                # Only show model name if it differs from primary
-                model_display = a_model if a_model != stats.model_name else f"{a_model}"
-                report += f"| {agent_name.capitalize()} | {model_display} | {a.get('api_request_count', 0):,} | {a.get('input_tokens', 0):,} | {a.get('output_tokens', 0):,} | {a_total:,} |\n"
+                report += f"| {agent_name.capitalize()} | {a_model} | {a.get('api_request_count', 0):,} | {a.get('input_tokens', 0):,} | {a.get('output_tokens', 0):,} | {a_total:,} |\n"
         report += "\n"
-    
+
     # Add average tokens per step if available
     if avg_input_tokens is not None and avg_output_tokens is not None:
         report += f"""| Completed Steps | {completed_steps_count} |
@@ -723,13 +789,42 @@ def _generate_report_from_stats(stats: UsageStats, completed_steps_count: Option
 """
     else:
         report += "\n"
-    
-    # Only include cost estimate section if costs are available
-    if has_costs:
+
+    # Cost estimate section
+    if agents_use_different_models and stats.per_agent_stats:
+        # Compute per-agent costs using each agent's model pricing, then sum
+        total_cost = 0.0
+        any_rates_known = False
+        agent_cost_rows = []
+        for agent_name in ['strategist', 'operator', 'evaluator']:
+            if agent_name not in stats.per_agent_stats:
+                continue
+            a = stats.per_agent_stats[agent_name]
+            a_model = a.get('model_name', '') or stats.model_name
+            a_in = a.get('input_tokens', 0)
+            a_out = a.get('output_tokens', 0)
+            a_in_rate, a_out_rate = _get_cost_rates_for_model(a_model)
+            if a_in_rate is not None and a_out_rate is not None:
+                a_in_cost = (a_in / 1_000_000) * a_in_rate
+                a_out_cost = (a_out / 1_000_000) * a_out_rate
+                total_cost += a_in_cost + a_out_cost
+                any_rates_known = True
+                agent_cost_rows.append(
+                    f"| {agent_name.capitalize()} ({a_model}) – Input | {a_in:,} | ${a_in_rate:.2f} | ${a_in_cost:.4f} |\n"
+                    f"| {agent_name.capitalize()} ({a_model}) – Output | {a_out:,} | ${a_out_rate:.2f} | ${a_out_cost:.4f} |\n"
+                )
+        if any_rates_known:
+            report += "## Cost Estimate\n\n| Type | Tokens | Rate ($/1M) | Cost |\n|------|--------|-------------|------|\n"
+            for row in agent_cost_rows:
+                report += row
+            report += f"| **Total** | {total_tokens:,} | | **${total_cost:.4f}** |\n"
+            report += "\n*Note: Cost estimates based on ≤200k context pricing.*\n"
+    elif has_costs:
+        # All agents share the same model — use primary cost rates
         input_cost = (stats.input_tokens / 1_000_000) * stats.input_cost_per_million
         output_cost = (stats.output_tokens / 1_000_000) * stats.output_cost_per_million
         total_cost = input_cost + output_cost
-        
+
         report += f"""## Cost Estimate
 
 | Type | Tokens | Rate ($/1M) | Cost |
@@ -753,6 +848,12 @@ def _load_run_settings() -> dict:
     from .tools.base import WORKSPACE_DIR
     
     settings = {}
+
+    def parse_auto_improve_cycles(value) -> str:
+        try:
+            return str(max(int(str(value).strip()), 0))
+        except (TypeError, ValueError):
+            return '0'
     
     # Try to load from checkpoint_settings.json first
     checkpoint_settings_path = WORKSPACE_DIR / "checkpoint_settings.json"
@@ -762,7 +863,7 @@ def _load_run_settings() -> dict:
                 checkpoint_settings = json.load(f)
                 
                 # Check top level first
-                for key in ['MODEL', 'ACCURACY', 'GRANULARITY', 'ENABLE_RAG', 'CHECK_INTERVAL']:
+                for key in ['MODEL', 'ACCURACY', 'GRANULARITY', 'CONTEXT_THRESHOLD', 'ENABLE_RAG', 'CHECK_INTERVAL', 'AUTO_IMPROVE_CYCLES']:
                     if key in checkpoint_settings:
                         settings[key] = checkpoint_settings[key]
                 
@@ -787,7 +888,12 @@ def _load_run_settings() -> dict:
     if 'GRANULARITY' not in settings:
         settings['GRANULARITY'] = os.getenv('GRANULARITY', 'N/A')
     if 'CHECK_INTERVAL' not in settings:
-        settings['CHECK_INTERVAL'] = os.getenv('CHECK_INTERVAL', '15')
+        interval = os.getenv('CHECK_INTERVAL', '')
+        settings['CHECK_INTERVAL'] = interval if interval else 'Disabled'
+    if 'CONTEXT_THRESHOLD' not in settings:
+        settings['CONTEXT_THRESHOLD'] = os.getenv('CONTEXT_THRESHOLD', 'medium')
+    if 'AUTO_IMPROVE_CYCLES' not in settings:
+        settings['AUTO_IMPROVE_CYCLES'] = parse_auto_improve_cycles(os.getenv('AUTO_IMPROVE_CYCLES', '0'))
     if 'ENABLE_RAG' not in settings:
         settings['ENABLE_RAG'] = os.getenv('ENABLE_RAG', 'N/A')
     if 'PMG_MAPI_KEY' not in settings:

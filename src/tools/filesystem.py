@@ -4,7 +4,7 @@ import base64
 import difflib
 import mimetypes
 import re
-from typing import Optional
+from typing import Optional, List, Union
 
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
@@ -29,7 +29,7 @@ from ..usage_tracker import record_api_call
 
 # Maximum number of directory entries to return from list_directory to avoid
 # overwhelming the context window when a directory contains many files.
-_MAX_DIR_ENTRIES = 300
+_MAX_DIR_ENTRIES = 100
 
 
 def _safe_count_lines(path: os.PathLike) -> str:
@@ -47,36 +47,32 @@ def _safe_count_lines(path: os.PathLike) -> str:
 
 @tool
 def read_file(
-    file_path: str,
+    file_path: Union[str, List[str]],
     first_lines: Optional[int] = None,
     last_lines: Optional[int] = None,
     keyword: Optional[str] = None,
     context_lines: Optional[int] = None,
     if_pdf: bool = False
 ) -> str:
-    """Read the contents of a file from the workspace directory with flexible options.
+    """Read the contents of one or more files from the workspace directory with flexible options.
     
     **REQUIRED:** file_path must always be provided. All other parameters are optional.
     
-    **Note:** For image analysis, use the `analyze_image` tool instead of reading images directly.
+    **Note:** Reading the full content of a file is NOT recommended. Use `first_lines`, `last_lines`, 
+    or `keyword` to read only the relevant portions. This avoids wasting context window tokens and 
+    keeps responses focused.
     
     Args:
-        file_path: (REQUIRED) Path to the file relative to workspace root, or absolute path. This parameter is mandatory.
-        first_lines: (Optional) If provided, return only the first N lines of the file
-        last_lines: (Optional) If provided, return only the last N lines of the file
-        keyword: (Optional) If provided, search for this keyword in the file and return context around matching lines
+        file_path: (REQUIRED) Path to the file relative to workspace root, or absolute path.
+            Can be a single string for one file, or a list of strings to read multiple files at once.
+        first_lines: (Optional) If provided, return only the first N lines of each file
+        last_lines: (Optional) If provided, return only the last N lines of each file
+        keyword: (Optional) If provided, search for this keyword in each file and return context around matching lines
         context_lines: (Optional) Number of lines before and after a keyword match to include (default: 5, only used with keyword)
-        if_pdf: (Optional) If True, read the file as a PDF using pypdf.
+        if_pdf: (Optional) If True, read the file(s) as PDF using pypdf.
         
-    Notes on large files:
-        - When reading an entire file (no first_lines/last_lines/keyword provided),
-          the returned content is limited to `MAX_OUTPUT_CHARS`
-          characters to protect the context window.
-        - If truncation occurs, a warning header is added. Use `first_lines`,
-          `last_lines`, or `keyword` for more targeted reads on large files.
-    
     Returns:
-        Contents of the file (or selected portion based on parameters)
+        Contents of the file(s) (or selected portion based on parameters)
     
     Examples:
         read_file(file_path="script.py", first_lines=10)  # Returns first 10 lines
@@ -84,120 +80,153 @@ def read_file(
         read_file(file_path="script.py", keyword="def main", context_lines=10)  # Returns 10 lines before/after matches
         read_file(file_path="script.py")  # Returns entire file
         read_file(file_path="document.pdf", if_pdf=True)  # Returns text content of PDF
+        read_file(file_path=["file1.py", "file2.py"])  # Read multiple files at once
+        read_file(file_path=["a.py", "b.py"], first_lines=5)  # First 5 lines of each file
     """
-    try:
-        path = _resolve_path(file_path)
-        error = _validate_workspace_path(path)
-        if error:
-            return error
+    # Normalize to list for uniform handling
+    paths = file_path if isinstance(file_path, list) else [file_path]
+    results = []
+    scoped_truncation_msg = (
+        f"\n... [Output truncated to {MAX_OUTPUT_CHARS} chars. "
+        "Reduce first_lines/last_lines, narrow the keyword, or lower context_lines.]\n"
+    )
 
-        if not path.exists():
-            return f"Error: File '{file_path}' does not exist."
-        if not path.is_file():
-            return f"Error: '{file_path}' is not a file."
+    for fp in paths:
+        try:
+            path = _resolve_path(fp)
+            error = _validate_workspace_path(path)
+            if error:
+                results.append(error)
+                continue
 
-        # Protect internal/hidden files from being read directly
-        if path.name in PROTECTED_SYSTEM_FILES:
-            return (
-                f"Error: Reading '{path.name}' is not permitted because it is an "
-                "internal system file."
-            )
+            if not path.exists():
+                results.append(f"Error: File '{fp}' does not exist.")
+                continue
+            if not path.is_file():
+                results.append(f"Error: '{fp}' is not a file.")
+                continue
 
-        if if_pdf:
-            try:
-                import pypdf
-            except ImportError:
-                return "Error: pypdf is not installed. Please install it to read PDF files."
-            
-            try:
-                text_content = []
-                with open(path, "rb") as f:
-                    reader = pypdf.PdfReader(f)
-                    for page in reader.pages:
-                        text_content.append(page.extract_text())
+            # Protect internal/hidden files from being read directly
+            if path.name in PROTECTED_SYSTEM_FILES:
+                results.append(
+                    f"Error: Reading '{path.name}' is not permitted because it is an "
+                    "internal system file."
+                )
+                continue
+
+            if if_pdf:
+                try:
+                    import pypdf
+                except ImportError:
+                    results.append("Error: pypdf is not installed. Please install it to read PDF files.")
+                    continue
                 
-                # Combine all text and split into lines, keeping line endings to match readlines behavior
-                full_text = "\n".join(text_content)
-                lines = full_text.splitlines(keepends=True)
-                if not lines and full_text:  # Handle case where text exists but no newlines
-                    lines = [full_text]
-            except Exception as e:
-                return f"**Reading File:** `{file_path}`\n> Error reading PDF file: {str(e)}"
-        else:
-            # Read all lines
-            with open(path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-        
-        total_lines = len(lines)
-        
-        # If keyword is provided, search for it
-        if keyword:
-            context = context_lines if context_lines is not None else 10
-            matching_line_indices = []
+                try:
+                    text_content = []
+                    with open(path, "rb") as f:
+                        reader = pypdf.PdfReader(f)
+                        for page in reader.pages:
+                            text_content.append(page.extract_text())
+                    
+                    # Combine all text and split into lines, keeping line endings to match readlines behavior
+                    full_text = "\n".join(text_content)
+                    lines = full_text.splitlines(keepends=True)
+                    if not lines and full_text:  # Handle case where text exists but no newlines
+                        lines = [full_text]
+                except Exception as e:
+                    results.append(f"**Reading File:** `{fp}`\n> Error reading PDF file: {str(e)}")
+                    continue
+            else:
+                # Read all lines
+                with open(path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
             
-            # Find all lines containing the keyword (case-insensitive search)
-            for i, line in enumerate(lines):
-                if keyword.lower() in line.lower():
-                    matching_line_indices.append(i)
+            total_lines = len(lines)
             
-            if not matching_line_indices:
-                return f"Error: Keyword '{keyword}' not found in file '{file_path}'."
-            
-            # Collect all context ranges (using set to avoid duplicates)
-            result_indices = set()
-            
-            for match_idx in matching_line_indices:
-                # Calculate range: context_lines before to context_lines after
-                start_idx = max(0, match_idx - context)
-                end_idx = min(total_lines, match_idx + context + 1)
+            # If keyword is provided, search for it
+            if keyword:
+                context = context_lines if context_lines is not None else 10
+                matching_line_indices = []
                 
-                # Add all indices in this range
-                for idx in range(start_idx, end_idx):
-                    result_indices.add(idx)
+                # Find all lines containing the keyword (case-insensitive search)
+                for i, line in enumerate(lines):
+                    if keyword.lower() in line.lower():
+                        matching_line_indices.append(i)
+                
+                if not matching_line_indices:
+                    results.append(f"Error: Keyword '{keyword}' not found in file '{fp}'.")
+                    continue
+                
+                # Collect all context ranges (using set to avoid duplicates)
+                result_indices = set()
+                
+                for match_idx in matching_line_indices:
+                    # Calculate range: context_lines before to context_lines after
+                    start_idx = max(0, match_idx - context)
+                    end_idx = min(total_lines, match_idx + context + 1)
+                    
+                    # Add all indices in this range
+                    for idx in range(start_idx, end_idx):
+                        result_indices.add(idx)
+                
+                # Sort indices and collect lines in order
+                sorted_indices = sorted(result_indices)
+                result_lines = [lines[i] for i in sorted_indices]
+                
+                # Add header with match information
+                match_info = (
+                    f"Found keyword '{keyword}' at line(s) "
+                    f"{', '.join(str(idx + 1) for idx in matching_line_indices)} "
+                    f"(showing {context} lines of context):\n\n"
+                )
+                keyword_result = f"**Reading File:** `{fp}`\n> {match_info}\n```\n{''.join(result_lines)}\n```"
+                results.append(truncate_content(keyword_result, MAX_OUTPUT_CHARS, scoped_truncation_msg))
+                continue
             
-            # Sort indices and collect lines in order
-            sorted_indices = sorted(result_indices)
-            result_lines = [lines[i] for i in sorted_indices]
+            # If first_lines is provided
+            if first_lines is not None:
+                if first_lines <= 0:
+                    results.append(f"Error: first_lines must be a positive integer.")
+                    continue
+                if first_lines >= total_lines:
+                    first_result = f"**Reading File:** `{fp}`\n```\n{''.join(lines)}\n```"
+                else:
+                    first_result = f"**Reading File:** `{fp}`\n```\n{''.join(lines[:first_lines])}\n```"
+                results.append(truncate_content(first_result, MAX_OUTPUT_CHARS, scoped_truncation_msg))
+                continue
             
-            # Add header with match information
-            match_info = (
-                f"Found keyword '{keyword}' at line(s) "
-                f"{', '.join(str(idx + 1) for idx in matching_line_indices)} "
-                f"(showing {context} lines of context):\n\n"
+            # If last_lines is provided
+            if last_lines is not None:
+                if last_lines <= 0:
+                    results.append(f"Error: last_lines must be a positive integer.")
+                    continue
+                if last_lines >= total_lines:
+                    last_result = f"**Reading File:** `{fp}`\n```\n{''.join(lines)}\n```"
+                else:
+                    last_result = f"**Reading File:** `{fp}`\n```\n{''.join(lines[-last_lines:])}\n```"
+                results.append(truncate_content(last_result, MAX_OUTPUT_CHARS, scoped_truncation_msg))
+                continue
+            
+            # Default: return entire file, but guard against extremely large outputs
+            full_content = "".join(lines)
+            
+            truncated = truncate_content(
+                full_content, 
+                MAX_OUTPUT_CHARS, 
+                f"\n... [Content truncated to {MAX_OUTPUT_CHARS} chars. Use 'first_lines', 'last_lines', or 'keyword' to read specific parts.]\n"
             )
-            return f"**Reading File:** `{file_path}`\n> {match_info}\n```\n{''.join(result_lines)}\n```"
-        
-        # If first_lines is provided
-        if first_lines is not None:
-            if first_lines <= 0:
-                return f"Error: first_lines must be a positive integer."
-            if first_lines >= total_lines:
-                # Return entire file if requested lines exceed file length
-                return f"**Reading File:** `{file_path}`\n```\n{''.join(lines)}\n```"
-            return f"**Reading File:** `{file_path}`\n```\n{''.join(lines[:first_lines])}\n```"
-        
-        # If last_lines is provided
-        if last_lines is not None:
-            if last_lines <= 0:
-                return f"Error: last_lines must be a positive integer."
-            if last_lines >= total_lines:
-                # Return entire file if requested lines exceed file length
-                return f"**Reading File:** `{file_path}`\n```\n{''.join(lines)}\n```"
-            return f"**Reading File:** `{file_path}`\n```\n{''.join(lines[-last_lines:])}\n```"
-        
-        # Default: return entire file, but guard against extremely large outputs
-        full_content = "".join(lines)
-        
-        truncated = truncate_content(
-            full_content, 
-            MAX_OUTPUT_CHARS, 
-            f"\n... [Content truncated to {MAX_OUTPUT_CHARS} chars. Use 'first_lines', 'last_lines', or 'keyword' to read specific parts.]\n"
-        )
-        
-        return f"**Reading File:** `{file_path}`\n\n```\n{truncated}\n```"
-        
-    except Exception as e:
-        return f"**Reading File:** `{file_path}`\n\n> Error reading file: {str(e)}"
+            
+            results.append(f"**Reading File:** `{fp}`\n\n```\n{truncated}\n```")
+            
+        except Exception as e:
+            results.append(f"**Reading File:** `{fp}`\n\n> Error reading file: {str(e)}")
+
+    combined = "\n\n---\n\n".join(results)
+    return truncate_content(
+        combined,
+        MAX_OUTPUT_CHARS,
+        f"\n... [Combined output truncated to {MAX_OUTPUT_CHARS} chars. Read fewer files or narrow each selection.]\n"
+    )
 
 
 @tool
@@ -364,41 +393,57 @@ def edit_file(file_path: str, old_string: str, new_string: str, replace_all: boo
 
 
 @tool
-def delete_file(file_path: str) -> str:
-    """Delete a file from the workspace directory.
+def delete_file(file_path: Union[str, List[str]]) -> str:
+    """Delete one or more files from the workspace directory.
     
     Args:
-        file_path: Path to the file relative to workspace root, or absolute path
+        file_path: Path to the file relative to workspace root, or absolute path.
+            Can be a single string for one file, or a list of strings to delete multiple files at once.
     
     Returns:
         Success message or error
+    
+    Examples:
+        delete_file(file_path="old_file.txt")  # Delete a single file
+        delete_file(file_path=["file1.txt", "file2.txt"])  # Delete multiple files at once
     """
-    try:
-        path = _resolve_path(file_path)
-        error = _validate_workspace_path(path)
-        if error:
-            return error.replace("access", "delete")
+    # Normalize to list for uniform handling
+    paths = file_path if isinstance(file_path, list) else [file_path]
+    results = []
 
-        # Protect internal/hidden files from deletion, even if directly targeted
-        if path.name in PROTECTED_SYSTEM_FILES:
-            return (
-                f"**Delete File:** `{file_path}`\n\n> "
-                f"Error: Deletion of '{path.name}' is not permitted because it is an "
-                "internal system file."
-            )
+    for fp in paths:
+        try:
+            path = _resolve_path(fp)
+            error = _validate_workspace_path(path)
+            if error:
+                results.append(error.replace("access", "delete"))
+                continue
 
-        path.unlink()
-        return f"**Delete File:** `{file_path}`\n\n> Successfully deleted file."
-    except Exception as e:
-        return f"**Delete File:** `{file_path}`\n\n> Error deleting file: {str(e)}"
+            # Protect internal/hidden files from deletion, even if directly targeted
+            if path.name in PROTECTED_SYSTEM_FILES:
+                results.append(
+                    f"**Delete File:** `{fp}`\n\n> "
+                    f"Error: Deletion of '{path.name}' is not permitted because it is an "
+                    "internal system file."
+                )
+                continue
+
+            path.unlink()
+            results.append(f"**Delete File:** `{fp}`\n\n> Successfully deleted file.")
+        except Exception as e:
+            results.append(f"**Delete File:** `{fp}`\n\n> Error deleting file: {str(e)}")
+
+    return "\n\n---\n\n".join(results)
 
 
 @tool
-def list_directory(directory_path: str = ".", pattern: str = "*", exclude_docs: bool = False) -> str:
-    """List files and directories in a given directory.
+def list_directory(directory_path: Union[str, List[str]] = ".", pattern: str = "*", exclude_docs: bool = False) -> str:
+    """List files and directories in one or more directories.
+    
+    **Note:** It is highly recommended to use the `pattern` argument (e.g., `"*.py"`) to narrow down the listing scope for more efficient results, especially in large directories.
     
     Args:
-        directory_path: Path to directory relative to workspace root (default: ".")
+        directory_path: Path to directory relative to workspace root (default: "."). Can be a single string for one directory, or a list of strings to list multiple directories at once.
         pattern: Glob pattern to filter files (default: "*")
         exclude_docs: If True, exclude the 'docs' folder from listing (default: False)
     
@@ -406,56 +451,72 @@ def list_directory(directory_path: str = ".", pattern: str = "*", exclude_docs: 
         List of files and directories.
         For very large directories, only the first `_MAX_DIR_ENTRIES` entries
         are shown along with a truncation notice.
+    
+    Examples:
+        list_directory(directory_path=".")  # List current directory
+        list_directory(directory_path=["src", "tests"])  # List multiple directories at once
+        list_directory(directory_path=["dir1", "dir2"], pattern="*.py")  # List .py files in multiple dirs
     """
-    try:
-        path = _resolve_path(directory_path)
-        error = _validate_workspace_path(path)
-        if error:
-            return error.replace("files", "directories")
-        
-        if not path.exists():
-            return f"Error: Directory '{directory_path}' does not exist."
-        if not path.is_dir():
-            return f"Error: '{directory_path}' is not a directory."
-        
-        all_items = []
-        
-        for item in sorted(path.glob(pattern)):
-            item_name = item.name
-            if item_name in PROTECTED_SYSTEM_FILES or item_name.startswith("."):
-                continue
-            # Exclude docs folder if requested
-            if exclude_docs and item_name == "docs":
+    # Normalize to list for uniform handling
+    dirs = directory_path if isinstance(directory_path, list) else [directory_path]
+    results = []
+
+    for dp in dirs:
+        try:
+            path = _resolve_path(dp)
+            error = _validate_workspace_path(path)
+            if error:
+                results.append(error.replace("files", "directories"))
                 continue
             
-            rel_path = item.relative_to(WORKSPACE_DIR)
-            if item.is_dir():
-                all_items.append(f"[DIR]  {rel_path}/")
-            else:
-                size_bytes = item.stat().st_size
-                line_count = _safe_count_lines(item)
-                line_part = (
-                    f", {line_count} lines" if line_count != "unknown" else ", lines: N/A"
-                )
-                all_items.append(
-                    f"[FILE] {rel_path} ({size_bytes} bytes{line_part})"
-                )
-        
-        if not all_items:
-            return f"**List Directory:** `{directory_path}`\n\n> No files found matching pattern '{pattern}'"
+            if not path.exists():
+                results.append(f"Error: Directory '{dp}' does not exist.")
+                continue
+            if not path.is_dir():
+                results.append(f"Error: '{dp}' is not a directory.")
+                continue
+            
+            all_items = []
+            
+            for item in sorted(path.glob(pattern)):
+                item_name = item.name
+                if item_name in PROTECTED_SYSTEM_FILES or item_name.startswith("."):
+                    continue
+                # Exclude docs folder if requested
+                if exclude_docs and item_name == "docs":
+                    continue
+                
+                rel_path = item.relative_to(WORKSPACE_DIR)
+                if item.is_dir():
+                    all_items.append(f"[DIR]  {rel_path}/")
+                else:
+                    size_bytes = item.stat().st_size
+                    line_count = _safe_count_lines(item)
+                    line_part = (
+                        f", {line_count} lines" if line_count != "unknown" else ", lines: N/A"
+                    )
+                    all_items.append(
+                        f"[FILE] {rel_path} ({size_bytes} bytes{line_part})"
+                    )
+            
+            if not all_items:
+                results.append(f"**List Directory:** `{dp}`\n\n> No files found matching pattern '{pattern}'")
+                continue
 
-        total = len(all_items)
-        if total > _MAX_DIR_ENTRIES:
-            shown_items = all_items[:_MAX_DIR_ENTRIES]
-            header = (
-                f"Warning: Directory '{directory_path}' has {total} matching entries. "
-                f"Showing only the first {_MAX_DIR_ENTRIES}.\n"
-            )
-            return f"**List Directory:** `{directory_path}`\n\n> {header}\n```\n" + "\n".join(shown_items) + "\n```"
-        
-        return f"**List Directory:** `{directory_path}`\n\n```\n" + "\n".join(all_items) + "\n```"
-    except Exception as e:
-        return f"**List Directory:** `{directory_path}`\n\n> Error listing directory: {str(e)}"
+            total = len(all_items)
+            if total > _MAX_DIR_ENTRIES:
+                shown_items = all_items[:_MAX_DIR_ENTRIES]
+                header = (
+                    f"Warning: Directory '{dp}' has {total} matching entries. "
+                    f"Showing only the first {_MAX_DIR_ENTRIES}.\n"
+                )
+                results.append(f"**List Directory:** `{dp}`\n\n> {header}\n```\n" + "\n".join(shown_items) + "\n```")
+            else:
+                results.append(f"**List Directory:** `{dp}`\n\n```\n" + "\n".join(all_items) + "\n```")
+        except Exception as e:
+            results.append(f"**List Directory:** `{dp}`\n\n> Error listing directory: {str(e)}")
+
+    return "\n\n---\n\n".join(results)
 
 
 @tool
@@ -705,7 +766,7 @@ def analyze_image(file_path: str, prompt: str) -> str:
 @tool
 def grep_search(
     pattern: str,
-    directory_path: str = ".",
+    directory_path: str,
     include_pattern: Optional[str] = None,
     exclude_pattern: Optional[str] = None,
     case_insensitive: bool = False,
@@ -716,11 +777,13 @@ def grep_search(
     
     This tool uses grep to quickly search for text patterns across files in the workspace.
     It's much faster than reading files individually when you need to find occurrences
-    of a pattern across multiple files.
+    of a pattern across multiple files. 
+    
+    **Note:** It is highly recommended to narrow down the directory_path to a specific subdirectory to make the search more efficient and avoid searching the entire workspace.
     
     Args:
         pattern: The regex pattern to search for. Use basic regex syntax.
-        directory_path: Directory to search in, relative to workspace root (default: "." for workspace root)
+        directory_path: Directory to search in, relative to workspace root. It is highly recommended to narrow this down to a specific subdirectory rather than using the workspace root to improve search efficiency.
         include_pattern: Optional glob pattern to filter files to search (e.g., "*.py" for Python files only)
         exclude_pattern: Optional glob pattern to exclude files (e.g., "*.log" to skip log files)
         case_insensitive: If True, perform case-insensitive matching (default: False)
@@ -794,11 +857,11 @@ def grep_search(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=30,  # 30 second timeout
+                timeout=120,  # 2 minute timeout
                 cwd=str(WORKSPACE_DIR)
             )
         except subprocess.TimeoutExpired:
-            return f"**Grep Search:** `{pattern}`\n\n> Error: Search timed out after 30 seconds. Try narrowing your search with include_pattern or a more specific directory."
+            return f"**Grep Search:** `{pattern}`\n\n> Error: Search timed out after 2 minutes. Try narrowing your search with include_pattern or a more specific directory."
         
         # grep returns exit code 1 if no matches found, 0 if matches found, 2+ for errors
         if result.returncode == 1:

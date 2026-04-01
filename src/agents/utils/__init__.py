@@ -3,7 +3,7 @@ Shared utilities for agent nodes.
 
 This package contains utilities organized into the following modules:
 - system: CPU, GPU, and Slurm detection
-- bridge: CLI/web interface communication
+- bridge: CLI communication
 - text: Text extraction and formatting
 - errors: Exception handling and API retry
 - logging: Conversation and execution logging
@@ -25,6 +25,7 @@ from .system import (
 
 # Re-export from bridge
 from .bridge import (
+    plan_review_confirm_node,
     send_agent_event,
     send_json,
     send_plan_stream,
@@ -76,6 +77,8 @@ from .streaming import (
     stream_with_token_tracking,
     RepetitionDetector,
     StopGenerationException,
+    get_last_input_tokens,
+    reset_last_input_tokens,
 )
 
 # Re-export from tool_helpers
@@ -108,6 +111,7 @@ __all__ = [
     'get_usable_physical_cores',
     '_get_gpu_info',
     # bridge
+    'plan_review_confirm_node',
     'send_agent_event',
     'send_json',
     'send_plan_stream',
@@ -147,6 +151,8 @@ __all__ = [
     'stream_with_token_tracking',
     'RepetitionDetector',
     'StopGenerationException',
+    'get_last_input_tokens',
+    'reset_last_input_tokens',
     # tool_helpers
     'DEFAULT_TIMEOUT_SECONDS',
     'MAX_REPEATED_TOOL_CALLS',

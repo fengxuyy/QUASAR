@@ -34,6 +34,7 @@ TOOL_STATUS_MESSAGES = {
     'search_web': ('Searching web', 'Searched web'),
     'fetch_web_page': ('Fetching web page', 'Fetched web page'),
     'execute_python': ('Executing', 'Executed'),
+    'execute_temporary_python': ('Executing', 'Executed'),
     'grep_search': ('Grepping files', 'Grepped files'),
     'get_hardware_info': ('Checking Hardware', 'Checked Hardware'),
     'complete_task': ('Evaluating Task Completion', 'Evaluating Task Completion'),
@@ -70,14 +71,27 @@ def extract_target_name(tool_name: str, tool_args: dict) -> Optional[str]:
         'delete_file': 'file_path',
         'list_directory': 'directory_path',
         'move_file': 'source_path',
-        'rename_file': 'old_path',
-        'analyze_image': 'image_path',
+        'rename_file': 'file_path',
+        'analyze_image': 'file_path',
         'execute_python': 'file_path',
     }
     
     key = target_keys.get(tool_name)
     if key and key in tool_args:
         target = tool_args[key]
+        # Handle list of paths (multi-file/dir support)
+        if isinstance(target, list):
+            names = []
+            for t in target:
+                t_str = str(t).strip()
+                if t_str.startswith('./'):
+                    t_str = t_str[2:]
+                if os.path.isabs(t_str):
+                    t_str = os.path.basename(t_str)
+                names.append(t_str or os.path.basename(str(t)))
+            if len(names) <= 3:
+                return ', '.join(names)
+            return f"{len(names)} items"
         if isinstance(target, (str, Path)):
             target_str = str(target).strip()
             # Strip leading "./" for cleaner display
@@ -134,17 +148,23 @@ def get_execute_python_status(tool_args: dict) -> str:
     Mirrors the logic in _handle_execute_python_status so that the label shown
     during check-in resumption is identical to the one shown at initial launch.
     """
+    base_status, _ = _get_execute_python_status_pair(tool_args)
+    return base_status
+
+
+def _get_execute_python_status_pair(tool_args: dict, target_name: Optional[str] = None) -> tuple[str, str]:
+    """Compute matching start/complete labels for execute-style Python tools."""
     if not isinstance(tool_args, dict):
-        return "Executing"
+        return "Executing", "Executed"
 
     file_path = tool_args.get('file_path', '')
     code = tool_args.get('code', '')
-    trial_timeout = tool_args.get('timeout', None)
+    timeout = tool_args.get('timeout')
 
     timeout_display = ""
-    if trial_timeout is not None:
+    if timeout is not None:
         try:
-            timeout_val = float(trial_timeout)
+            timeout_val = float(timeout)
             if timeout_val > 0:
                 if float(timeout_val).is_integer():
                     timeout_display = f" (timeout {int(timeout_val)} min)"
@@ -154,14 +174,15 @@ def get_execute_python_status(tool_args: dict) -> str:
             pass
 
     if file_path:
-        return f"Executing {os.path.basename(file_path)}{timeout_display}"
+        file_name = target_name if target_name else os.path.basename(file_path)
+        return f"Executing {file_name}{timeout_display}", f"Executed {file_name}{timeout_display}"
     if code:
         first_line = code.strip().split('\n')[0]
         code_preview = first_line[:50]
         if len(first_line) > 50 or '\n' in code.strip():
             code_preview += "..."
-        return f"Executing {code_preview}{timeout_display}"
-    return f"Executing{timeout_display}"
+        return f"Executing {code_preview}{timeout_display}", f"Executed {code_preview}{timeout_display}"
+    return f"Executing{timeout_display}", f"Executed{timeout_display}"
 
 
 def extract_analyze_image_output(result: str) -> str:
@@ -226,6 +247,8 @@ def _handle_read_file_status(agent: str, tool_args: Dict[str, Any], target_name:
     keyword = tool_args.get('keyword') if isinstance(tool_args, dict) else None
     first_lines = tool_args.get('first_lines') if isinstance(tool_args, dict) else None
     last_lines = tool_args.get('last_lines') if isinstance(tool_args, dict) else None
+    file_path_arg = tool_args.get('file_path') if isinstance(tool_args, dict) else None
+    is_multi = isinstance(file_path_arg, list)
     file_name = target_name  # Don't use fallback 'file' - it gets incorrectly linked
     
     # Detect errors in tool result
@@ -245,6 +268,11 @@ def _handle_read_file_status(agent: str, tool_args: Dict[str, Any], target_name:
             is_error = True
             is_validation_error = True
             error_output = tool_result
+        # For multi-file reads, partial errors (some files missing) should not flag the whole call as error
+        if is_multi and is_file_not_found and "**Reading File:**" in tool_result:
+            # At least one file was read successfully
+            is_error = False
+            is_file_not_found = False
     
     # Handle validation errors (missing file_path) - show generic error message
     if is_validation_error or not file_name:
@@ -254,6 +282,25 @@ def _handle_read_file_status(agent: str, tool_args: Dict[str, Any], target_name:
             send_agent_event(agent, "update", idle_status)
         else:
             send_agent_event(agent, "update", "Reading file")
+        return
+    
+    # For multi-file reads, use simplified status messages
+    if is_multi:
+        count = len(file_path_arg) if isinstance(file_path_arg, list) else 0
+        # Use short name list or count
+        if count <= 3:
+            display = file_name  # Already comma-joined by extract_target_name
+        else:
+            display = f"{count} files"
+        base_status = f"Reading {display}"
+        base_complete = f"Read {display}"
+        
+        idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
+        if is_complete:
+            send_agent_event(agent, "step_complete", base_complete, is_error=is_error)
+            send_agent_event(agent, "update", idle_status)
+        else:
+            send_agent_event(agent, "update", base_status)
         return
     
     # Priority: if_pdf > keyword > first_lines > last_lines > default
@@ -466,57 +513,26 @@ def _handle_fetch_web_page_status(agent: str, tool_args: Dict[str, Any], is_comp
         send_agent_event(agent, "update", f"Fetching {display_url}")
 
 
-def _handle_execute_python_status(agent: str, tool_args: Dict[str, Any], is_complete: bool, tool_result: Optional[str] = None) -> None:
+def _handle_execute_python_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool, tool_result: Optional[str] = None) -> None:
     """Handle execute_python status updates."""
     file_path = tool_args.get('file_path') if isinstance(tool_args, dict) else None
     code = tool_args.get('code') if isinstance(tool_args, dict) else None
-    trial_timeout = tool_args.get('trial_timeout') if isinstance(tool_args, dict) else None
-
-    timeout_display = ""
-    if trial_timeout is not None:
-        try:
-            timeout_value = float(trial_timeout)
-            if timeout_value > 0:
-                if timeout_value.is_integer():
-                    timeout_display = f" (timeout {int(timeout_value)} min)"
-                else:
-                    timeout_display = f" (timeout {timeout_value:.1f} min)"
-        except (TypeError, ValueError):
-            pass
-    
-    if file_path:
-        # Case 1 & 3: file_path provided (with or without code)
-        file_name = os.path.basename(file_path)
-        base_status = f"Executing {file_name}{timeout_display}"
-        base_complete = f"Executed {file_name}{timeout_display}"
-    elif code:
-        # Case 2: Only code provided - show truncated code preview
-        # Get first line or first 50 chars, whichever is shorter
-        first_line = code.strip().split('\n')[0]
-        code_preview = first_line[:50]
-        if len(first_line) > 50 or '\n' in code.strip():
-            code_preview += "..."
-        base_status = f"Executing {code_preview}{timeout_display}"
-        base_complete = f"Executed {code_preview}{timeout_display}"
-    else:
-        base_status = f"Executing{timeout_display}"
-        base_complete = f"Executed{timeout_display}"
+    base_status, base_complete = _get_execute_python_status_pair(tool_args, target_name)
     
     idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
     if is_complete:
-        # Detect errors in tool result by checking for non-zero exit code
         is_error = False
         if tool_result and isinstance(tool_result, str):
             result_lower = tool_result.lower()
-            # Check for non-zero exit code - match "exit code: N" where N != 0
-            exit_code_match = re.search(r'exit code:\s*(\d+)', result_lower)
+            exit_code_match = re.search(r'exit code:\s*(-?\d+)', result_lower)
             if exit_code_match:
-                exit_code = int(exit_code_match.group(1))
-                if exit_code != 0:
-                    is_error = True
-            # Also check for explicit error messages
-            elif 'error executing code' in result_lower or 'traceback' in result_lower:
+                is_error = int(exit_code_match.group(1)) != 0
+            elif 'error executing code' in result_lower:
                 is_error = True
+            elif tool_result.startswith("Error:") or tool_result.startswith("**Execution Error:**"):
+                is_error = True
+            if 'was interrupted' in result_lower:
+                is_error = False
         
         # Build output: for code-only execution, prepend the full code
         output = ""
@@ -540,34 +556,29 @@ def _handle_execute_python_status(agent: str, tool_args: Dict[str, Any], is_comp
         send_agent_event(agent, "update", base_status, output=executing_output)
 
 
-def _handle_write_file_status(agent: str, tool_args: Dict[str, Any], is_complete: bool) -> None:
-    """Handle write_file status updates with content preview."""
+def _handle_write_file_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool) -> None:
+    """Handle write_file status updates."""
     file_path = tool_args.get('file_path') if isinstance(tool_args, dict) else None
-    content = tool_args.get('content', '') if isinstance(tool_args, dict) else ''
     
-    file_name = os.path.basename(file_path) if file_path else 'file'
+    file_name = target_name if target_name else (os.path.basename(file_path) if file_path else 'file')
     base_status = f"Writing {file_name}"
     base_complete = f"Wrote {file_name}"
     
     idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
     if is_complete:
-        # Truncate content if too long for display
-        output = ""
-        if content and isinstance(content, str):
-            output = content[:3000] if len(content) > 3000 else content
-        send_agent_event(agent, "step_complete", base_complete, output=output)
+        send_agent_event(agent, "step_complete", base_complete)
         send_agent_event(agent, "update", idle_status)
     else:
         send_agent_event(agent, "update", base_status)
 
 
-def _handle_edit_file_status(agent: str, tool_args: Dict[str, Any], is_complete: bool, tool_result: Optional[str] = None) -> None:
+def _handle_edit_file_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool, tool_result: Optional[str] = None) -> None:
     """Handle edit_file status updates with diff display."""
     file_path = tool_args.get('file_path') if isinstance(tool_args, dict) else None
     old_string = tool_args.get('old_string', '') if isinstance(tool_args, dict) else ''
     new_string = tool_args.get('new_string', '') if isinstance(tool_args, dict) else ''
     
-    file_name = os.path.basename(file_path) if file_path else 'file'
+    file_name = target_name if target_name else (os.path.basename(file_path) if file_path else 'file')
     base_status = f"Editing {file_name}"
     base_complete = f"Edited {file_name}"
     
@@ -606,10 +617,11 @@ def _handle_edit_file_status(agent: str, tool_args: Dict[str, Any], is_complete:
         send_agent_event(agent, "update", base_status)
 
 
-def _handle_list_directory_status(agent: str, tool_args: Dict[str, Any], is_complete: bool, tool_result: Optional[str] = None) -> None:
+def _handle_list_directory_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool, tool_result: Optional[str] = None) -> None:
     """Handle list_directory status updates."""
     directory_path = tool_args.get('directory_path', '.') if isinstance(tool_args, dict) else '.'
     pattern = tool_args.get('pattern', '*') if isinstance(tool_args, dict) else '*'
+    is_multi = isinstance(directory_path, list)
     
     # Detect errors in tool result
     is_error = False
@@ -617,10 +629,32 @@ def _handle_list_directory_status(agent: str, tool_args: Dict[str, Any], is_comp
         result_lower = tool_result.lower()
         if tool_result.startswith("Error:") or "not found" in result_lower or "does not exist" in result_lower or "no files found" in result_lower:
             is_error = True
+        # For multi-dir, partial errors should not flag the whole call
+        if is_multi and "**List Directory:**" in tool_result:
+            is_error = False
     
-    # Check if using default values and extract display name (basename only)
+    # Handle multi-directory case
+    if is_multi:
+        count = len(directory_path)
+        if count <= 3:
+            names = [os.path.basename(str(d).rstrip('/')) if d and d != '.' else 'workspace' for d in directory_path]
+            display = target_name if target_name else ', '.join(names)
+        else:
+            display = f"{count} directories"
+        base_status = f"Listing {display}"
+        base_complete = f"Listed {display}"
+        
+        idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
+        if is_complete:
+            send_agent_event(agent, "step_complete", base_complete, is_error=is_error)
+            send_agent_event(agent, "update", idle_status)
+        else:
+            send_agent_event(agent, "update", base_status)
+        return
+    
+    # Check if using default values and extract display name
     is_default = (directory_path == '.' or directory_path == '') and (pattern == '*' or pattern == '')
-    path_display = os.path.basename(directory_path.rstrip('/')) if directory_path and directory_path != '.' else 'workspace'
+    path_display = target_name if target_name and target_name != '.' else 'workspace'
     # Determine error type for appropriate message
     is_no_files_error = is_error and tool_result and "no files found" in tool_result.lower()
     
@@ -653,6 +687,121 @@ def _handle_list_directory_status(agent: str, tool_args: Dict[str, Any], is_comp
             else:
                 base_complete = f"Listed {path_display}"
     
+    idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
+    if is_complete:
+        send_agent_event(agent, "step_complete", base_complete, is_error=is_error)
+        send_agent_event(agent, "update", idle_status)
+    else:
+        send_agent_event(agent, "update", base_status)
+
+
+def _handle_move_file_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool, tool_result: Optional[str] = None) -> None:
+    """Handle move_file status updates."""
+    source_path = tool_args.get('source_path') if isinstance(tool_args, dict) else None
+    destination_path = tool_args.get('destination_path') if isinstance(tool_args, dict) else None
+    
+    src_display = target_name if target_name else (os.path.basename(source_path) if source_path else 'file')
+    dst_display = destination_path if destination_path else 'destination'
+    
+    base_status = f"Moving {src_display} to {dst_display}"
+    
+    is_error = False
+    if is_complete and tool_result and isinstance(tool_result, str):
+        result_lower = tool_result.lower()
+        if tool_result.startswith("Error:") or "not found" in result_lower or "already exists" in result_lower:
+            is_error = True
+            
+    idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
+    if is_complete:
+        if is_error:
+            base_complete = f"Failed to move {src_display}"
+        else:
+            base_complete = f"Moved {src_display} to {dst_display}"
+        send_agent_event(agent, "step_complete", base_complete, is_error=is_error, output=tool_result if is_error else None)
+        send_agent_event(agent, "update", idle_status)
+    else:
+        send_agent_event(agent, "update", base_status)
+
+
+def _handle_rename_file_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool, tool_result: Optional[str] = None) -> None:
+    """Handle rename_file status updates."""
+    file_path = tool_args.get('file_path') if isinstance(tool_args, dict) else None
+    new_name = tool_args.get('new_name') if isinstance(tool_args, dict) else None
+    
+    src_display = target_name if target_name else (os.path.basename(file_path) if file_path else 'file')
+    dst_display = new_name if new_name else 'new name'
+    
+    base_status = f"Renaming {src_display} to {dst_display}"
+    
+    is_error = False
+    if is_complete and tool_result and isinstance(tool_result, str):
+        result_lower = tool_result.lower()
+        if tool_result.startswith("Error:") or "not found" in result_lower or "already exists" in result_lower:
+            is_error = True
+
+    idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
+    if is_complete:
+        if is_error:
+            base_complete = f"Failed to rename {src_display}"
+        else:
+            base_complete = f"Renamed {src_display} to {dst_display}"
+        send_agent_event(agent, "step_complete", base_complete, is_error=is_error, output=tool_result if is_error else None)
+        send_agent_event(agent, "update", idle_status)
+    else:
+        send_agent_event(agent, "update", base_status)
+
+
+def _handle_delete_file_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool, tool_result: Optional[str]) -> None:
+    """Handle delete_file status updates with multi-file support."""
+    file_path_arg = tool_args.get('file_path') if isinstance(tool_args, dict) else None
+    is_multi = isinstance(file_path_arg, list)
+
+    # Detect errors in tool result
+    is_error = False
+    if is_complete and tool_result and isinstance(tool_result, str):
+        result_lower = tool_result.lower()
+        if tool_result.startswith("Error:") or "not found" in result_lower or "does not exist" in result_lower or "error deleting" in result_lower:
+            is_error = True
+        # For multi-file deletes, partial errors should not flag the whole call
+        if is_multi and "**Delete File:**" in tool_result:
+            is_error = False
+
+    # Handle validation errors or missing target name
+    if not target_name:
+        idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
+        if is_complete:
+            send_agent_event(agent, "step_complete", "Failed to delete file", is_error=True)
+            send_agent_event(agent, "update", idle_status)
+        else:
+            send_agent_event(agent, "update", "Deleting file")
+        return
+
+    # For multi-file deletes, use simplified status messages
+    if is_multi:
+        count = len(file_path_arg) if isinstance(file_path_arg, list) else 0
+        if count <= 3:
+            display = target_name  # Already comma-joined by extract_target_name
+        else:
+            display = f"{count} files"
+        base_status = f"Deleting {display}"
+        base_complete = f"Deleted {display}"
+
+        idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
+        if is_complete:
+            send_agent_event(agent, "step_complete", base_complete, is_error=is_error)
+            send_agent_event(agent, "update", idle_status)
+        else:
+            send_agent_event(agent, "update", base_status)
+        return
+
+    # Single file
+    file_name = target_name
+    base_status = f"Deleting {file_name}"
+    if is_error:
+        base_complete = f"Failed to delete {file_name}"
+    else:
+        base_complete = f"Deleted {file_name}"
+
     idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
     if is_complete:
         send_agent_event(agent, "step_complete", base_complete, is_error=is_error)
@@ -816,24 +965,39 @@ def update_agent_status(
         _handle_fetch_web_page_status(agent, tool_args, is_complete, tool_result)
         return
     
-    # Special handling for execute_python
-    if tool_name == 'execute_python':
-        _handle_execute_python_status(agent, tool_args, is_complete, tool_result)
+    # Special handling for execute_python-style tools
+    if tool_name in ('execute_python', 'execute_temporary_python'):
+        _handle_execute_python_status(agent, tool_args, target_name, is_complete, tool_result)
         return
     
     # Special handling for list_directory - show directory and pattern
     if tool_name == 'list_directory':
-        _handle_list_directory_status(agent, tool_args, is_complete, tool_result)
+        _handle_list_directory_status(agent, tool_args, target_name, is_complete, tool_result)
         return
     
     # Special handling for write_file - show content being written
     if tool_name == 'write_file':
-        _handle_write_file_status(agent, tool_args, is_complete)
+        _handle_write_file_status(agent, tool_args, target_name, is_complete)
         return
     
     # Special handling for edit_file - show diff of old and new content
     if tool_name == 'edit_file':
-        _handle_edit_file_status(agent, tool_args, is_complete, tool_result)
+        _handle_edit_file_status(agent, tool_args, target_name, is_complete, tool_result)
+        return
+    
+    # Special handling for move_file - show source and destination
+    if tool_name == 'move_file':
+        _handle_move_file_status(agent, tool_args, target_name, is_complete, tool_result)
+        return
+
+    # Special handling for rename_file - show old and new names
+    if tool_name == 'rename_file':
+        _handle_rename_file_status(agent, tool_args, target_name, is_complete, tool_result)
+        return
+    
+    # Special handling for delete_file - multi-file support and error detection
+    if tool_name == 'delete_file':
+        _handle_delete_file_status(agent, tool_args, target_name, is_complete, tool_result)
         return
     
     # Skip complete_task entirely - the evaluator handles its own "start" event
@@ -931,10 +1095,15 @@ def format_tool_status(
             'analyze_image': 'Analyze Image Failed',
             'search_web': 'Search Web Failed',
             'fetch_web_page': 'Fetch Web Page Failed',
+            'execute_temporary_python': 'Temporary Python Parse Failed',
             'grep_search': 'Grep Files Failed',
             'get_hardware_info': 'Hardware Check Failed',
         }
         return tool_error_names.get(tool_name, f"{tool_name} Failed"), is_error
+
+    if tool_name == 'execute_temporary_python':
+        base_status, base_complete = _get_execute_python_status_pair(tool_args or {})
+        return (base_complete if is_complete else base_status), is_error
     
     # Get target name for display
     target_name = extract_target_name(tool_name, tool_args) if tool_args else None

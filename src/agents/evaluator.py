@@ -13,6 +13,7 @@ from ..tools import (
     read_file,
     list_directory,
     analyze_image,
+    execute_temporary_python,
     search_web,
     fetch_web_page,
     submit_evaluation,
@@ -46,7 +47,7 @@ from .utils import (
     send_tool_status,
     update_agent_status,
 )
-from ..tools.base import get_all_files, format_file_list
+from ..context_summarizer import maybe_summarize_messages
 
 EVALUATOR_TOOL_TIMEOUT = 60
 MAX_TOOL_ITERATIONS = 50
@@ -56,6 +57,7 @@ EVALUATOR_TOOL_MAP = {
     'read_file': read_file,
     'list_directory': list_directory,
     'analyze_image': analyze_image,
+    'execute_temporary_python': execute_temporary_python,
     'search_web': search_web,
     'fetch_web_page': fetch_web_page,
     'submit_evaluation': submit_evaluation,
@@ -211,10 +213,8 @@ def evaluator_setup_node(state: State, llm_with_tools=None) -> State:
             "evaluation_messages": [],
         }
 
-    # Prepare evaluation context
-    current_files = get_all_files()
-    start_files = set(state.get('files_at_task_start', []))
-    new_files = sorted(list(current_files - start_files))
+
+
     
     operator_messages_only = [
         msg for msg in current_task_messages 
@@ -228,10 +228,15 @@ You must verify whether the operator's latest output fully satisfies the current
 
 ### Decision Protocol
 1) Analyse the Operator's execution history to determine whether the current task is scientifically satisfied. Do not assume correctness, You MUST verify that outputs, calculations, and files meaningfully meet the task requirements.
-2) If additional evidence or inspection is needed, you may use the following tools: `read_file`, `list_directory`, `analyze_image`, `search_web`, `fetch_web_page`
+2) If additional evidence or inspection is needed, you may use the following tools: `read_file`, `list_directory`, `analyze_image`, `execute_temporary_python`, `search_web`, `fetch_web_page`
+   - `execute_temporary_python` is for temporary parsing of existing files only. Use it to inspect and summarise results, not to run simulations, launch subprocesses, or modify files/system state.
 3) Once your evaluation is complete, you MUST call the `submit_evaluation` function to deliver your decision:
-    a) If all task requirements are satisfied and the outputs appear scientifically valid, call `submit_evaluation` with status="pass" and include one concise paragraph summarizing what was done in markdone format.
-    b) If any requirement is missing, incorrect, or scientifically invalid, call `submit_evaluation` with status="fail" and include one concise paragraph explaining which requirements were not met and specifying the fixes the Operator must perform next in markdown format.
+    a) If all task requirements are satisfied and the outputs appear scientifically valid, call `submit_evaluation` with status="pass" and include a concise paragraph summarizing the work performed and the information needed for the next task.
+    b) If any requirement is missing, incorrect, or scientifically invalid, call `submit_evaluation` with status="fail" and include one concise paragraph explaining which requirements were not met and specifying the fixes the Operator must perform next.
+
+### Evaluation Rules
+1) You can invoke multiple tools in a single response. For independent information requests likely to succeed, execute in parallel to maximize efficiency and performance.
+2) When reading, listing, or deleting multiple files or directories, batch them into a single read_file, list_directory, or delete_file call where supported. Otherwise, initiate multiple parallel tool calls to minimize overhead and boost efficiency.
 """
 
     evaluator_context = f"""### Project Context
@@ -256,14 +261,11 @@ You must verify whether the operator's latest output fully satisfies the current
     
     log_custom("EVALUATOR_SETUP", "Prepared evaluation context", {
         "current_task_index": current_task_index,
-        "new_files_count": len(new_files),
     })
     
     # Return state with evaluation_messages for loop node
     return {
         "evaluation_messages": evaluation_messages,
-        # Pass through new_files info via a simple mechanism - store in step_results temporarily
-        # Actually, we'll compute new_files in the loop node as well since we have files_at_task_start
     }
 
 
@@ -325,10 +327,7 @@ Do NOT call `{tool_name}` with the same arguments again.
     
     current_task = plan[current_task_index]
     
-    # Get new files for this task
-    current_files = get_all_files()
-    start_files = set(state.get('files_at_task_start', []))
-    new_files = sorted(list(current_files - start_files))
+
     
     # Count iterations from evaluation_messages length (each iteration adds at least 1 AI response)
     ai_response_count = sum(1 for msg in evaluation_messages if isinstance(msg, AIMessage))
@@ -341,8 +340,8 @@ Do NOT call `{tool_name}` with the same arguments again.
         def on_content(text):
             nonlocal accumulated_text
             accumulated_text += text
-            # Stream text to UI for real-time display
-            send_text_stream("evaluator", accumulated_text, is_complete=False)
+            # Stream delta to UI — frontend accumulates progressively
+            send_text_stream("evaluator", text, is_complete=False)
         
         def on_thought(text):
             nonlocal accumulated_thoughts
@@ -460,17 +459,11 @@ Do NOT call `{tool_name}` with the same arguments again.
             
             if status == "pass":
                 display_summary = summary
-                summary_with_files = summary
                 
-                if new_files:
-                    file_list_str = format_file_list(new_files)
-                    summary_with_files += f"\nNew Files Created for Task {current_task_index + 1}:\n{file_list_str}"
-                
-                summary_with_files += "\n"
                 display_summary += "\n"
                 
                 new_results = step_results.copy()
-                new_results[current_task_index] = summary_with_files
+                new_results[current_task_index] = display_summary
                 
                 formatted_history_passed = "\n".join([
                     f"Task {i+1}: {new_results.get(i, 'No summary recorded.')}"
@@ -549,6 +542,20 @@ Do NOT call `{tool_name}` with the same arguments again.
                 "messages": [HumanMessage(content="EVALUATION_ERROR: Max tool iterations reached without final decision.")],
                 "evaluation_messages": [],
             }
+        
+        evaluation_messages, did_summarize_context, effective_model, trigger_input = maybe_summarize_messages(
+            evaluation_messages,
+            llm_with_tools,
+            agent_name='evaluator',
+        )
+        if did_summarize_context:
+            from ..debug_logger import log_custom as _log
+            _log(
+                "EVALUATOR",
+                f"Context summarization triggered for {effective_model}: {trigger_input:,} input tokens exceeds threshold",
+            )
+            send_agent_event("evaluator", "update", "Summarizing context (token limit approaching)")
+            _log("EVALUATOR", f"Context summarized, new message count: {len(evaluation_messages)}")
         
         return {"evaluation_messages": evaluation_messages}
 

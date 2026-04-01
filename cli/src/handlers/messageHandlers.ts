@@ -2,8 +2,9 @@
  * Message Handlers for Bridge Communication
  * Extracted from Run.tsx for maintainability
  */
-import type { CommittedItem, FileContent, TaskProgress, RagStatusInfo, CheckpointMode } from '../hooks/types.js';
+import type { CommittedItem, FileContent, TaskProgress, RagStatusInfo, CheckpointMode, ContextUsage } from '../hooks/types.js';
 import { normalizePlanText } from '../utils/planParsing.js';
+import { applyPlanDeclinedState } from '../utils/stateHelpers.js';
 
 // ========== TYPES ==========
 export interface MessageHandlerContext {
@@ -19,6 +20,7 @@ export interface MessageHandlerContext {
     setPlanContent: (content: string) => void;
     setIsPlanComplete: (complete: boolean) => void;
     setTaskProgress: (progress: TaskProgress | null) => void;
+    setContextUsage: (usage: ContextUsage | null) => void;
     setCommittedItems: React.Dispatch<React.SetStateAction<CommittedItem[]>>;
     setCheckpointMode: (mode: CheckpointMode) => void;
     setPreviousInput: (input: string) => void;
@@ -32,7 +34,6 @@ export interface MessageHandlerContext {
     bridgeRef: React.MutableRefObject<any>;
     taskProgressRef: React.MutableRefObject<TaskProgress | null>;
     activeFileContentRef: React.MutableRefObject<FileContent | null>;
-    lastCodeResultIsErrorRef: React.MutableRefObject<boolean>;
     isInterruptedRef: React.MutableRefObject<boolean>;
     isPeriodicCheckinActiveRef: React.MutableRefObject<boolean>;
     resumingWithEvaluatorRef: React.MutableRefObject<boolean>;
@@ -41,7 +42,11 @@ export interface MessageHandlerContext {
     ensureHeader: (items: CommittedItem[], agentName: string, taskNum?: number) => CommittedItem[];
     genUniqueId: (prefix: string) => string;
     handleCheckpointInfo: (payload: any) => void;
+    exitIfDirectArgs: () => void;  // Exit app if direct args were used
     setStaticKey: React.Dispatch<React.SetStateAction<number>>;
+    setBannerCommitted: (committed: boolean) => void;
+    itemIdCounterRef: React.MutableRefObject<number>;
+    bumpInputPrefill: (text: string) => void;
 }
 
 export interface AgentInfo {
@@ -114,18 +119,35 @@ export function handleDoneMessage(ctx: MessageHandlerContext): void {
     if (ctx.bridgeRef.current) {
         ctx.bridgeRef.current.stdin.write(JSON.stringify({ command: 'check_checkpoint' }) + "\n");
     }
+    // Exit if direct args were used
+    ctx.exitIfDirectArgs();
 }
 
 /** Handle error messages */
 export function handleErrorMessage(ctx: MessageHandlerContext, payload: any): void {
-    const errorMsg = payload.traceback 
-        ? `Error: ${payload.message}\n\n${payload.traceback}`
-        : `Error: ${payload.message}`;
-    ctx.setMessages(prev => [...prev, { role: 'system', content: errorMsg }]);
-    console.error(`\n[Python Error]\n${payload.traceback || payload.message}\n`);
+    const mainMsg = payload.message || 'Unknown Error';
+    const detail = payload.traceback ? `\n${payload.traceback}` : '';
+    
+    ctx.setCommittedItems(prev => {
+        const currentTaskNum = ctx.taskProgressRef.current?.current;
+        const items = ctx.ensureHeader(prev, 'system', currentTaskNum);
+        return [
+            ...items,
+            {
+                id: ctx.genUniqueId('system-error'),
+                type: 'log',
+                content: `✗ System Error: ${mainMsg}${detail}`,
+                agentName: 'system',
+                taskNum: currentTaskNum
+            }
+        ];
+    });
+
     ctx.setIsLoading(false);
     ctx.setIsPeriodicCheckinActive(false);
     ctx.setPeriodicCheckinToolCall(null);
+    // Exit if direct args were used
+    ctx.exitIfDirectArgs();
 }
 
 /** Handle RAG status updates */
@@ -178,6 +200,12 @@ export function handleAgentEventMessage(ctx: MessageHandlerContext, payload: any
     const currentTaskNum = ctx.taskProgressRef.current?.current;
     const normalizedStatus = typeof agentStatusText === 'string' ? agentStatusText.trim().toLowerCase() : '';
     const isOperator = agent === 'operator';
+    const isInterruptReasonStep =
+        isOperator &&
+        event === 'step_complete' &&
+        normalizedStatus === 'interrupted execution' &&
+        typeof payload?.output === 'string' &&
+        payload.output.trim().length > 0;
 
     if (isOperator && event === 'update') {
         if (normalizedStatus.startsWith('awaiting decision after')) {
@@ -201,20 +229,9 @@ export function handleAgentEventMessage(ctx: MessageHandlerContext, payload: any
     if (event === 'step_complete') {
         ctx.activeFileContentRef.current = null;
         
-        // Use is_error from payload if provided, otherwise check for execute_python errors
-        const isExecuteCodeTool = agentStatusText?.toLowerCase().includes('executed');
         let toolIsError = payloadIsError === true;
-        
-        // Fallback: for execute_python, also check lastCodeResultIsErrorRef
-        if (!toolIsError && isExecuteCodeTool) {
-            toolIsError = ctx.lastCodeResultIsErrorRef.current;
-        }
-        
-        if (isExecuteCodeTool) {
-            ctx.lastCodeResultIsErrorRef.current = false;
-        }
 
-        if (isOperator && ctx.isPeriodicCheckinActiveRef.current) {
+        if (isOperator && ctx.isPeriodicCheckinActiveRef.current && !isInterruptReasonStep) {
             // During periodic check-ins, keep tool call status transient and overwrite in-place.
             if (agentStatusText && agentStatusText.trim()) {
                 ctx.setPeriodicCheckinToolCall({
@@ -224,56 +241,71 @@ export function handleAgentEventMessage(ctx: MessageHandlerContext, payload: any
             }
         } else {
             ctx.setCommittedItems(prev => {
-            const items = ctx.ensureHeader(prev, agent, currentTaskNum);
-            
-            const newToolItem = { 
-                id: ctx.genUniqueId(`${agent}-tool`), 
-                type: 'tool' as const, 
-                content: agentStatusText, 
-                agentName: agent,
-                isError: toolIsError,
-                taskNum: currentTaskNum
-            };
-            
-            const isStrategistInitialPlanMilestone =
-                agent === 'strategist' &&
-                (agentStatusText === 'Created Initial Plan' || agentStatusText === 'Created Initial Replan');
-            const isStrategistReviewedPlanMilestone =
-                agent === 'strategist' &&
-                (
-                    agentStatusText === 'Reviewed Plan' ||
-                    agentStatusText === 'Reviewed Replan' ||
-                    agentStatusText === 'Created Replan'
-                );
+                const items = ctx.ensureHeader(prev, agent, currentTaskNum);
 
-            // Special case: only the reviewed plan milestone renders a plan panel.
-            // The initial plan milestone just adds its tool row — no panel.
-            if (isStrategistReviewedPlanMilestone && payload.output) {
-                const normalizedPlanOutput = normalizePlanText(payload.output);
+                const newToolItem = { 
+                    id: ctx.genUniqueId(`${agent}-tool`), 
+                    type: 'tool' as const, 
+                    content: agentStatusText, 
+                    agentName: agent,
+                    isError: toolIsError,
+                    taskNum: currentTaskNum
+                };
 
-                const hasThisPlan = items.some(item =>
-                    item.id === 'execution-plan-complete' ||
-                    item.id === 'checkpoint-history-plan'
-                );
+                const newItems: CommittedItem[] = [...items, newToolItem];
 
-                if (!hasThisPlan && normalizedPlanOutput) {
-                    const planItem = {
-                        id: 'execution-plan-complete',
-                        type: 'plan' as const,
-                        content: {
-                            planContent: normalizedPlanOutput,
-                            isPlanComplete: true,
-                            isContinuation: false
-                        },
-                        agentName: 'strategist'
-                    };
+                const isStrategistInitialPlanMilestone =
+                    agent === 'strategist' &&
+                    (agentStatusText === 'Created Initial Plan' || agentStatusText === 'Created Initial Replan');
+                const isStrategistReviewedPlanMilestone =
+                    agent === 'strategist' &&
+                    (
+                        agentStatusText === 'Reviewed Plan' ||
+                        agentStatusText === 'Reviewed Replan' ||
+                        agentStatusText === 'Created Replan'
+                    );
 
-                    return [...items, planItem, newToolItem];
+                // Special case: only the reviewed plan milestone renders a plan panel.
+                // The initial plan milestone just adds its tool row — no panel.
+                if (isStrategistReviewedPlanMilestone && payload.output) {
+                    const normalizedPlanOutput = normalizePlanText(payload.output);
+
+                    const hasThisPlan = items.some(item =>
+                        item.id === 'execution-plan-complete' ||
+                        item.id === 'checkpoint-history-plan'
+                    );
+
+                    if (!hasThisPlan && normalizedPlanOutput) {
+                        newItems.push({
+                            id: 'execution-plan-complete',
+                            type: 'plan' as const,
+                            content: {
+                                planContent: normalizedPlanOutput,
+                                isPlanComplete: true,
+                                isContinuation: false
+                            },
+                            agentName: 'strategist'
+                        });
+                    }
                 }
+
+                if (isInterruptReasonStep) {
+                    newItems.push({
+                        id: ctx.genUniqueId('interrupt-reason'),
+                        type: 'interrupt-reason',
+                        content: payload.output,
+                        agentName: agent,
+                        isError: true,
+                        taskNum: currentTaskNum
+                    });
+                }
+
+                return newItems;
+            });
+            if (isInterruptReasonStep) {
+                ctx.setIsPeriodicCheckinActive(false);
+                ctx.setPeriodicCheckinToolCall(null);
             }
-            
-            return [...items, newToolItem];
-        });
         }
     } else if (event === 'log') {
         ctx.setCommittedItems(prev => {
@@ -392,32 +424,36 @@ export function handleTaskProgressMessage(ctx: MessageHandlerContext, payload: a
     }
 }
 
-/** Handle file content for code snippets */
-export function handleFileContentMessage(ctx: MessageHandlerContext, payload: any): void {
-    if (payload?.name && payload?.content) {
-        const content = { name: payload.name, content: payload.content };
-        const currentTaskNum = ctx.taskProgressRef.current?.current;
-        
-        const lastContent = ctx.activeFileContentRef.current;
-        const isDuplicate = lastContent && 
-            lastContent.name === content.name && 
-            lastContent.content === content.content;
-        
-        ctx.activeFileContentRef.current = content;
-        
-        if (!isDuplicate) {
-            ctx.setCommittedItems(prev => {
-                const items = ctx.ensureHeader(prev, 'operator', currentTaskNum);
-                return [...items, {
-                    id: `code-snippet-${Date.now()}`,
-                    type: 'code-snippet',
-                    content: { name: content.name, content: content.content, isComplete: true, isContinuation: false },
-                    agentName: 'operator',
-                    taskNum: currentTaskNum
-                }];
-            });
-        }
-    }
+/** Handle context-window usage updates */
+export function handleContextUsageMessage(ctx: MessageHandlerContext, payload: any): void {
+    ctx.setContextUsage(payload || null);
+}
+
+/** Strategist reviewed plan is ready; wait for user before operator runs */
+export function handlePlanAwaitingConfirmMessage(ctx: MessageHandlerContext): void {
+    ctx.setIsLoading(false);
+    ctx.setCheckpointMode('plan-awaiting-confirm');
+}
+
+/** User declined plan — return to input with same prompt prefilled (run ended, no auto-restart) */
+export function handlePlanDeclinedMessage(ctx: MessageHandlerContext, payload: any): void {
+    applyPlanDeclinedState({
+        setCommittedItems: ctx.setCommittedItems,
+        setBannerCommitted: ctx.setBannerCommitted,
+        setPlanContent: ctx.setPlanContent,
+        setIsPlanComplete: ctx.setIsPlanComplete,
+        setTaskProgress: ctx.setTaskProgress,
+        taskProgressRef: ctx.taskProgressRef,
+        setAgents: ctx.setAgents,
+        activeFileContentRef: ctx.activeFileContentRef,
+        setSystemStatus: ctx.setSystemStatus,
+        setStaticKey: ctx.setStaticKey,
+        itemIdCounterRef: ctx.itemIdCounterRef
+    });
+    ctx.setParsedPlan([]);
+    ctx.setIsLoading(false);
+    ctx.setCheckpointMode('normal');
+    ctx.bumpInputPrefill(typeof payload?.user_input === 'string' ? payload.user_input : '');
 }
 
 /** Handle completed run detection */
@@ -500,7 +536,6 @@ export function handleCodeResultMessage(ctx: MessageHandlerContext, payload: any
     if (payload?.output) {
         const isError = payload.success === false;
         const currentTaskNum = ctx.taskProgressRef.current?.current;
-        ctx.lastCodeResultIsErrorRef.current = isError;
         ctx.setCommittedItems(prev => {
             const items = ctx.ensureHeader(prev, 'operator', currentTaskNum);
             return [...items, {
@@ -566,8 +601,10 @@ export function createMessageHandler(ctx: MessageHandlerContext) {
             case 'task_progress':
                 handleTaskProgressMessage(ctx, msg.payload);
                 break;
+            case 'context_usage':
+                handleContextUsageMessage(ctx, msg.payload);
+                break;
             case 'file_content':
-                handleFileContentMessage(ctx, msg.payload);
                 break;
             case 'checkpoint_info':
                 ctx.setShowMainUI(true);
@@ -591,6 +628,12 @@ export function createMessageHandler(ctx: MessageHandlerContext) {
                 break;
             case 'code_result':
                 handleCodeResultMessage(ctx, msg.payload);
+                break;
+            case 'plan_awaiting_confirm':
+                handlePlanAwaitingConfirmMessage(ctx);
+                break;
+            case 'plan_declined':
+                handlePlanDeclinedMessage(ctx, msg.payload);
                 break;
         }
     };

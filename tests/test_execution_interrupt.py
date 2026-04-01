@@ -12,8 +12,12 @@ import os
 import signal
 import time
 import subprocess
+import tempfile
+from collections import deque
 from unittest.mock import patch, MagicMock, call
 from pathlib import Path
+
+DEFAULT_TIMEOUT_MINUTES = 60.0
 
 
 class TestInterruptRunningExecution:
@@ -35,7 +39,6 @@ class TestInterruptRunningExecution:
         execution_module._process_pgid = 12345
         execution_module._process_start_time = time.time()
         execution_module._process_script_path = mock_workspace / "test_script.py"
-        execution_module._process_files_before = set()
         
         # Mock os.killpg
         with patch('os.killpg') as mock_killpg:
@@ -83,7 +86,6 @@ class TestInterruptRunningExecution:
         execution_module._process_pgid = 99999
         execution_module._process_start_time = time.time()
         execution_module._process_script_path = mock_workspace / "stubborn_script.py"
-        execution_module._process_files_before = set()
         
         with patch('os.killpg') as mock_killpg:
             # Configure mock to track calls but not actually kill anything
@@ -130,6 +132,250 @@ class TestInterruptExecutionTool:
         
         assert result == "CONTINUE_EXECUTION"
 
+    def test_execute_temporary_python_parses_existing_results(self, mock_workspace):
+        """Check-in temporary Python should be able to parse current result files."""
+        from src.tools.execution_check import execute_temporary_python
+
+        result_file = mock_workspace / "simulation.out"
+        result_file.write_text("step=1\nstep=2\nstatus=running\n", encoding="utf-8")
+
+        result = execute_temporary_python.invoke({
+            "code": (
+                "from pathlib import Path\n"
+                "lines = Path('simulation.out').read_text().strip().splitlines()\n"
+                "print(lines[-1])\n"
+            ),
+        })
+
+        assert "**Execution Result:**" in result
+        assert "executed successfully" in result
+        assert "status=running" in result
+
+    def test_execute_temporary_python_rejects_blank_code(self):
+        """The temp parser should require non-empty inline code."""
+        from src.tools.execution_check import execute_temporary_python
+
+        result = execute_temporary_python.invoke({"code": "   \n\t"})
+
+        assert result == "Error: 'code' must be provided."
+
+    def test_execute_temporary_python_allows_read_only_open_mode(self, mock_workspace):
+        """Read-only file parsing via open(..., 'r') should remain allowed."""
+        from src.tools.execution_check import execute_temporary_python
+
+        result_file = mock_workspace / "simulation.out"
+        result_file.write_text("status=complete\n", encoding="utf-8")
+
+        result = execute_temporary_python.invoke({
+            "code": (
+                "with open('simulation.out', 'r', encoding='utf-8') as handle:\n"
+                "    print(handle.read().strip())\n"
+            ),
+        })
+
+        assert "**Execution Result:**" in result
+        assert "status=complete" in result
+
+    def test_execute_temporary_python_does_not_replace_running_execution_state(self, mock_workspace):
+        """The temp check-in parser must not clobber the live simulation tracking globals."""
+        from src.tools.execution_check import execute_temporary_python
+        import src.tools.execution as execution_module
+
+        sentinel_process = MagicMock()
+        original_state = {
+            "_running_process": sentinel_process,
+            "_process_pgid": 4242,
+            "_process_start_time": 123.0,
+            "_process_script_path": mock_workspace / "live_simulation.py",
+            "_process_timeout_seconds": 3600.0,
+            "_process_timeout_minutes": 60.0,
+            "_process_use_temp_file": False,
+        }
+
+        for key, value in original_state.items():
+            setattr(execution_module, key, value)
+
+        try:
+            result = execute_temporary_python.invoke({
+                "code": "print('parsed')",
+            })
+
+            assert "parsed" in result
+            for key, value in original_state.items():
+                current_value = getattr(execution_module, key)
+                if key == "_running_process":
+                    assert current_value is value
+                else:
+                    assert current_value == value
+        finally:
+            execution_module._running_process = None
+            execution_module._process_pgid = None
+            execution_module._process_start_time = None
+            execution_module._process_script_path = None
+            execution_module._process_timeout_seconds = None
+            execution_module._process_timeout_minutes = None
+            execution_module._process_use_temp_file = False
+
+    def test_execute_temporary_python_rejects_subprocess_usage(self):
+        """Temp check-in parsing should not be able to launch subprocesses."""
+        from src.tools.execution_check import execute_temporary_python
+
+        result = execute_temporary_python.invoke({
+            "code": "import subprocess\nprint('nope')",
+        })
+
+        assert "cannot use the subprocess module" in result
+
+    @pytest.mark.parametrize(
+        ("code", "expected_fragment", "blocked_path"),
+        [
+            (
+                "open('mutated.txt', mode='w', encoding='utf-8').write('bad')",
+                "file writes via open(...)",
+                "mutated.txt",
+            ),
+            (
+                "from pathlib import Path\nPath('mutated.txt').open('a', encoding='utf-8').write('bad')",
+                "file writes via Path.open(...)",
+                "mutated.txt",
+            ),
+            (
+                "import importlib\nprint(importlib.import_module('subprocess').__name__)",
+                "subprocess module",
+                None,
+            ),
+            (
+                "print(__import__('multiprocessing').__name__)",
+                "multiprocessing",
+                None,
+            ),
+        ],
+    )
+    def test_execute_temporary_python_blocks_common_guardrail_bypasses(
+        self,
+        mock_workspace,
+        code,
+        expected_fragment,
+        blocked_path,
+    ):
+        """Temp parsing should reject common write-mode and dynamic-import bypasses."""
+        from src.tools.execution_check import execute_temporary_python
+
+        result = execute_temporary_python.invoke({"code": code})
+
+        assert result.startswith("Error:")
+        assert expected_fragment in result
+        if blocked_path is not None:
+            assert not (mock_workspace / blocked_path).exists()
+
+    def test_execute_temporary_python_rejects_filesystem_mutation(self):
+        """Temp check-in parsing should not be able to modify files."""
+        from src.tools.execution_check import execute_temporary_python
+
+        result = execute_temporary_python.invoke({
+            "code": "from pathlib import Path\nPath('status.txt').write_text('mutated')",
+        })
+
+        assert "cannot use" in result
+        assert "without modifying files or the system" in result
+
+    def test_execute_temporary_python_rejects_file_path_override(self):
+        """The temp parser should explicitly reject file_path instead of silently ignoring it."""
+        from src.tools.execution_check import execute_temporary_python
+
+        result = execute_temporary_python.invoke({
+            "code": "print('parsed')",
+            "file_path": "status.py",
+        })
+
+        assert "file_path" in result
+        assert "not supported" in result
+
+    def test_execute_temporary_python_rejects_timeout_override(self):
+        """The temp parser should enforce its fixed timeout contract."""
+        from src.tools.execution_check import execute_temporary_python
+
+        result = execute_temporary_python.invoke({
+            "code": "print('parsed')",
+            "timeout": 0.1,
+        })
+
+        assert "timeout" in result
+        assert "fixed" in result
+
+    def test_execute_temporary_python_uses_fixed_timeout_wrapper(self):
+        """Temp check-in parsing should delegate to execute_python with a fixed timeout."""
+        from src.tools.execution_check import execute_temporary_python
+
+        with patch('src.tools.execution_check.execute_python_with_state_preserved', return_value="ok") as mock_exec:
+            result = execute_temporary_python.invoke({"code": "print('parsed')"})
+
+        assert result == "ok"
+        mock_exec.assert_called_once_with(timeout=5.0, code="print('parsed')")
+
+    def test_execute_temporary_python_cleans_up_temp_script(self, mock_workspace):
+        """Temp parsing should not leak disposable execution scripts."""
+        from src.tools.execution_check import execute_temporary_python
+
+        real_mkstemp = tempfile.mkstemp
+        created_temp_files = []
+
+        def spy_mkstemp(*args, **kwargs):
+            fd, path = real_mkstemp(*args, **kwargs)
+            created_temp_files.append(Path(path))
+            return fd, path
+
+        with patch('tempfile.mkstemp', side_effect=spy_mkstemp):
+            result = execute_temporary_python.invoke({"code": "print('parsed')"})
+
+        assert "parsed" in result
+        assert created_temp_files
+        for temp_path in created_temp_files:
+            assert not temp_path.exists(), f"Temp file leaked: {temp_path}"
+
+    def test_execute_temporary_python_does_not_override_original_output_capture(self, mock_workspace):
+        """The temp parser should restore the original output capture object after it finishes."""
+        from src.tools.execution_check import execute_temporary_python
+        import src.tools.execution as execution_module
+
+        original_capture = execution_module.OutputCaptureState(
+            stdout_chunks=deque(["live stdout\n"]),
+            stderr_chunks=deque(["live stderr\n"]),
+            stdout_size=len("live stdout\n"),
+            stderr_size=len("live stderr\n"),
+        )
+        execution_module._process_output_capture = original_capture
+        execution_module._running_process = MagicMock()
+        execution_module._process_pgid = 4242
+        execution_module._process_start_time = 123.0
+        execution_module._process_script_path = mock_workspace / "live_simulation.py"
+        execution_module._process_timeout_seconds = 3600.0
+        execution_module._process_timeout_minutes = 60.0
+        execution_module._process_use_temp_file = False
+
+        try:
+            result = execute_temporary_python.invoke({"code": "print('parsed')"})            
+            assert "parsed" in result
+            assert execution_module._process_output_capture is original_capture
+            assert list(original_capture.stdout_chunks) == ["live stdout\n"]
+            assert list(original_capture.stderr_chunks) == ["live stderr\n"]
+        finally:
+            execution_module._running_process = None
+            execution_module._process_pgid = None
+            execution_module._process_start_time = None
+            execution_module._process_script_path = None
+            execution_module._process_timeout_seconds = None
+            execution_module._process_timeout_minutes = None
+            execution_module._process_use_temp_file = False
+            execution_module._process_output_capture = None
+
+    def test_execute_temporary_python_is_not_part_of_general_operator_tools(self):
+        """The temp parser should only be available in check-ins, not the main tool list."""
+        from src.tools import get_all_tools
+
+        tool_names = {tool.name for tool in get_all_tools()}
+        assert "execute_temporary_python" not in tool_names
+
 
 class TestProcessGroupTermination:
     """Tests for proper process group termination to ensure child processes are killed."""
@@ -147,8 +393,8 @@ class TestProcessGroupTermination:
         mock_process.returncode = 0
         
         with patch('os.getpgid', return_value=11111), \
-             patch('src.tools.execution.get_all_files', return_value=set()):
-            execute_python.invoke({"code": "print('test')"})
+             patch('src.tools.execution._find_processes_in_group', return_value=[]):
+            execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "code": "print('test')"})
         
         # Verify Popen was called with start_new_session=True
         popen_call = mock_popen.call_args
@@ -168,23 +414,35 @@ class TestProcessGroupTermination:
         mock_process.pid = 22222
         
         # Simulate long-running process that triggers check-in
-        with patch('os.getpgid', return_value=22222) as mock_getpgid, \
-             patch('src.tools.execution._get_check_interval', return_value=0.01), \
-             patch('src.tools.execution.get_all_files', return_value=set()), \
-             patch('time.sleep'):  # Speed up the test
+        try:
+            with patch('os.getpgid', return_value=22222) as mock_getpgid, \
+                 patch('src.tools.execution._get_check_interval', return_value=0.01), \
+                 patch('src.tools.execution._find_processes_in_group', return_value=[]), \
+                 patch('time.sleep'):  # Speed up the test
+                
+                # Process never completes (poll returns None)
+                mock_process.poll.return_value = None
+                mock_process.communicate.return_value = ("", "")
+                
+                result = execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "code": "import time; time.sleep(100)"})
             
-            # Process never completes (poll returns None)
-            mock_process.poll.return_value = None
-            mock_process.communicate.return_value = ("", "")
+            # Verify getpgid was called to get the process group ID
+            mock_getpgid.assert_called_with(22222)
             
-            result = execute_python.invoke({"code": "import time; time.sleep(100)"})
-        
-        # Verify getpgid was called to get the process group ID
-        mock_getpgid.assert_called_with(22222)
-        
-        # Verify result is a check-in request (since process didn't complete)
-        assert isinstance(result, dict)
-        assert result.get('status') == 'check_in_required'
+            # Verify the process group is tracked globally for cleanup
+            assert execution_module._process_pgid == 22222
+            
+            # Verify result is a check-in request (since process didn't complete)
+            assert isinstance(result, dict)
+            assert result.get('status') == 'check_in_required'
+        finally:
+            execution_module._running_process = None
+            execution_module._process_pgid = None
+            execution_module._process_start_time = None
+            execution_module._process_script_path = None
+            execution_module._process_timeout_seconds = None
+            execution_module._process_timeout_minutes = None
+            execution_module._process_use_temp_file = False
 
 
 class TestAgentInterruptExecution:
@@ -206,7 +464,6 @@ class TestAgentInterruptExecution:
         execution_module._process_pgid = 33333
         execution_module._process_start_time = time.time() - 3600  # Running for 1 hour
         execution_module._process_script_path = mock_workspace / "long_running.py"
-        execution_module._process_files_before = set()
         
         # Step 1: Agent calls interrupt_execution tool (returns marker)
         tool_result = interrupt_execution.invoke({
@@ -263,7 +520,6 @@ class TestSigintHandlerKillsSubprocess:
         execution_module._process_pgid = 44444
         execution_module._process_start_time = time.time()
         execution_module._process_script_path = mock_workspace / "running_script.py"
-        execution_module._process_files_before = set()
         
         # Verify has_running_process returns True
         assert has_running_process() == True
@@ -303,7 +559,7 @@ proc.wait()
         # Start execution in a way that we can interrupt
         # We use a very short check interval to quickly get control back
         with patch('src.tools.execution._get_check_interval', return_value=0.5):
-            result = execute_python.invoke({"file_path": str(script_path)})
+            result = execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "file_path": str(script_path)})
         
         # If we got a check-in request, we have a running process
         if isinstance(result, dict) and result.get('status') == 'check_in_required':
@@ -403,7 +659,7 @@ except Exception as e:
         # 3. Execute this script
         # Use short check interval to ensure we can interrupt it
         with patch('src.tools.execution._get_check_interval', return_value=0.5):
-             result = execute_python.invoke({"file_path": str(user_script_path)})
+             result = execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "file_path": str(user_script_path)})
         
         # 4. Verify it's running (check-in required)
         assert isinstance(result, dict)
@@ -452,7 +708,7 @@ print("Process finished (unexpectedly)")
 
         # 2. Start running
         with patch('src.tools.execution._get_check_interval', return_value=0.5):
-             result = execute_python.invoke({"file_path": str(user_script_path)})
+             result = execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "file_path": str(user_script_path)})
         
         assert isinstance(result, dict)
         assert result.get('status') == 'check_in_required'

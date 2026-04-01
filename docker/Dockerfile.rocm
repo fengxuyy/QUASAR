@@ -1,3 +1,17 @@
+# ==========================================
+# STAGE 0: CLI Bundle
+# ==========================================
+FROM node:20-bookworm-slim AS cli-builder
+
+WORKDIR /build
+
+COPY cli/package.json cli/package-lock.json cli/tsconfig.json /build/cli/
+COPY cli/src /build/cli/src
+COPY scripts/build_frontend.sh /build/scripts/build_frontend.sh
+
+RUN bash /build/scripts/build_frontend.sh
+
+# ==========================================
 # STAGE 1: Builder (Compilers & Build Tools)
 # ==========================================
 FROM rocm/dev-ubuntu-24.04:6.4.4-complete AS builder
@@ -102,27 +116,25 @@ ENV HOME=/workspace
 ENV TOKENIZERS_PARALLELISM=false
 ENV OMPI_ALLOW_RUN_AS_ROOT=1
 ENV OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+ENV QUASAR_BRIDGE_PATH=/app/bridge.py
+ENV QUASAR_PYTHON_PATH=/usr/bin/python3
 
 VOLUME ["/workspace"]
 
-
-# Install Node.js 20.x and build tools for native modules
-RUN apt-get update && apt-get install -y gnupg build-essential python3 && \
+# Install Node.js runtime only for the bundled CLI
+RUN apt-get update && apt-get install -y --no-install-recommends gnupg && \
     mkdir -p /etc/apt/keyrings && \
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list && \
     apt-get update && \
-    apt-get install -y nodejs && \
-    npm install -g npm@latest
+    apt-get install -y --no-install-recommends nodejs && \
+    apt-get purge -y --auto-remove gnupg && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# Copy and build Node.js CLI
-COPY cli /app/cli
-RUN cd /app/cli && \
-    npm install && \
-    npm run build && \
-    chmod +x /app/cli/dist/cli.js && \
-    # Create symlink for easier access
-    ln -s /app/cli/dist/cli.js /usr/local/bin/quasar
-
+COPY --from=cli-builder /build/quasar_node /app/quasar_node
+RUN test -f /app/quasar_node/dist/cli.js && \
+    chmod +x /app/quasar_node/dist/cli.js && \
+    ln -sf /app/quasar_node/dist/cli.js /usr/local/bin/quasar
 
 CMD ["quasar"]

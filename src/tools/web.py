@@ -1,7 +1,7 @@
 from langchain_core.tools import tool
 
 @tool
-def search_web(query: str, max_results: int = 5) -> str:
+def search_web(query: str, max_results: int = 10) -> str:
     """Search the web and return structured results with URLs for each result.
     
     This tool returns search results with URLs, allowing you to identify and access
@@ -12,7 +12,7 @@ def search_web(query: str, max_results: int = 5) -> str:
     
     Args:
         query: The search query string
-        max_results: Maximum number of results to return (default: 5)
+        max_results: Maximum number of results to return (default: 10)
     
     Returns:
         A formatted string listing search results with titles, URLs, and snippets.
@@ -52,7 +52,7 @@ def search_web(query: str, max_results: int = 5) -> str:
 
 
 @tool
-def fetch_web_page(url: str, max_length: int = 7000) -> str:
+def fetch_web_page(url: str, max_length: int = 15000) -> str:
     """Fetch and parse the content of a web page using BeautifulSoup.
     
     Use this tool after search_web to get the full content of a specific web page.

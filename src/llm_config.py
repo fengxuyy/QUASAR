@@ -32,16 +32,20 @@ def _infer_provider_from_model(model_name: str) -> str:
 
 
 def initialize_llm():
-    """Initialize the LLM by inferring the provider from the model name."""
+    """Initialize the LLM by inferring the provider from the model name.
+    
+    Returns (None, None) if MODEL or MODEL_API_KEY are not set — the CLI will
+    surface these as required settings before allowing a prompt to be submitted.
+    """
     model = os.getenv("MODEL")
     if not model:
-        raise ValueError("MODEL environment variable is required.")
+        return None, None
         
     provider = _infer_provider_from_model(model)
     api_key = os.getenv("MODEL_API_KEY")
     
     if not api_key:
-        raise ValueError("MODEL_API_KEY environment variable is required.")
+        return None, None
     
     os.environ["MODEL"] = model
     
@@ -65,8 +69,8 @@ def initialize_llm():
         llm = ChatOpenAI(model=model, api_key=api_key, stream_usage=True)
         return llm, model
     
-    # OpenAI-compatible models that need a custom base URL
-    # Check both API_BASE_URL and OPENAI_API_BASE (web UI uses OPENAI_API_BASE)
+    # OpenAI-compatible models that need a custom base URL.
+    # Support both environment variable names for compatibility.
     base_url = os.getenv("API_BASE_URL") or os.getenv("OPENAI_API_BASE")
     if not base_url:
         raise ValueError(
@@ -107,9 +111,39 @@ def _create_llm_for_model(model: str, api_key: str, base_url: str = None):
 
 
 def initialize_llm_for_agent(agent_name: str, fallback_llm=None, fallback_model_name=None):
-    """Initialize an LLM for a specific agent.
+    """Initialize an LLM for a specific agent, falling back to the primary model.
     
-    In the free tier version, per-agent model configuration is disabled.
-    All agents use the primary model.
+    Checks for {AGENT_NAME}_MODEL env var. If set, creates a dedicated LLM
+    for that agent. Otherwise returns the fallback (primary) LLM.
+    
+    Args:
+        agent_name: Agent name (e.g., 'strategist', 'operator', 'evaluator')
+        fallback_llm: The primary LLM to fall back to
+        fallback_model_name: The primary model name to fall back to
+        
+    Returns:
+        Tuple of (llm, model_name)
     """
-    return fallback_llm, fallback_model_name
+    prefix = agent_name.upper()
+    model = os.getenv(f"{prefix}_MODEL")
+    
+    if not model:
+        return fallback_llm, fallback_model_name
+    
+    # Agent-specific API key, falling back to the primary API key
+    api_key = os.getenv(f"{prefix}_MODEL_API_KEY") or os.getenv("MODEL_API_KEY")
+    if not api_key:
+        raise ValueError(
+            f"API key required for {agent_name} model '{model}'. "
+            f"Set {prefix}_MODEL_API_KEY or MODEL_API_KEY."
+        )
+    
+    # Agent-specific base URL, falling back to primary base URL
+    base_url = (
+        os.getenv(f"{prefix}_API_BASE_URL") 
+        or os.getenv("API_BASE_URL") 
+        or os.getenv("OPENAI_API_BASE")
+    )
+    
+    llm = _create_llm_for_model(model, api_key, base_url)
+    return llm, model

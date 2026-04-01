@@ -18,9 +18,6 @@ const colors = {
 };
 
 function printBanner(): void {
-    const model = process.env.MODEL || 'unknown';
-    const pmgConfigured = !!process.env.PMG_MAPI_KEY;
-    
     // Same ASCII logo as Banner.tsx - ensure all lines have same length
     const logoLines = [
         '    ██████    █████  █████   █████████    █████████    █████████   ███████████',
@@ -38,7 +35,7 @@ function printBanner(): void {
     const boxWidth = maxLen;
     
     const subtitle = 'Quantum Universal Autonomous System for Atomistic Research';
-    const separator = '─'.repeat(boxWidth);
+    const version = 'v0.2.0';
     
     // Helper to pad line to exact width
     const padLine = (text: string) => text + ' '.repeat(Math.max(0, boxWidth - text.length));
@@ -58,18 +55,11 @@ function printBanner(): void {
     const subtitleLine = ' '.repeat(subtitlePadding) + subtitle;
     console.log(`${colors.cyan}│  ${colors.reset}${padLine(subtitleLine)}${colors.cyan}  │${colors.reset}`);
     
-    console.log(`${colors.cyan}│${' '.repeat(boxWidth + 4)}│${colors.reset}`);
-    console.log(`${colors.cyan}│  ${colors.dim}${separator}${colors.reset}${colors.cyan}  │${colors.reset}`);
+    // Center the version
+    const versionPadding = Math.floor((boxWidth - version.length) / 2);
+    const versionLine = ' '.repeat(versionPadding) + version;
+    console.log(`${colors.cyan}│  ${colors.dim}${padLine(versionLine)}${colors.cyan}  │${colors.reset}`);
     
-    const modelLine = `Model: ${model}`;
-    console.log(`${colors.cyan}│  ${colors.dim}Model: ${colors.reset}${colors.cyan}${model}${' '.repeat(Math.max(0, boxWidth - modelLine.length))}${colors.cyan}  │${colors.reset}`);
-    
-    if (pmgConfigured) {
-        const mpLine = 'Materials Project API: Configured';
-        console.log(`${colors.cyan}│  ${colors.dim}Materials Project API: ${colors.reset}${colors.green}Configured${' '.repeat(Math.max(0, boxWidth - mpLine.length))}${colors.cyan}  │${colors.reset}`);
-    }
-    
-    console.log(`${colors.cyan}│  ${colors.dim}${separator}${colors.reset}${colors.cyan}  │${colors.reset}`);
     console.log(`${colors.cyan}│${' '.repeat(boxWidth + 4)}│${colors.reset}`);
     console.log(`${colors.cyan}╰${'─'.repeat(boxWidth + 4)}╯${colors.reset}`);
     console.log('');
@@ -90,10 +80,11 @@ function printError(message: string): void {
 export function runHeadless(prompt: string, flags: any): void {
     printBanner();
     printStatus('Initializing...');
-    
-    // Find bridge.py — prefer path injected by quasar_launcher (pip install)
-    let bridgePath: string | undefined = process.env.QUASAR_BRIDGE_PATH;
 
+    const restartFromEnv = ['true', '1', 'yes', 'on'].includes((process.env.IF_RESTART || '').toLowerCase());
+    const isResume = Boolean(flags.resume || flags.restart || restartFromEnv);
+    
+    let bridgePath = process.env.QUASAR_BRIDGE_PATH;
     if (!bridgePath) {
         const candidates = [
             path.resolve(process.cwd(), '../bridge.py'),
@@ -107,7 +98,7 @@ export function runHeadless(prompt: string, flags: any): void {
             }
         }
     }
-
+    
     if (!bridgePath) {
         printError('Could not find bridge.py');
         process.exit(1);
@@ -117,7 +108,10 @@ export function runHeadless(prompt: string, flags: any): void {
     const child = spawn(pythonBin, [bridgePath], {
         cwd: path.dirname(bridgePath),
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env }
+        env: {
+            ...process.env,
+            IF_RESTART: isResume ? 'true' : (process.env.IF_RESTART || 'false')
+        }
     });
 
     let runCompleted = false;
@@ -135,19 +129,29 @@ export function runHeadless(prompt: string, flags: any): void {
                 // Handle different message types
                 if (msg.type === 'model_name') {
                     // Model info received
+                } else if (msg.type === 'init') {
+                    // Check if model initialized successfully
+                    if (!msg.payload?.model) {
+                        const warning = msg.payload?.warning || 'MODEL and MODEL_API_KEY environment variables are required.';
+                        printError(`Model not configured: ${warning}`);
+                        child.stdin.end();
+                        process.exit(1);
+                    }
                 } else if (msg.type === 'rag_status') {
                     if (msg.payload?.status === 'done') {
                         printSuccess('RAG initialized');
                     }
+                } else if (msg.type === 'plan_awaiting_confirm') {
+                    child.stdin.write(JSON.stringify({ command: 'plan_confirm', proceed: true }) + '\n');
                 } else if (msg.type === 'system_ready') {
                     // Don't print anything for system ready, print "System Running..." instead
                     printStatus('System Running...');
-                    // Send the prompt
-                    const restartFromEnv = ['true', '1', 'yes', 'on'].includes((process.env.IF_RESTART || '').toLowerCase());
-                    child.stdin.write(JSON.stringify({ 
-                        command: 'prompt', 
-                        content: prompt, 
-                        restart: flags.restart || restartFromEnv 
+                    // Resume reuses the existing checkpoint, so it must NOT send restart: true.
+                    // The interactive auto-resume path sends an empty prompt with restart: false.
+                    child.stdin.write(JSON.stringify({
+                        command: 'prompt',
+                        content: isResume ? '' : prompt,
+                        restart: false
                     }) + '\n');
                 } else if (msg.type === 'agent_event') {
                     // Don't print agent events in headless mode - keep it minimal
@@ -163,7 +167,10 @@ export function runHeadless(prompt: string, flags: any): void {
                             // stdin might already be closed
                         }
                         child.stdin.end();
-
+                        // Exit after a brief delay to allow cleanup
+                        setTimeout(() => {
+                            process.exit(0);
+                        }, 100);
                     }
                 } else if (msg.type === 'error') {
                     printError(msg.payload?.message || 'Unknown error');
