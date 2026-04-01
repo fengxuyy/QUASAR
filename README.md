@@ -14,7 +14,7 @@
 
 A research-ready autonomous computational chemistry agentic system. QUASAR covers the full atomistic simulation pipeline with integrated tools including Density Functional Theory (DFT), Machine Learning Potentials (MLP), Molecular Dynamics (MD), and Grand Canonical Monte Carlo (GCMC), allowing scientists to rapidly iterate on hypotheses, explore large design spaces, and accelerate the discovery of novel materials and phenomena.
 
-Documentation: [QUASAR-CHEM Docs](https://fengxuyy.github.io/QUASAR-CHEM/)
+Documentation: [QUASAR-CHEM Docs](https://fengxuyy.github.io/QUASAR/)
 
 <details>
 <summary><strong>New Features</strong></summary>
