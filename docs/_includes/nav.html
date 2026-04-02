@@ -4,8 +4,15 @@
     {% if page.url == item.url %}
       {% assign is_active = true %}
     {% endif %}
-    <a class="nav-link{% if is_active %} is-active{% endif %}" href="{{ item.url | relative_url }}">
-      <span>{{ item.title }}</span>
-    </a>
+    <div class="nav-item{% if is_active %} is-active{% endif %}">
+      <a class="nav-link{% if is_active %} is-active{% endif %}" href="{{ item.url | relative_url }}"{% if is_active %} data-active-nav-link{% endif %}>
+        <span>{{ item.title }}</span>
+      </a>
+      {% if is_active %}
+        <div class="nav-subsections" data-page-sections hidden>
+          <nav class="section-nav" aria-label="{{ item.title }} sections" data-section-nav></nav>
+        </div>
+      {% endif %}
+    </div>
   {% endfor %}
 </nav>

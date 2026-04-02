@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>CLI | QUASAR</title>
-    <meta name="description" content="Run QUASAR from the terminal.">
+    <title>Contact | QUASAR</title>
+    <meta name="description" content="How to contact the QUASAR team for support, bug reports, and collaboration.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
@@ -65,14 +65,10 @@
   
     
     
-    <div class="nav-item is-active">
-      <a class="nav-link is-active" href="/QUASAR/cli/" data-active-nav-link>
+    <div class="nav-item">
+      <a class="nav-link" href="/QUASAR/cli/">
         <span>CLI</span>
       </a>
-      
-        <div class="nav-subsections" data-page-sections hidden>
-          <nav class="section-nav" aria-label="CLI sections" data-section-nav></nav>
-        </div>
       
     </div>
   
@@ -105,10 +101,14 @@
   
     
     
-    <div class="nav-item">
-      <a class="nav-link" href="/QUASAR/contact/">
+    <div class="nav-item is-active">
+      <a class="nav-link is-active" href="/QUASAR/contact/" data-active-nav-link>
         <span>Contact</span>
       </a>
+      
+        <div class="nav-subsections" data-page-sections hidden>
+          <nav class="section-nav" aria-label="Contact sections" data-section-nav></nav>
+        </div>
       
     </div>
   
@@ -120,62 +120,41 @@
         <main class="content">
           
             
-              <p class="eyebrow">Interface</p>
+              <p class="eyebrow">Support</p>
             
-            <h1>CLI</h1>
+            <h1>Contact</h1>
             
-              <p class="page-lead">The CLI supports interactive work, checkpoint management, and run history browsing.</p>
+              <p class="page-lead">Use the channels below for technical issues, feature requests, and collaboration inquiries.</p>
             
           
-          <h2 id="command-reference">Command Reference</h2>
-
-<table>
+          <table>
   <thead>
     <tr>
-      <th>Command</th>
-      <th>What it does</th>
+      <th>Topic</th>
+      <th>Best Channel</th>
+      <th>Details</th>
     </tr>
   </thead>
   <tbody>
     <tr>
-      <td><code class="language-plaintext highlighter-rouge">quasar</code></td>
-      <td>Starts the interactive CLI run flow.</td>
+      <td>Bugs and reproducible technical issues</td>
+      <td><a href="https://github.com/fengxuyy/QUASAR/issues">GitHub Issues</a></td>
+      <td>Use the issue tracker for problems that other users may also encounter.</td>
     </tr>
     <tr>
-      <td><code class="language-plaintext highlighter-rouge">quasar "..."</code></td>
-      <td>Runs a direct prompt in headless mode.</td>
+      <td>Feature requests and workflow suggestions</td>
+      <td><a href="https://github.com/fengxuyy/QUASAR/issues">GitHub Issues</a></td>
+      <td>Describe the scientific workflow, the current limitation, and the improvement you want to see.</td>
     </tr>
     <tr>
-      <td><code class="language-plaintext highlighter-rouge">quasar --resume</code></td>
-      <td>Resumes from an active checkpoint and forces restart semantics.</td>
+      <td>Collaboration, advanced features, beta access, or partnership inquiries</td>
+      <td><a href="mailto:j.evans@adelaide.edu.au">j.evans@adelaide.edu.au</a></td>
+      <td>Use email for project discussions that are better handled directly.</td>
     </tr>
     <tr>
-      <td><code class="language-plaintext highlighter-rouge">quasar --clear</code></td>
-      <td>Clears the active checkpoint and current workspace state, but keeps archived runs.</td>
-    </tr>
-    <tr>
-      <td><code class="language-plaintext highlighter-rouge">quasar --fresh</code></td>
-      <td>Clears current workspace state and archived runs, while preserving downloaded docs and dotfiles.</td>
-    </tr>
-    <tr>
-      <td><code class="language-plaintext highlighter-rouge">quasar --history</code></td>
-      <td>Opens an interactive per-task checkpoint history browser.</td>
-    </tr>
-    <tr>
-      <td><code class="language-plaintext highlighter-rouge">quasar --config</code></td>
-      <td>Shows current configuration values.</td>
-    </tr>
-    <tr>
-      <td><code class="language-plaintext highlighter-rouge">quasar --config validate</code></td>
-      <td>Verifies required configuration such as <code class="language-plaintext highlighter-rouge">MODEL_API_KEY</code>.</td>
-    </tr>
-    <tr>
-      <td><code class="language-plaintext highlighter-rouge">quasar --info</code></td>
-      <td>Prints system and environment context such as workspace path and platform.</td>
-    </tr>
-    <tr>
-      <td><code class="language-plaintext highlighter-rouge">quasar --no-rag "..."</code></td>
-      <td>Runs without documentation retrieval for that specific prompt.</td>
+      <td>Source code and project updates</td>
+      <td><a href="https://github.com/fengxuyy/QUASAR">QUASAR on GitHub</a></td>
+      <td>Browse the repository, documentation sources, and current development activity.</td>
     </tr>
   </tbody>
 </table>

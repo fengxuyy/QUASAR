@@ -2,8 +2,8 @@
   url: /
 - title: Quick Tutorial
   url: /quick-tutorial/
-- title: Getting Started
-  url: /getting-started/
+- title: Get Started
+  url: /installation/
 - title: CLI
   url: /cli/
 - title: Configuration
@@ -12,3 +12,5 @@
   url: /workspace-history/
 - title: Extending QUASAR
   url: /extending-quasar/
+- title: Contact
+  url: /contact/

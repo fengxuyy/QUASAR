@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Get Started | QUASAR</title>
+    <meta name="description" content="Set up and launch QUASAR with Docker, Singularity, or local deployment.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/QUASAR/assets/styles.css">
+    <script defer src="/QUASAR/assets/docs-nav.js"></script>
+  </head>
+  <body>
+    <div class="page-glow page-glow-a"></div>
+    <div class="page-glow page-glow-b"></div>
+    <div class="site-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <a class="brand" href="/QUASAR/" aria-label="QUASAR documentation home">
+            <img src="/QUASAR/assets/quasar-logo.png" alt="QUASAR wordmark">
+            <span class="brand-tag">Documentation</span>
+          </a>
+          <span class="brand-version" aria-label="QUASAR version">v0.2.0</span>
+        </div>
+        <div class="topbar-actions">
+          <a class="github-icon-button" href="https://github.com/fengxuyy/QUASAR" target="_blank" rel="noopener noreferrer" aria-label="QUASAR on GitHub">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+          </a>
+        </div>
+      </header>
+
+      <div class="site-body">
+        <aside class="sidebar">
+          <div class="sidebar-panel">
+            <p class="sidebar-label">Documentation</p>
+            <nav class="site-nav" aria-label="Documentation navigation">
+  
+    
+    
+    <div class="nav-item">
+      <a class="nav-link" href="/QUASAR/">
+        <span>Home</span>
+      </a>
+      
+    </div>
+  
+    
+    
+    <div class="nav-item">
+      <a class="nav-link" href="/QUASAR/quick-tutorial/">
+        <span>Quick Tutorial</span>
+      </a>
+      
+    </div>
+  
+    
+    
+    <div class="nav-item is-active">
+      <a class="nav-link is-active" href="/QUASAR/installation/" data-active-nav-link>
+        <span>Get Started</span>
+      </a>
+      
+        <div class="nav-subsections" data-page-sections hidden>
+          <nav class="section-nav" aria-label="Get Started sections" data-section-nav></nav>
+        </div>
+      
+    </div>
+  
+    
+    
+    <div class="nav-item">
+      <a class="nav-link" href="/QUASAR/cli/">
+        <span>CLI</span>
+      </a>
+      
+    </div>
+  
+    
+    
+    <div class="nav-item">
+      <a class="nav-link" href="/QUASAR/configuration/">
+        <span>Configuration</span>
+      </a>
+      
+    </div>
+  
+    
+    
+    <div class="nav-item">
+      <a class="nav-link" href="/QUASAR/workspace-history/">
+        <span>Workspace & History</span>
+      </a>
+      
+    </div>
+  
+    
+    
+    <div class="nav-item">
+      <a class="nav-link" href="/QUASAR/extending-quasar/">
+        <span>Extending QUASAR</span>
+      </a>
+      
+    </div>
+  
+    
+    
+    <div class="nav-item">
+      <a class="nav-link" href="/QUASAR/contact/">
+        <span>Contact</span>
+      </a>
+      
+    </div>
+  
+</nav>
+
+          </div>
+        </aside>
+
+        <main class="content">
+          
+            
+              <p class="eyebrow">Setup</p>
+            
+            <h1>Get Started</h1>
+            
+              <p class="page-lead">Choose your setup path and launch QUASAR.</p>
+            
+          
+          <div class="card-grid">
+  <div class="step-card">
+    <p class="mini-label">Recommended</p>
+    <h3>Docker</h3>
+    <p>Best default for laptops and workstations. It gives you the cleanest setup story and keeps the runtime isolated from your host machine.</p>
+  </div>
+  <div class="step-card">
+    <p class="mini-label">HPC</p>
+    <h3>Singularity</h3>
+    <p>Best fit for clusters and shared compute environments where container execution is available but Docker is not.</p>
+  </div>
+  <div class="step-card">
+    <p class="mini-label">Advanced</p>
+    <h3>Local Deployment</h3>
+    <p>Useful when you need a custom environment on your machine, but it is less isolated and usually more fragile than container-based runs.</p>
+  </div>
+</div>
+
+<h2 id="prerequisites">Prerequisites</h2>
+
+<ul>
+  <li>Access to a supported model provider and a valid API key</li>
+  <li>Docker installed on your device (required for Docker-based deployments)</li>
+  <li>Node.js 18 or newer (required only if running the local interactive CLI outside of a container)</li>
+</ul>
+
+<div class="callout callout-accent">
+  <strong>Note:</strong> QUASAR is currently optimised for Gemini-oriented setups. Other providers may work, but they are not yet the primary compatibility target.
+</div>
+
+<h2 id="installation">Installation</h2>
+<h3 id="docker">Docker</h3>
+
+<p>Pull the appropriate QUASAR image for your system from <a href="https://hub.docker.com/r/fengxuyang/quasar" target="_blank" rel="noopener noreferrer">Docker Hub</a>:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker pull fengxuyang/quasar:&lt;tag&gt;
+</code></pre></div></div>
+
+<h3 id="singularity">Singularity</h3>
+
+<p>Build a <code class="language-plaintext highlighter-rouge">.sif</code> image from <a href="https://hub.docker.com/r/fengxuyang/quasar" target="_blank" rel="noopener noreferrer">Docker Hub</a>:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>singularity build quasar.sif docker://fengxuyang/quasar:&lt;tag&gt;
+</code></pre></div></div>
+
+<h3 id="local-deployment">Local Deployment</h3>
+
+<p>If you want to run QUASAR directly on your machine, install the Python package and the scientific software stack you need. A minimal example looks like this:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>conda create <span class="nt">-n</span> quasar <span class="nv">python</span><span class="o">=</span>3.11 <span class="nt">-y</span>
+conda activate quasar
+conda <span class="nb">install</span> <span class="nt">-c</span> conda-forge qe lammps raspa3 raspalib <span class="nt">-y</span>
+pip <span class="nb">install</span> <span class="nt">--upgrade</span> pip
+pip <span class="nb">install </span>quasar-core
+</code></pre></div></div>
+
+<h2 id="launch-quasar">Launch QUASAR</h2>
+
+<h3 id="docker-1">Docker</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>docker run <span class="nt">-it</span> <span class="nt">--rm</span> <span class="se">\</span>
+  <span class="nt">-v</span> <span class="s2">"&lt;workspace_path&gt;:/workspace"</span> <span class="se">\</span>
+  fengxuyang/quasar:&lt;tag&gt; <span class="se">\</span>
+  quasar
+</code></pre></div></div>
+
+<h3 id="singularity-1">Singularity</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>singularity <span class="nb">exec</span> <span class="nt">--cleanenv</span> <span class="se">\</span>
+  <span class="nt">-B</span> <span class="s2">"&lt;workspace_path&gt;:/workspace"</span> <span class="se">\</span>
+  <span class="nt">--home</span> <span class="s2">"&lt;workspace_path&gt;:/workspace"</span> <span class="se">\</span>
+  &lt;tag&gt;.sif quasar
+</code></pre></div></div>
+
+<h3 id="local-deployment-1">Local Deployment</h3>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">export </span><span class="nv">WORKSPACE_DIR</span><span class="o">=</span>&lt;workspace_directory&gt;
+quasar
+</code></pre></div></div>
+
+<h2 id="what-to-expect-on-first-launch">What to Expect on First Launch</h2>
+
+<p>When QUASAR starts in a new workspace for the first time, it prepares the local resources it needs for later runs.</p>
+
+<p>This setup step can include:</p>
+
+<ul>
+  <li>Documentation repositories stored in <code class="language-plaintext highlighter-rouge">docs/</code></li>
+  <li>A prebuilt RAG index in <code class="language-plaintext highlighter-rouge">.rag_index/</code> when RAG is enabled</li>
+  <li>Embedding model files used for documentation retrieval</li>
+</ul>
+
+<p>Because these resources are downloaded and prepared only once per new workspace, the first launch is usually slower than later runs in the same workspace.</p>
+
+        </main>
+      </div>
+
+      <footer class="site-footer">
+      </footer>
+    </div>
+  </body>
+</html>

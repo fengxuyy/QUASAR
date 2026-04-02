@@ -1,8 +1,8 @@
 ---
 title: Extending QUASAR
-description: "How to let QUASAR use additional software, dependencies, and first-class tools."
+description: "How to let QUASAR use additional software and capabilities through prompt-time install, environment setup, or system-prompt inclusion."
 section: Advanced
-lead: "There are two practical ways to extend QUASAR: tell it to install something during a run for temporary use, or bake the dependency into the project for permanent and more reliable use."
+lead: "There are three practical ways to extend QUASAR: install something temporarily during a run, bake it into the environment for reliable reuse, or add system-prompt guidance so QUASAR knows to use it by default."
 permalink: /extending-quasar/
 ---
 
@@ -21,19 +21,16 @@ permalink: /extending-quasar/
   </div>
   <div class="step-card">
     <p class="mini-label">Reusable</p>
-    <h3>First-Class Tool</h3>
-    <p>Best when the capability deserves an explicit tool interface instead of being driven only through prompt instructions.</p>
+    <h3>System Prompt Inclusion</h3>
+    <p>Best when the software is already available and QUASAR should be guided to use it by default without repeating the instruction in each user prompt.</p>
   </div>
 </div>
 
 ## The Short Rule
 
-Use this rule of thumb:
-
 1. For a one-off experiment or temporary dependency, include the install instruction directly in the prompt.
-2. For repeated use, difficult installs, compiled software, or anything you want to rely on long term, add it to the repo environment with `requirements.txt` or a Dockerfile.
-
-That matches how QUASAR is structured today.
+2. For repeated use, difficult installs, compiled software, or anything you want to rely on long term, add it to the repo environment with `requirements.txt` or the Dockerfile.
+3. If the software is already available and should be part of QUASAR's default behavior, add that guidance to the relevant system prompts.
 
 ## Option 1: Temporary Use Through the Prompt
 
@@ -48,32 +45,8 @@ This works best for:
 Example prompt:
 
 ```text
-Calculate the band gap of silicon. If the required package is missing, install it first in the current environment and then continue. Treat the installation as temporary for this run, save the key scripts and outputs in the workspace, and summarize what was installed.
+Calculate the accessible surface area of MOF-5. Installation of Zeo++ is needed.
 ```
-
-You can also be more explicit:
-
-```text
-Calculate the band gap of silicon. If needed, install <package_name> with pip before using it. If installation fails, explain the failure clearly and stop rather than silently changing methods.
-```
-
-### When This Is a Good Fit
-
-- you are testing a new library
-- the dependency is pure Python or otherwise easy to install
-- you do not mind slower startup for that run
-- you do not need the install to persist across fresh containers or future sessions
-
-### Limitations
-
-Prompt-based installs are less reliable when:
-
-- the package needs system libraries or compilers
-- the install is slow or brittle
-- you need the dependency in many runs
-- you want reproducible behavior across machines and images
-
-In those cases, move to a permanent install.
 
 ## Option 2: Permanent Support in the Repo
 
@@ -109,51 +82,15 @@ Examples in this repo include:
 - [docker/Dockerfile.cuda]({{ site.repository_url }}/blob/main/docker/Dockerfile.cuda)
 - [docker/Dockerfile.rocm]({{ site.repository_url }}/blob/main/docker/Dockerfile.rocm)
 
-If the install is architecture-specific or accelerator-specific, update the relevant image variant rather than only one file.
+## Option 3: System Prompt Inclusion
 
-### When Permanent Installation Is the Better Choice
+Use this level when the software is already installed and you want QUASAR to know, by default, when and how to use it.
 
-- you want the tool available in every run
-- the installation is error-prone
-- the software is large or compiled
-- reproducibility matters
-- you do not want the agent spending time reinstalling dependencies at runtime
+Typical integration points include the agent system prompts in:
 
-## Which File Should I Change?
-
-Use this quick guide:
-
-| Situation | Best place |
-| --- | --- |
-| One-off package for a single run | Put install instructions in the prompt |
-| Python package QUASAR should always have | `requirements.txt` |
-| OS package, binary, compiler, or complex scientific code | A Dockerfile under `docker/` |
-| Architecture- or GPU-specific software | The matching Dockerfile variant |
-
-## Important Practical Difference
-
-There are really two extension levels:
-
-1. **Make software available** so QUASAR can use it from scripts during a run.
-2. **Add a first-class QUASAR tool** so the agents can call it directly as part of the tool system.
-
-Most people should start with level 1.
-
-## If You Want a True First-Class QUASAR Tool
-
-If you want something beyond “software the Operator can use from Python,” you will need code changes.
-
-The main integration points are:
-
-- tool definitions in [src/tools/]({{ site.repository_url }}/tree/main/src/tools)
-- exported tools in [src/tools/__init__.py]({{ site.repository_url }}/blob/main/src/tools/__init__.py)
-- agent tool maps in [src/agents/operator.py]({{ site.repository_url }}/blob/main/src/agents/operator.py), [src/agents/strategist.py]({{ site.repository_url }}/blob/main/src/agents/strategist.py), and [src/agents/evaluator.py]({{ site.repository_url }}/blob/main/src/agents/evaluator.py)
-
-That path is worth taking when:
-
-- the capability should be called repeatedly
-- you want a stable interface instead of prompt instructions
-- the same behavior should be available across many workflows
+- [src/agents/strategist.py]({{ site.repository_url }}/blob/main/src/agents/strategist.py)
+- [src/agents/operator.py]({{ site.repository_url }}/blob/main/src/agents/operator.py)
+- [src/agents/evaluator.py]({{ site.repository_url }}/blob/main/src/agents/evaluator.py)
 
 ## Suggested Workflow
 
@@ -161,6 +98,4 @@ For most extensions, the cleanest progression is:
 
 1. Try it once with explicit install instructions in the prompt.
 2. If the dependency is useful and stable, move it into `requirements.txt` or the relevant Dockerfile.
-3. If the capability deserves a reusable interface, implement it as a proper QUASAR tool.
-
-This lets you explore quickly without committing too early, while still giving you a path to a durable setup once the tool proves useful.
+3. If the software should be part of QUASAR's default behavior, add the relevant guidance to the system prompts.

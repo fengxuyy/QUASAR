@@ -6,34 +6,6 @@ lead: This tutorial walks through a simple first run with QUASAR using the promp
 permalink: /quick-tutorial/
 ---
 
-## What You Will Learn
-
-<div class="card-grid">
-  <div class="step-card">
-    <p class="mini-label">Prompting</p>
-    <h3>How to Start a Run</h3>
-    <p>Use a prompt that is short enough to stay natural but explicit enough to produce inspectable outputs.</p>
-  </div>
-  <div class="step-card">
-    <p class="mini-label">Observation</p>
-    <h3>What Happens During Execution</h3>
-    <p>Recognize the normal planning, execution, evaluation, and archiving pattern of a QUASAR run.</p>
-  </div>
-  <div class="step-card">
-    <p class="mini-label">Review</p>
-    <h3>Where to Inspect Results</h3>
-    <p>Know which files to open after the run so you can judge whether the workflow completed cleanly.</p>
-  </div>
-</div>
-
-## Goal
-
-In this tutorial, we will ask QUASAR to:
-
-> Calculate the band gap of silicon.
-
-
-
 ## Before You Start
 
 Make sure you already have:
@@ -42,11 +14,11 @@ Make sure you already have:
 - `MODEL` and `MODEL_API_KEY` configured, or access to the interactive `\settings` panel
 - a mounted or exported workspace directory
 
-If not, go through [Getting Started]({{ '/getting-started/' | relative_url }}) first.
+If not, complete [Get Started]({{ '/installation/' | relative_url }}) first.
 
 ## User Request
 
-Here we need to provided scientific request to QUASAR. Providing a more detailed prompt is always recommended, as it gives QUASAR the scientific context needed to choose the right methods and ensures you receive the specific outputs you need. For tutorial purposes, we will use a very short prompt.
+Here we need to provided scientific request to QUASAR. Providing a more detailed prompt is always recommended, as it gives QUASAR the scientific context needed to plan the right actions and ensures you receive the specific outputs you need. For tutorial purposes, we will use a short prompt.
 
 ```text
        ╭─────────────────────────────────────────────────────────────────────────────────────────╮
@@ -185,9 +157,28 @@ After each task, the **Evaluator** reviews the Operator's work to ensure scienti
 
 With Task 1 validated, QUASAR automatically proceeds to Task 2 to calculate the final band gap dispersion and synthesize the results.
 
+## Interrupt and Resume
+
+If you need to stop an active run, press `ESC` twice in succession to interrupt. QUASAR will mark the run as interrupted and preserve the active checkpoint in the workspace.
+
+To continue later, relaunch QUASAR with the same workspace and resume from that checkpoint:
+
+```text
+       ───────────────────────────────────────────────────────────────────────────────────────────
+        ✴ Resume from checkpoint? (yes/no)                                                 Ctx 0%
+       ───────────────────────────────────────────────────────────────────────────────────────────
+        Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit
+```
+
+If you decide not to continue the interrupted run, clear the active checkpoint before starting over:
+
+```bash
+quasar --clear
+```
+
 ## Final Run Summary
 
-When the entire research goal is reached, QUASAR produces a final **Run Summary**. This integrates the technical findings from all tasks into a single cohesive report, including optimized parameters, calculated values, and scientific contextualization:
+When the entire research goal is reached, QUASAR produces a final **Run Summary**. This integrates the technical findings from all tasks into a single cohesive report:
 
 ```text
          ╭─ Run Summary ────────────────────────────────────────────────────────────────────────╮
@@ -214,16 +205,7 @@ When the entire research goal is reached, QUASAR produces a final **Run Summary*
 
 Once the summary is displayed, the agent remains active. You can press `Enter` to trigger an **auto-improvement cycle** where QUASAR self-evaluates the results for potential refinements, or you can type a follow-up request to extend the research (e.g., "Now calculate the effective masses at the VBM and CBM").
 
-## Where to Look for More Results
-
-When the run completes, inspect these locations in the workspace:
-
-| Path | Why it matters |
-| --- | --- |
-| `final_results/summary.md` | Final written summary of the outcome and the workflow used to produce it. |
-| `logs/execution_overview.md` | High-level execution trace that is useful when you want to review what happened without reading everything. |
-| `logs/usage_report.md` | Token and cost reporting for the run. |
-| Generated input and output files | The actual scientific artifacts you may want to inspect, rerun, or compare. |
+## Where to Look for Results
 
 After a completed run, QUASAR archives the results under:
 
@@ -231,43 +213,13 @@ After a completed run, QUASAR archives the results under:
 workspace/archive/run_N/
 ```
 
-You can inspect that archived run directly from the filesystem or from the CLI history tools.
+Inspect these locations in the workspace:
 
-## How to Judge a Successful First Run
-
-A successful tutorial run should leave you with:
-
-- a written summary of the silicon band gap result
-- the method used to obtain it
-- enough saved inputs and outputs to understand what QUASAR actually ran
-- logs that let you reconstruct the run later
-
-For a first pass, focus less on the exact numerical value and more on whether the workflow is inspectable, reproducible, and easy to continue.
-
-## What Success Looks Like
-
-Once the first run works, you can start tightening prompts, increasing rigor, or asking QUASAR to compare methods instead of simply producing one answer.
-
-## If the Run Stops Early
-
-If QUASAR is interrupted, do not start over immediately. Resume from the checkpoint instead:
-
-```bash
-quasar --resume
-```
-
-Or launch the container again with `IF_RESTART=true`.
-
-This is especially important for longer scientific runs where you do not want to lose progress.
-
-## Good Next Steps
-
-Once the silicon example works, good follow-up prompts are:
-
-- calculate the band structure of silicon and compare it with the reported band gap
-- rerun the silicon workflow with a different level of rigor
-- improve the previous run and explain what changed
-
-From here, the most useful references are [Configuration]({{ '/configuration/' | relative_url }}) for tuning behavior, [Workspace & History]({{ '/workspace-history/' | relative_url }}) for understanding where results are stored, and [CLI]({{ '/cli/' | relative_url }}) if you want to use resume, cleanup, or history tools more deliberately.
-
-If you want QUASAR to use software that is not already available in the image, continue with [Extending QUASAR]({{ '/extending-quasar/' | relative_url }}).
+| Path | Description |
+| --- | --- |
+| `logs/execution_overview.md` | A concise status file with the user request, current plan, and summaries of completed tasks. QUASAR updates it throughout the run, so it is the quickest way to check progress. |
+| `logs/conversation.md` | A chronological record of agent activity, selected messages, completed tool calls, and evaluation results. Use it when you want a detailed view of what happened during the run. |
+| `logs/input_messages.md` | A debugging log of the full messages sent to each agent, including timestamps and tool-call details. This is most useful when you need to inspect the exact context an agent received. |
+| `final_results/summary.md` | The main written summary of the run's outcome. If the run ends without a complete result, this file may instead describe the unresolved issues. |
+| `final_results/` | The folder containing the run's final deliverables, including any generated artifacts such as plots, tables, or exported data. |
+| `logs/usage_report.md` | A usage report covering run status, duration, model and run settings, token counts, API requests, system details, and cost estimates when available. |

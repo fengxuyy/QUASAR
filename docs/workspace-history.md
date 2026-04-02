@@ -18,7 +18,7 @@ workspace/
 │   ├── usage_report.md
 │   ├── execution_overview.md
 │   ├── input_messages.md
-│   └── conversation/
+│   └── conversation.md
 ├── archive/
 │   ├── run_1/
 │   └── run_N/
@@ -52,13 +52,6 @@ workspace/
 
 When a run completes successfully, QUASAR archives the active workspace into `archive/run_N/` and removes checkpoint artifacts from the live workspace. That gives you a clean active area while keeping the finished run intact for inspection.
 
-Archived runs can include:
-
-- final results
-- logs
-- checkpoint-related sidecars
-- generated files and intermediate outputs
-
 ## Interrupted Runs
 
 An interrupted run behaves differently from a completed one:
@@ -72,12 +65,11 @@ An interrupted run behaves differently from a completed one:
 
 The CLI cleanup commands operate on the live workspace only. They do not modify older archived runs unless you choose `--fresh`.
 
-| Action | Keeps `docs/` | Keeps `archive/` | Keeps dotfiles | Keeps active checkpoint |
-| --- | --- | --- | --- | --- |
-| Resume | Yes | Yes | Yes | Yes |
-| Clear checkpoint / `--clear` | Yes | Yes | Yes | No |
-| Fresh start / `--fresh` | Yes | No | Yes | No |
-| Completed run archive | Yes | Yes | Yes | No |
+| Action | Keeps `docs/` | Keeps `archive/` | Keeps checkpoint |
+| --- | --- | --- | --- |
+| Clear checkpoint / `--clear` | Yes | Yes | No |
+| Fresh start / `--fresh` | Yes | No | No |
+| Completed run archive | Yes | Yes | Yes |
 
 ## History Surfaces
 
@@ -85,20 +77,3 @@ There are two main ways to inspect past work:
 
 - the archived files under `workspace/archive/run_N/`, which preserve summaries, logs, traces, and generated outputs
 - the **CLI `--history` command**, which lets you inspect checkpoint task history step by step
-
-## A Practical Review Flow
-
-For most runs, the fastest inspection sequence is:
-
-1. Open `final_results/summary.md` for the user-facing conclusion.
-2. Open `logs/execution_overview.md` when you want the high-level execution path.
-3. Use `quasar --history` if you need per-task detail from the current checkpoint.
-4. Open `archive/run_N/` when you want the full snapshot of a completed earlier run.
-
-## Read-Only vs Editable Contexts
-
-The live workspace is where active runs read and write files. Archived runs are intentionally treated as historical snapshots, which helps prevent accidental edits to past results while still making them easy to inspect.
-
-<div class="callout callout-accent">
-  <strong>Tip:</strong> if you are iterating on a workflow, clear the active checkpoint when you want a new live run but keep the archive. Reach for a full fresh start only when you intentionally want to delete previous run history.
-</div>
