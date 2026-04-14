@@ -12,9 +12,10 @@ permalink: /configuration/
 | --- | --- | --- | --- |
 | `MODEL` | Yes | Base model name for the system. | None |
 | `MODEL_API_KEY` | Yes | API key for the base model provider. | None |
-| `OPENAI_API_BASE` | No | Base URL for OpenAI-compatible global endpoints. | None |
-| `ACCURACY` | No | Planning/execution rigor: `eco`, `standard`, `pro`. | `standard` |
-| `GRANULARITY` | No | Task decomposition depth: `low`, `medium`, `high`. | `medium` |
+| `OPENAI_API_BASE` | No | Base URL for OpenAI-compatible global endpoints (same effect as `API_BASE_URL`). | None |
+| `API_BASE_URL` | No | Alias for `OPENAI_API_BASE` when routing the primary model through an OpenAI-compatible HTTP API. | None |
+| `ACCURACY` | No | Planning/execution rigor: `eco`, `standard`, `pro`, or `adaptive` (experimental: scales numerical rigor with workflow stage). | `standard` |
+| `GRANULARITY` | No | Task decomposition depth: `low`, `medium`, `high`, or `adaptive` (experimental: scales task count with perceived complexity). | `medium` |
 | `AUTO_IMPROVE_CYCLES` | No | Number of automatic auto-improve follow-up runs after a successful user-started run. | `0` |
 | `PMG_MAPI_KEY` | No | Materials Project database access | None |
 | `IF_RESTART` | No | Resume from checkpoint when present. | `false` |
@@ -29,6 +30,17 @@ These settings are helpful for specialized workflows and can usually be left at 
 | `ENABLE_RAG` | No | Enable documentation retrieval. | `true` |
 | `CHECK_INTERVAL` | No | Minutes between long-run LLM check-ins. Leave unset or use `0` to disable. | Disabled |
 | `NUM_CORES` | No | Override physical core detection. | `Auto` |
+| `AUTO_CONFIRM_PLAN` | No | If `true`/`1`/`yes`/`on`, skips interactive plan confirmation (useful for headless or batch runs). | unset (confirmation on) |
+
+## OpenAI-compatible LLM endpoints
+
+QUASAR routes requests through an OpenAI-compatible HTTP client when:
+
+- **`OPENAI_API_BASE` or `API_BASE_URL` is set** — all traffic for the primary model uses that base URL (for example a gateway, proxy, or third-party OpenAI-compatible host), regardless of model name.
+- **The model name looks like OpenAI `gpt-*` and no custom base URL is set** — native OpenAI is used.
+- **Per-agent base URLs** — `STRATEGIST_API_BASE_URL`, `OPERATOR_API_BASE_URL`, and `EVALUATOR_API_BASE_URL` override the global base URL for that agent when set (see table below).
+
+Models whose names do **not** match built-in providers (Gemini, Claude, Grok, or `gpt-*`) **require** a base URL (`OPENAI_API_BASE`, `API_BASE_URL`, or the relevant per-agent URL); otherwise initialization fails with a clear configuration error.
 
 ## Per-Agent Model Overrides
 
@@ -50,5 +62,10 @@ A strong current combination in QUASAR is to use `gemini-3.1-pro-preview` for pl
 | Faster exploration | `ACCURACY=eco` | Early-stage investigation, quick experiments, and situations where you want shorter iteration cycles. |
 | Higher rigor | `ACCURACY=pro`, often with `GRANULARITY=high` | More demanding analyses where explicit planning, stronger verification, and fuller scientific coverage matter more than speed. |
 | Long-running execution | Include `CHECK_INTERVAL` with any of the above profiles | Ideal for prolonged Python tasks, enabling periodic status checks instead of silent runs. Suggested initial value: 30 minutes |
+| Adaptive control (experimental) | `ACCURACY=adaptive` and/or `GRANULARITY=adaptive` | Lets the Strategist and Operator adjust theory level and task breakdown based on workflow complexity instead of fixed presets. |
 
 A practical research workflow is to begin with `ACCURACY=eco` to establish a fast baseline, then switch to higher accuracy mode to refine the result through auto-improvement or a human-guided follow-up pass based on that initial run.
+
+## Machine learning in workflows
+
+The Operator is instructed that the Python stack can include **scikit-learn** (declared in package metadata) and **PyTorch** (pulled in with the MACE ML potential stack and GPU-oriented images). You can ask QUASAR to fit models, preprocess data, or run small training jobs as part of a research workflow when your environment provides the necessary dependencies.

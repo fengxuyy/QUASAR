@@ -47,15 +47,16 @@ Here we need to provided scientific request to QUASAR. Providing a more detailed
 
 ## Confirmation and Settings
 
-After submitting your request, QUASAR presents the current runtime settings for review. Confirm that these settings are correct before the autonomous run begins, then enter `yes` to proceed. For this tutorial, we configure the accuracy to `eco` and the `granularity` to low to enable a faster, lightweight run.
+After submitting your request, QUASAR presents the current runtime settings for review. Confirm that these settings are correct before the autonomous run begins, then enter `yes` to proceed. For this tutorial, we configure the accuracy to `eco` and the granularity to `low` to enable a faster, lightweight run. You can also choose **`adaptive`** for `ACCURACY` and/or `GRANULARITY` (experimental) so the agents adjust rigor and task count as the workflow unfolds.
 
 ```text
         ╭─ Settings ───────────────────────────────────────────────────╮
         │ MODEL                    : gemini-3-flash-preview            │
         │ MODEL_API_KEY            : Set                               │
         │ OPENAI_API_BASE          : (not set)                         │
-        │ ACCURACY                 : [eco]  standard   pro             │
-        │ GRANULARITY              : [low]  medium   high              │
+        │ API_BASE_URL             : (not set)                         │
+        │ ACCURACY                 : [eco]  standard   pro   adaptive  │
+        │ GRANULARITY              : [low]  medium   high   adaptive   │
         │ CONTEXT_THRESHOLD        :  low  [medium]  high              │
         │ ENABLE_RAG               : [true]  false                     │
         │ PMG_MAPI_KEY             : Set                               │
@@ -108,7 +109,7 @@ Once settings are confirmed, QUASAR’s **Strategist** takes over. It analyzes y
         Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit
 ```
 
-Review the plan and enter `yes` to begin the simulation.
+Review the plan and enter `yes` to begin the simulation. If you need changes, use the revision flow in the CLI to send feedback instead of approving immediately, or decline to stop before any simulation work runs. In automation-only contexts, `AUTO_CONFIRM_PLAN=true` skips this prompt (see [Configuration]({{ '/configuration/' | relative_url }})).
 
 ## Execution and Tools
 

@@ -43,6 +43,10 @@ show_title: false
   </div>
 </div>
 
+## Platform capabilities
+
+Recent and ongoing capabilities include **OpenAI-compatible HTTP endpoints** (global and per-agent base URLs), **interactive plan confirmation** before the Operator runs, **experimental adaptive** `ACCURACY` and `GRANULARITY` modes, **refined agent system prompts** for scientific workflows, and use of **scikit-learn** and **PyTorch** where the environment provides them. See [Configuration]({{ '/configuration/' | relative_url }}) for environment variables and routing details.
+
 ## Start Here
 
 <div class="feature-grid">

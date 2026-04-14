@@ -42,6 +42,10 @@ Paper: [arXiv:2602.00185](https://arxiv.org/abs/2602.00185)
 - **Practical interfaces**: use the interactive CLI for guided work or run prompts headlessly for batch and HPC use cases.
 - **Flexible deployment**: run QUASAR with Docker, Singularity, or a local Python installation.
 - **Configurable execution**: tune rigor, task granularity, context compression, retrieval, and even per-agent model selection.
+- **OpenAI-compatible APIs**: use `OPENAI_API_BASE` or `API_BASE_URL`, or per-agent base URLs, to point models at OpenAI-compatible gateways and third-party hosts.
+- **Human-in-the-loop planning**: after the Strategist drafts a plan, the interactive CLI can confirm it, request a revision with feedback, or stop before execution.
+- **Adaptive modes (experimental)**: `ACCURACY=adaptive` and `GRANULARITY=adaptive` let agents scale numerical rigor and task breakdown with workflow complexity.
+- **ML-ready stack**: workflows can use scikit-learn and PyTorch for model training and analysis.
 
 ## Architecture at a Glance
 
@@ -186,9 +190,10 @@ quasar "Your research prompt here"
 | --- | --- | --- |
 | `MODEL` | Required model name. | None |
 | `MODEL_API_KEY` | Required provider API key. | None |
-| `OPENAI_API_BASE` | Optional base URL for OpenAI-compatible endpoints. | None |
-| `ACCURACY` | Planning and execution rigor: `eco`, `standard`, `pro`. | `standard` |
-| `GRANULARITY` | Task decomposition depth: `low`, `medium`, `high`. | `medium` |
+| `OPENAI_API_BASE` | Optional base URL for OpenAI-compatible endpoints (same as `API_BASE_URL`). | None |
+| `API_BASE_URL` | Optional global base URL for OpenAI-compatible HTTP APIs. | None |
+| `ACCURACY` | Planning and execution rigor: `eco`, `standard`, `pro`, `adaptive` (experimental). | `standard` |
+| `GRANULARITY` | Task decomposition depth: `low`, `medium`, `high`, `adaptive` (experimental). | `medium` |
 | `CONTEXT_THRESHOLD` | Context-compression trigger level. | `medium` |
 | `ENABLE_RAG` | Enable documentation retrieval. | `true` |
 | `CHECK_INTERVAL` | Minutes between long-run check-ins. Leave unset or use `0` to disable. | Disabled |
@@ -197,6 +202,7 @@ quasar "Your research prompt here"
 | `PMG_MAPI_KEY` | Materials Project API key for `pymatgen`. | None |
 | `HF_TOKEN` | Optional Hugging Face token for authenticated retrieval access. | None |
 | `IF_RESTART` | Resume from the last checkpoint. | `false` |
+| `AUTO_CONFIRM_PLAN` | Skip interactive plan confirmation when `true`/`1`/`yes`/`on` (e.g. headless automation). | unset |
 
 Per-agent overrides are also available:
 
@@ -206,7 +212,7 @@ Per-agent overrides are also available:
 | Operator | `OPERATOR_MODEL` | `OPERATOR_MODEL_API_KEY` | `OPERATOR_API_BASE_URL` |
 | Evaluator | `EVALUATOR_MODEL` | `EVALUATOR_MODEL_API_KEY` | `EVALUATOR_API_BASE_URL` |
 
-> QUASAR is currently optimized for Gemini-oriented setups. Other providers may work, especially through supported integrations and compatible endpoints, but they are not yet the primary compatibility target.
+> QUASAR is optimized for Gemini-oriented setups first, but OpenAI-compatible base URLs are supported for the primary model and per-agent overrides. Anthropic, xAI, and other providers use their respective integrations when selected by model name.
 
 ## Workspace Outputs
 

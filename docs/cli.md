@@ -20,3 +20,9 @@ permalink: /cli/
 | `quasar --config validate` | Verifies required configuration such as `MODEL_API_KEY`. |
 | `quasar --info` | Prints system and environment context such as workspace path and platform. |
 | `quasar --no-rag "..."` | Runs without documentation retrieval for that specific prompt. |
+
+## Interactive run flow
+
+After you submit a request and confirm settings, the **Strategist** produces an execution plan. Before the **Operator** starts, the CLI enters a **plan confirmation** step: you can approve the plan, **decline** it (the run stops in a controlled way), or **revise** it by sending feedback so the Strategist can adjust the plan. This human-in-the-loop gate applies to normal interactive runs.
+
+Automatic follow-up runs driven by `AUTO_IMPROVE_CYCLES` confirm the plan without prompting. For unattended or scripted sessions where you still want the graph to proceed without blocking, set `AUTO_CONFIRM_PLAN` to `true` (see [Configuration]({{ '/configuration/' | relative_url }})).
