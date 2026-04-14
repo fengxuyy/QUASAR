@@ -1,5 +1,5 @@
 """
-Bridge communication utilities for CLI clients.
+Bridge communication utilities for CLI/web interface.
 """
 
 import sys
@@ -75,12 +75,26 @@ def plan_review_confirm_node(state: State) -> dict:
     """Wait for CLI review confirmation before operator execution begins."""
     bridge = sys.modules.get("bridge")
     if bridge is None:
-        proceed = True
+        confirmation = {"action": "confirm", "feedback": ""}
     else:
-        proceed = bridge.begin_plan_confirmation_wait()
+        confirmation = bridge.begin_plan_confirmation_wait()
 
-    if proceed:
-        return {"plan_review_proceed": True}
+    action = confirmation.get("action", "confirm")
+    feedback = (confirmation.get("feedback", "") or "").strip()
+
+    if action == "confirm":
+        return {
+            "plan_review_proceed": True,
+            "plan_review_action": "confirm",
+            "plan_review_feedback": "",
+        }
+
+    if action == "revise":
+        return {
+            "plan_review_proceed": False,
+            "plan_review_action": "revise",
+            "plan_review_feedback": feedback,
+        }
 
     user_request = state.get("user_input", "") or ""
     bridge = sys.modules.get("bridge")
@@ -88,10 +102,22 @@ def plan_review_confirm_node(state: State) -> dict:
         bridge.mark_plan_declined(user_request)
         bridge.send_json("plan_declined", {"user_input": user_request})
 
-    return {"plan_review_proceed": False}
+    return {
+        "plan_review_proceed": False,
+        "plan_review_action": "decline",
+        "plan_review_feedback": "",
+    }
 
 
-def send_agent_event(agent: str, event: str, status: str = "", is_error: bool = False, output: str = "") -> None:
+def send_agent_event(
+    agent: str,
+    event: str,
+    status: str = "",
+    is_error: bool = False,
+    output: str = "",
+    user_feedback: str = "",
+    tool_name: str = "",
+) -> None:
     """Send agent lifecycle event to CLI.
     
     Args:
@@ -100,11 +126,15 @@ def send_agent_event(agent: str, event: str, status: str = "", is_error: bool = 
         status: Status text to display
         is_error: Whether this event represents an error (for step_complete display)
         output: Optional output text to show in collapsible section (for step_complete events)
+        user_feedback: Optional user request (e.g. plan revision feedback for the web UI)
+        tool_name: Optional tool id for error events (e.g. execute_python for validation failures)
     """
     bridge = sys.modules.get("bridge")
     if bridge is not None:
         try:
-            bridge.send_agent_event(agent, event, status, is_error, output)
+            bridge.send_agent_event(
+                agent, event, status, is_error, output, user_feedback, tool_name
+            )
         except Exception:
             pass
 

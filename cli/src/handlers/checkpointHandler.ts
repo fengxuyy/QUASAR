@@ -158,6 +158,10 @@ export function buildCommittedTimelineItems(historyItems: any[], options: BuildH
  */
 export function buildHistoryItems(history: any): CommittedItem[] {
     const newItems: CommittedItem[] = [];
+    const reviewedPlanLabel = history.is_replan ? 'Reviewed Replan' : 'Reviewed Plan';
+    const revisedPlanLabel = history.is_replan
+        ? 'Revised Replan from user feedback'
+        : 'Revised Plan from user feedback';
     
     const addPlanItem = (id: string, planText: string) => {
         newItems.push({
@@ -173,11 +177,27 @@ export function buildHistoryItems(history: any): CommittedItem[] {
         });
     };
 
-    const addReviewedPlanSequence = (reviewLabel: 'Reviewed Plan' | 'Reviewed Replan', planText: string) => {
+    const addFinalPlanSequence = (
+        finalLabel: 'Reviewed Plan' | 'Reviewed Replan' | 'Revised Plan from user feedback' | 'Revised Replan from user feedback',
+        planText: string
+    ) => {
+        const isUserRevisedPlan =
+            finalLabel === revisedPlanLabel ||
+            history.final_plan_update_status === 'Revising plan from user feedback';
+
+        if (isUserRevisedPlan) {
+            newItems.push({
+                id: 'strategist-reviewed-complete',
+                type: 'tool',
+                content: reviewedPlanLabel,
+                agentName: 'strategist'
+            });
+        }
+
         newItems.push({
             id: 'strategist-complete',
             type: 'tool',
-            content: reviewLabel,
+            content: finalLabel,
             agentName: 'strategist'
         });
 
@@ -191,6 +211,47 @@ export function buildHistoryItems(history: any): CommittedItem[] {
     const initialPlanRaw = history.initial_plan_text || '';
     const finalPlanContent = normalizePlanText(finalPlanRaw);
     const initialPlanContent = normalizePlanText(initialPlanRaw);
+    const userRevisedSnapshots: string[] = history.user_revised_plan_texts || [];
+    const isUserRevisedPlan =
+        history.final_plan_status === revisedPlanLabel ||
+        history.final_plan_update_status === 'Revising plan from user feedback';
+
+    const appendStrategistPlanMilestones = () => {
+        if (userRevisedSnapshots.length > 0) {
+            if (isUserRevisedPlan) {
+                newItems.push({
+                    id: 'strategist-reviewed-complete',
+                    type: 'tool',
+                    content: reviewedPlanLabel,
+                    agentName: 'strategist'
+                });
+            }
+            userRevisedSnapshots.forEach((raw, idx) => {
+                const isLast = idx === userRevisedSnapshots.length - 1;
+                const planText =
+                    isLast && finalPlanContent ? finalPlanContent : normalizePlanText(raw);
+                newItems.push({
+                    id: `strategist-revised-history-${idx}`,
+                    type: 'tool',
+                    content: revisedPlanLabel,
+                    agentName: 'strategist'
+                });
+                addPlanItem(`checkpoint-history-plan-revised-${idx}`, planText);
+            });
+            return;
+        }
+        if (finalPlanContent) {
+            addFinalPlanSequence(
+                history.final_plan_status || reviewedPlanLabel,
+                finalPlanContent
+            );
+        } else if (initialPlanContent) {
+            addFinalPlanSequence(
+                history.final_plan_status || reviewedPlanLabel,
+                initialPlanContent
+            );
+        }
+    };
     
     const strategistItems = buildCommittedTimelineItems(history.strategist_items || [], {
         idPrefix: 'strategist-history',
@@ -207,23 +268,13 @@ export function buildHistoryItems(history: any): CommittedItem[] {
                 newItems.push({ id: 'strategist-initial-complete', type: 'tool', content: 'Created Initial Replan', agentName: 'strategist' });
             }
 
-            // Show only the reviewed plan. If final equals initial, use whichever is available.
-            if (finalPlanContent) {
-                addReviewedPlanSequence('Reviewed Replan', finalPlanContent);
-            } else if (initialPlanContent) {
-                addReviewedPlanSequence('Reviewed Replan', initialPlanContent);
-            }
+            appendStrategistPlanMilestones();
         } else {
             if (initialPlanContent) {
                 newItems.push({ id: 'strategist-initial-complete', type: 'tool', content: 'Created Initial Plan', agentName: 'strategist' });
             }
 
-            // Show only the reviewed plan. If final equals initial, use whichever is available.
-            if (finalPlanContent) {
-                addReviewedPlanSequence('Reviewed Plan', finalPlanContent);
-            } else if (initialPlanContent) {
-                addReviewedPlanSequence('Reviewed Plan', initialPlanContent);
-            }
+            appendStrategistPlanMilestones();
         }
     }
     

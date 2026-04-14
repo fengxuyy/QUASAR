@@ -1,17 +1,4 @@
 # ==========================================
-# STAGE 0: CLI Bundle
-# ==========================================
-FROM node:20-bookworm-slim AS cli-builder
-
-WORKDIR /build
-
-COPY cli/package.json cli/package-lock.json cli/tsconfig.json /build/cli/
-COPY cli/src /build/cli/src
-COPY scripts/build_frontend.sh /build/scripts/build_frontend.sh
-
-RUN bash /build/scripts/build_frontend.sh
-
-# ==========================================
 # STAGE 1: Builder (Compilers & Build Tools)
 # ==========================================
 FROM ubuntu:24.04 AS builder
@@ -48,7 +35,8 @@ RUN wget -q https://gitlab.com/QEF/q-e/-/archive/qe-7.5/q-e-qe-7.5.tar.gz && \
     ls -la bin/ && \
     test -f bin/pw.x || (echo "ERROR: pw.x not found after build" && exit 1) && \
     strip --strip-unneeded bin/* || true && \
-    find bin/ -type l -exec sh -c 'cp -L "$1" "$1.tmp" && mv "$1.tmp" "$1"' _ {} \;
+    find bin/ -type l -exec sh -c 'cp -L "$1" "$1.tmp" && mv "$1.tmp" "$1"' _ {} \; && \
+    find . -mindepth 1 -maxdepth 1 ! -name bin -exec rm -rf {} +
 
 # ==========================================
 # STAGE 2: Runtime (Minimal & Clean)
@@ -78,7 +66,8 @@ RUN apt-get update && \
     ca-certificates \
     wget \
     curl \
-    git && \
+    git \
+    xz-utils && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -113,25 +102,34 @@ ENV HOME=/workspace
 ENV TOKENIZERS_PARALLELISM=false
 ENV OMPI_ALLOW_RUN_AS_ROOT=1
 ENV OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
-ENV QUASAR_BRIDGE_PATH=/app/bridge.py
-ENV QUASAR_PYTHON_PATH=/usr/bin/python3
 
 VOLUME ["/workspace"]
 
-# Install Node.js runtime only for the bundled CLI
-RUN apt-get update && apt-get install -y --no-install-recommends gnupg && \
+# Install Node.js 20.x and build tools for native modules
+RUN apt-get update && apt-get install -y --no-install-recommends gnupg build-essential python3 && \
     mkdir -p /etc/apt/keyrings && \
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends nodejs && \
-    apt-get purge -y --auto-remove gnupg && \
+    npm install -g npm@11.12.1
+
+# Copy and build Node.js CLI
+COPY cli /app/cli
+RUN cd /app/cli && \
+    npm ci && \
+    npm run build && \
+    npm prune --production && \
+    npm cache clean --force && \
+    chmod +x /app/cli/dist/cli.js && \
+    ln -sf /app/cli/dist/cli.js /usr/local/bin/quasar
+
+ENV NODE_ENV=production
+
+RUN apt-get update && \
+    apt-get purge -y build-essential gnupg && \
+    apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=cli-builder /build/quasar_node /app/quasar_node
-RUN test -f /app/quasar_node/dist/cli.js && \
-    chmod +x /app/quasar_node/dist/cli.js && \
-    ln -sf /app/quasar_node/dist/cli.js /usr/local/bin/quasar
-
-CMD ["quasar"]
+CMD ["bash"]

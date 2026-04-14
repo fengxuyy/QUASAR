@@ -28,3 +28,4 @@ seaborn
 pypdf>=4.0.0
 pysocks
 psutil
+scikit-learn

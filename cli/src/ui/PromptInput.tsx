@@ -201,7 +201,7 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
             : startRequestConfirm
                 ? "Submit this request? (yes/no)"
                 : planAwaitingConfirm
-                    ? "Proceed with this plan? (yes/no)"
+                    ? "Proceed with this plan? (yes/no, or describe changes)"
                     : checkpointPrompt 
                         ? "Resume from checkpoint? (yes/no)"
                         : "Type your request here...";

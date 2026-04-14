@@ -11,9 +11,6 @@ import { applyDefaultEnv, resolveWorkspaceDir } from './utils/envDefaults.js';
 const require = createRequire(import.meta.url);
 const { version: packageVersion } = require('../package.json');
 const rawArgs = process.argv.slice(2);
-const removedLongFlags = new Set([
-	'--web',
-]);
 const allowedLongFlags = new Set([
 	'--help',
 	'--version',
@@ -32,12 +29,6 @@ for (const arg of rawArgs) {
 	}
 
 	const flagName = arg.split('=')[0];
-	if (removedLongFlags.has(flagName)) {
-		console.error('\x1b[31m✗ Web UI Removed\x1b[0m');
-		console.error('\x1b[90mBrowser-based web support is no longer available.\x1b[0m');
-		console.error('\x1b[90mUse `quasar` for the interactive CLI or pass a prompt for headless runs.\x1b[0m');
-		process.exit(1);
-	}
 	if (!allowedLongFlags.has(flagName)) {
 		console.error('\x1b[31m✗ Unknown Flag\x1b[0m');
 		console.error(`\x1b[90m${flagName} is not a supported option.\x1b[0m`);

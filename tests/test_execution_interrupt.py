@@ -176,6 +176,48 @@ class TestInterruptExecutionTool:
         assert "**Execution Result:**" in result
         assert "status=complete" in result
 
+    def test_execute_temporary_python_allows_non_filesystem_replace_calls(self):
+        """Common data-processing replace calls should not be mistaken for Path.replace()."""
+        from src.tools.execution_check import execute_temporary_python
+
+        result = execute_temporary_python.invoke({
+            "code": (
+                "name = 'MOF_supercell'\n"
+                "print(name.replace('_supercell', ''))\n"
+            ),
+        })
+
+        assert "**Execution Result:**" in result
+        assert "MOF" in result
+        assert "cannot use filesystem mutation helpers" not in result
+
+    def test_execute_temporary_python_blocks_path_replace_via_variable_alias(self):
+        """Actual pathlib replace() calls should still be blocked even when assigned first."""
+        from src.tools.execution_check import execute_temporary_python
+
+        result = execute_temporary_python.invoke({
+            "code": (
+                "from pathlib import Path\n"
+                "path = Path('status.txt')\n"
+                "path.replace('status.bak')\n"
+            ),
+        })
+
+        assert result.startswith("Error:")
+        assert "filesystem mutation helpers" in result
+
+    def test_execute_temporary_python_open_second_arg_non_mode_string_not_write_guard(self, mock_workspace):
+        """Strings with 'a' (e.g. 'latin-1') are not open modes; must not trigger write guard."""
+        from src.tools.execution_check import execute_temporary_python
+
+        (mock_workspace / "f.txt").write_text("ok\n", encoding="utf-8")
+
+        result = execute_temporary_python.invoke({
+            "code": "open('f.txt', 'latin-1')\n",
+        })
+
+        assert "cannot use file writes via open" not in result
+
     def test_execute_temporary_python_does_not_replace_running_execution_state(self, mock_workspace):
         """The temp check-in parser must not clobber the live simulation tracking globals."""
         from src.tools.execution_check import execute_temporary_python
@@ -236,7 +278,7 @@ class TestInterruptExecutionTool:
             ),
             (
                 "from pathlib import Path\nPath('mutated.txt').open('a', encoding='utf-8').write('bad')",
-                "file writes via Path.open(...)",
+                "file writes via open(...)",
                 "mutated.txt",
             ),
             (

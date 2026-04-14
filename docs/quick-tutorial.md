@@ -34,7 +34,7 @@ Here we need to provided scientific request to QUASAR. Providing a more detailed
        │                                                                                         │
        │                                                                                         │
        │                Quantum Universal Autonomous System for Atomistic Research               │
-       │                                          v0.2.0                                         │
+       │                                          v0.3.0                                         │
        │                                                                                         │
        ╰─────────────────────────────────────────────────────────────────────────────────────────╯
 

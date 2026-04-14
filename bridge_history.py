@@ -10,6 +10,8 @@ import re
 from collections import defaultdict
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from src.agents.utils.tool_helpers import _get_execute_python_status_pair
+
 
 CHECKIN_DECISION_TOOLS = {"continue_execution", "interrupt_execution"}
 CHECKIN_CONTROL_PHRASES = (
@@ -17,6 +19,26 @@ CHECKIN_CONTROL_PHRASES = (
     "Please call either `continue_execution(summary='...')` or",
     'Please call either `continue_execution(summary="...")` or',
 )
+
+# Strategist planning / revision prompts (also used to pick the richest transcript for metadata)
+REVISION_PROMPT_MARKER = (
+    "Please revise your latest reviewed plan above based on the user's feedback below."
+)
+USER_FEEDBACK_SECTION = "User feedback:\n"
+AUTO_IMPROVE_SNIPPET = (
+    "Please analyze the previous run results and automatically improve the workflow"
+)
+
+
+def _truncate_collapsible_output(
+    content_str: str,
+    max_length: int = 5000,
+    truncation_msg: str = "\n\n... [Results truncated for display]",
+) -> str:
+    """Trim stored tool output for compact collapsible history sections."""
+    if len(content_str) <= max_length:
+        return content_str
+    return content_str[:max_length] + truncation_msg
 
 
 def _is_checkin_prompt_text(content: str) -> bool:
@@ -144,6 +166,40 @@ def _extract_interrupt_reason_items(current_task_messages: list) -> list[dict]:
     return items
 
 
+def _extract_evaluation_failed_item(content: str) -> dict | None:
+    """Extract a structured evaluation-failed item from evaluator feedback text."""
+    if "EVALUATION_FEEDBACK" not in content:
+        return None
+
+    retry_match = re.search(r'\(attempt (\d+)/(\d+)\)', content)
+    if not retry_match:
+        return None
+
+    attempt_num = retry_match.group(1)
+    max_attempts = int(retry_match.group(2))
+    max_retries = max_attempts - 1
+
+    lines = content.split('\n')
+    summary_lines = []
+    capture = False
+    for line in lines:
+        if 'NOT satisfied' in line:
+            capture = True
+            continue
+        if 'Please resolve' in line:
+            break
+        if capture and line.strip():
+            summary_lines.append(line)
+
+    summary = '\n'.join(summary_lines).strip()
+    return {
+        "type": "evaluation-failed",
+        "content": f"Evaluation Failed - Retry {attempt_num}/{max_retries}",
+        "summary": summary,
+        "agent": "evaluator"
+    }
+
+
 def _extract_target_name(val) -> str:
     """Convert a path value to string, handling list-typed values from tool args.
     Formats multiple paths as 'path1, path2' or 'N items' for display."""
@@ -153,9 +209,12 @@ def _extract_target_name(val) -> str:
         import os
         names = []
         for v in val:
-            if not v:
+            if v is None:
                 continue
             v_str = str(v).strip().rstrip('/')
+            if v_str in ('', '.'):
+                names.append('workspace')
+                continue
             if v_str.startswith('./'):
                 v_str = v_str[2:]
             if os.path.isabs(v_str):
@@ -219,6 +278,29 @@ TOOL_DISPLAY_MESSAGES = {
 }
 
 
+def _execute_python_panel_output(tool_args: dict, content_str: str) -> str:
+    """Build execute_python/execute_code panel text to match runtime (_handle_execute_python_status)."""
+    if not isinstance(tool_args, dict):
+        tool_args = {}
+    file_path = tool_args.get("file_path") or ""
+    code = tool_args.get("code") or ""
+    parts: list[str] = []
+    if code and not file_path:
+        parts.append(f"**Code:**\n```python\n{code}\n```\n\n")
+    if content_str:
+        truncated = content_str[:2000] if len(content_str) > 2000 else content_str
+        parts.append(truncated)
+    return "".join(parts)
+
+
+def _step_complete_status_execute_python(tool_name: str, tool_args: dict) -> str:
+    """Status line for execute_python/execute_code step_complete — matches live UI."""
+    if tool_name in ("execute_python", "execute_code") and isinstance(tool_args, dict):
+        _, complete = _get_execute_python_status_pair(tool_args)
+        return complete
+    return format_tool_display(tool_name, tool_args or {})
+
+
 def format_tool_display(tool_name: str, tool_args: dict) -> str:
     """Format a tool call into a display string like 'Listed pseudo' or 'Executed Python code'."""
     # Special handling for read_file with keyword
@@ -267,6 +349,30 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
         elif status == 'fail':
             return "Evaluation Failed"
         return "Submitted evaluation"
+    
+    # Special handling for move_file — args use source_path/destination_path (match _handle_move_file_status)
+    if tool_name == 'move_file' and tool_args:
+        source_path = tool_args.get('source_path')
+        destination_path = tool_args.get('destination_path')
+        src_display = (
+            os.path.basename(str(source_path).strip().rstrip('/'))
+            if source_path
+            else 'file'
+        )
+        dst_display = str(destination_path).strip() if destination_path else 'destination'
+        return f"Moved {src_display} to {dst_display}"
+    
+    # Special handling for rename_file — match _handle_rename_file_status (not just file_path)
+    if tool_name == 'rename_file' and tool_args:
+        file_path = tool_args.get('file_path')
+        new_name = tool_args.get('new_name')
+        src_display = (
+            os.path.basename(str(file_path).strip().rstrip('/'))
+            if file_path
+            else 'file'
+        )
+        dst_display = str(new_name).strip() if new_name else 'new name'
+        return f"Renamed {src_display} to {dst_display}"
     
     # Special handling for grep_search - show pattern
     if tool_name == 'grep_search' and tool_args:
@@ -498,6 +604,12 @@ def _format_error_content(tool_name: str, tool_args: dict, content_str: str) -> 
             dir_name = _extract_target_name(directory_path) if directory_path != '.' else 'directory'
             return f"{dir_name} not found"
         return f"Grep failed for {pattern}"
+
+    elif tool_name == "edit_file":
+        # Match the live execution log: edit_file keeps its normal status row and
+        # relies on the error flag for styling/details instead of collapsing to a
+        # generic "Not Found" label when the replacement text is missing.
+        return format_tool_display(tool_name, tool_args)
     
     # Generic fallback for other tools if error detected but no specific mapping
     if "not found" in content_lower or "does not exist" in content_lower or "no such file" in content_lower:
@@ -594,7 +706,475 @@ def _format_success_content(tool_name: str, tool_args: dict, content_str: str) -
     return None  # Use default content
 
 
-def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bool = False) -> dict:
+def _model_text_looks_like_tool_validation(text: str) -> bool:
+    """True when AIMessage body is a Pydantic-style tool validation error."""
+    if not text:
+        return False
+    cl = text.lower()
+    if "validation error" in cl:
+        return True
+    return "field required" in cl and (
+        "field '" in cl or 'field "' in cl or "issues):" in cl
+    )
+
+
+def _merge_orphan_execute_tool_validation_items(items: list) -> None:
+    """In-place: merge execute_python/execute_code tool row + following validation model-text.
+
+    When tool.invoke raises ValidationError there is no ToolMessage; the next AIMessage
+    carries format_validation_error text. Without this merge the UI only shows a bare
+    'Executed' tool row from format_tool_display.
+    """
+    i = 0
+    while i < len(items) - 1:
+        cur = items[i]
+        nxt = items[i + 1]
+        if (
+            isinstance(cur, dict)
+            and cur.get("type") == "tool"
+            and cur.get("name") in ("execute_python", "execute_code")
+            and isinstance(nxt, dict)
+            and nxt.get("type") == "model-text"
+            and _model_text_looks_like_tool_validation((nxt.get("content") or "").strip())
+        ):
+            raw = (nxt.get("content") or "").strip()
+            tool_name = cur.get("name") or "execute_python"
+            tool_args = cur.get("args") or {}
+            merged = dict(cur)
+            merged["content"] = _format_error_content(tool_name, tool_args, raw)
+            merged["isError"] = True
+            detail = raw
+            if detail and not detail.lower().startswith("error:"):
+                detail = f"Error: {detail}"
+            merged["output"] = detail
+            items[i : i + 2] = [merged]
+            i += 1
+            continue
+        i += 1
+
+
+def _apply_orphan_execute_merges(
+    strategist_items: list,
+    operator_items_by_task,
+    evaluator_items_by_task,
+    ordered_items_by_task,
+) -> None:
+    """Apply validation-followup merge across all checkpoint history item lists."""
+    _merge_orphan_execute_tool_validation_items(strategist_items)
+    for bucket in (operator_items_by_task, evaluator_items_by_task, ordered_items_by_task):
+        for _key in list(bucket.keys()):
+            _merge_orphan_execute_tool_validation_items(bucket[_key])
+
+
+def _normalize_snapshot_values(snapshot) -> dict | None:
+    """Extract a state-values dict from a checkpoint-history snapshot-like object."""
+    if snapshot is None:
+        return None
+
+    if isinstance(snapshot, dict):
+        values = snapshot.get("values")
+        if isinstance(values, dict):
+            return values
+        if any(
+            key in snapshot
+            for key in ("completed_steps", "current_task_messages", "evaluation_messages", "plan")
+        ):
+            return snapshot
+        return None
+
+    values = getattr(snapshot, "values", None)
+    return values if isinstance(values, dict) else None
+
+
+def _count_relevant_task_messages(messages: list) -> int:
+    """Estimate how much recoverable task history a message list contains."""
+    count = 0
+    for msg in messages or []:
+        msg_type = _get_message_type(msg)
+        content = _get_content(msg).strip()
+        if msg_type in {"AIMessage", "ToolMessage"}:
+            count += 1
+        elif msg_type == "HumanMessage" and (
+            "EVALUATION_FEEDBACK" in content or _parse_checkin_summary_message(content)
+        ):
+            count += 1
+    return count
+
+
+def _history_item_signature(item: dict):
+    """Create a stable signature for deduplicating reconstructed history items."""
+    def _normalize(value):
+        if isinstance(value, dict):
+            return tuple(sorted((k, _normalize(v)) for k, v in value.items()))
+        if isinstance(value, list):
+            return tuple(_normalize(v) for v in value)
+        return value
+
+    filtered = {
+        key: value
+        for key, value in item.items()
+        if key not in {"tool_id", "name", "args"}
+    }
+    return _normalize(filtered)
+
+
+def _merge_unique_history_items(*item_lists: list[dict]) -> list[dict]:
+    """Merge item lists while preserving order and removing duplicates."""
+    merged = []
+    seen = set()
+    for items in item_lists:
+        for item in items or []:
+            signature = _history_item_signature(item)
+            if signature in seen:
+                continue
+            seen.add(signature)
+            merged.append(item)
+    return merged
+
+
+def _insert_before_or_append(items: list[dict], marker_item: dict, new_item: dict) -> None:
+    """Insert an item immediately before a marker item, falling back to append."""
+    try:
+        idx = items.index(marker_item)
+        items.insert(idx, new_item)
+    except ValueError:
+        items.append(new_item)
+
+
+def _apply_tool_message_to_task_history(
+    tool_call_id,
+    status: str,
+    content_str: str,
+    ordered_items: list[dict],
+    operator_items: list[dict],
+    evaluator_items: list[dict],
+) -> None:
+    """Apply a ToolMessage result onto previously reconstructed tool-call items."""
+    matching_tool = None
+    target_list = None
+
+    for item in ordered_items:
+        if item.get("tool_id") == tool_call_id:
+            matching_tool = item
+            if item.get("agent") == "evaluator":
+                target_list = evaluator_items
+            else:
+                target_list = operator_items
+            break
+
+    if not matching_tool or target_list is None:
+        return
+
+    tool_name = matching_tool.get("name", "")
+    tool_args = matching_tool.get("args", {})
+    agent_name = matching_tool.get("agent", "operator")
+    is_error = _detect_error_in_content(content_str, status)
+
+    if is_error:
+        matching_tool["isError"] = True
+        error_content = _format_error_content(tool_name, tool_args, content_str)
+        if error_content:
+            matching_tool["content"] = error_content
+    else:
+        success_content = _format_success_content(tool_name, tool_args, content_str)
+        if success_content:
+            matching_tool["content"] = success_content
+
+    if tool_name in ("execute_code", "execute_python"):
+        code_result = {
+            "type": "code-result",
+            "content": {
+                "output": _execute_python_panel_output(tool_args, content_str),
+                "filePath": tool_args.get("file_path", ""),
+                "status": _step_complete_status_execute_python(tool_name, tool_args),
+            },
+            "isError": is_error,
+            "agent": agent_name
+        }
+        _insert_before_or_append(ordered_items, matching_tool, code_result)
+        _insert_before_or_append(target_list, matching_tool, code_result)
+
+    if tool_name == "analyze_image":
+        analysis_output = content_str
+        if content_str.startswith("**Analyze Image:**"):
+            lines = content_str.split('\n', 1)
+            if len(lines) > 1:
+                analysis_output = lines[1].lstrip('> ').strip()
+
+        image_result = {
+            "type": "image-analysis-result",
+            "content": {
+                "output": analysis_output,
+                "filePath": tool_args.get("file_path", "")
+            },
+            "isError": is_error,
+            "agent": agent_name
+        }
+        _insert_before_or_append(ordered_items, matching_tool, image_result)
+        _insert_before_or_append(target_list, matching_tool, image_result)
+
+    if tool_name == "edit_file":
+        old_string = tool_args.get('old_string', '')
+        new_string = tool_args.get('new_string', '')
+        if old_string or new_string:
+            max_len = 1500
+            old_display = old_string[:max_len] + "..." if len(old_string) > max_len else old_string
+            new_display = new_string[:max_len] + "..." if len(new_string) > max_len else new_string
+            diff_lines = [f"- {line}" for line in old_display.split('\n')]
+            diff_lines.extend(f"+ {line}" for line in new_display.split('\n'))
+            matching_tool["output"] = "```diff\n" + "\n".join(diff_lines) + "\n```"
+
+    if tool_name in ("query_rag", "grep_search", "search_web", "fetch_web_page") and content_str:
+        matching_tool["output"] = _truncate_collapsible_output(content_str)
+
+
+def _should_skip_task_ai_content(content: str) -> bool:
+    """Return True for task-local AIMessage content that should not render in history."""
+    if not content:
+        return True
+    return (
+        content == "DONE"
+        or content == "GIVE_UP"
+        or content == "Please provide a valid input or question."
+        or content.startswith("Please start working on Task ")
+        or ("completed successfully" in content and "Please proceed" in content)
+        or _is_checkin_prompt_text(content)
+        or _is_checkin_control_text(content)
+    )
+
+
+def _reconstruct_task_history_from_state(
+    current_task_messages: list,
+    evaluation_messages: list | None = None,
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Rebuild task-local operator/evaluator timeline items from checkpoint state."""
+    operator_items = []
+    evaluator_items = []
+    ordered_items = []
+
+    filtered_task_messages = _filter_checkin_session_messages(current_task_messages or [])
+    filtered_eval_messages = _filter_checkin_session_messages(evaluation_messages or [])
+
+    for msg in filtered_task_messages:
+        msg_type = _get_message_type(msg)
+        content = _get_content(msg).strip()
+
+        if msg_type == "HumanMessage":
+            failed_item = _extract_evaluation_failed_item(content)
+            if failed_item:
+                evaluator_items.append(failed_item)
+                ordered_items.append(failed_item)
+            continue
+
+        if msg_type == "AIMessage":
+            tool_calls = _get_tool_calls(msg)
+            for tc in tool_calls:
+                tool_name, tool_args, tool_id = _extract_tool_info(tc)
+                if not tool_name or tool_name in {"complete_task", "submit_evaluation"}:
+                    continue
+                tool_item = {
+                    "type": "tool",
+                    "content": format_tool_display(tool_name, tool_args),
+                    "tool_id": tool_id,
+                    "name": tool_name,
+                    "args": tool_args,
+                    "agent": "operator",
+                }
+                operator_items.append(tool_item)
+                ordered_items.append(tool_item)
+
+            if content and not _should_skip_task_ai_content(content):
+                item = {
+                    "type": "model-text",
+                    "content": content,
+                    "agent": "operator",
+                }
+                operator_items.append(item)
+                ordered_items.append(item)
+            continue
+
+        if msg_type == "ToolMessage":
+            if isinstance(msg, dict):
+                tool_call_id = msg.get("tool_call_id")
+                status = msg.get("status", "")
+            else:
+                tool_call_id = msg.tool_call_id
+                status = getattr(msg, "status", "")
+            _apply_tool_message_to_task_history(
+                tool_call_id,
+                status,
+                content,
+                ordered_items,
+                operator_items,
+                evaluator_items,
+            )
+
+    for msg in filtered_eval_messages:
+        msg_type = _get_message_type(msg)
+        content = _get_content(msg).strip()
+
+        if msg_type == "AIMessage":
+            for tc in _get_tool_calls(msg):
+                tool_name, tool_args, tool_id = _extract_tool_info(tc)
+                if not tool_name or tool_name == "submit_evaluation":
+                    continue
+                tool_item = {
+                    "type": "tool",
+                    "content": format_tool_display(tool_name, tool_args),
+                    "tool_id": tool_id,
+                    "name": tool_name,
+                    "args": tool_args,
+                    "agent": "evaluator",
+                }
+                evaluator_items.append(tool_item)
+                ordered_items.append(tool_item)
+            continue
+
+        if msg_type == "ToolMessage":
+            if isinstance(msg, dict):
+                tool_call_id = msg.get("tool_call_id")
+                status = msg.get("status", "")
+            else:
+                tool_call_id = msg.tool_call_id
+                status = getattr(msg, "status", "")
+            _apply_tool_message_to_task_history(
+                tool_call_id,
+                status,
+                content,
+                ordered_items,
+                operator_items,
+                evaluator_items,
+            )
+
+    interrupt_items = _extract_interrupt_reason_items(current_task_messages or [])
+    if interrupt_items:
+        operator_items = _merge_unique_history_items(operator_items, interrupt_items)
+        ordered_items = _merge_unique_history_items(ordered_items, interrupt_items)
+
+    _merge_orphan_execute_tool_validation_items(operator_items)
+    _merge_orphan_execute_tool_validation_items(evaluator_items)
+    _merge_orphan_execute_tool_validation_items(ordered_items)
+
+    return operator_items, evaluator_items, ordered_items
+
+
+def _supplement_task_history_from_snapshots(
+    state_values: dict,
+    state_history: list | None,
+    operator_items_by_task,
+    evaluator_items_by_task,
+    ordered_items_by_task,
+) -> None:
+    """Backfill task histories from per-checkpoint task-local state snapshots."""
+    snapshot_values = []
+    current_values = _normalize_snapshot_values(state_values)
+    if current_values:
+        snapshot_values.append(current_values)
+    for snapshot in state_history or []:
+        values = _normalize_snapshot_values(snapshot)
+        if values:
+            snapshot_values.append(values)
+
+    if not snapshot_values:
+        return
+
+    richest_snapshot_by_task = {}
+    for order, values in enumerate(reversed(snapshot_values)):
+        task_idx = len(values.get("completed_steps", []) or [])
+        plan = values.get("plan", []) or []
+        if plan and task_idx >= len(plan):
+            continue
+
+        richness = _count_relevant_task_messages(values.get("current_task_messages", []))
+        richness += _count_relevant_task_messages(values.get("evaluation_messages", []))
+        if richness <= 0:
+            continue
+
+        existing = richest_snapshot_by_task.get(task_idx)
+        if existing is None or richness > existing["richness"] or (
+            richness == existing["richness"] and order > existing["order"]
+        ):
+            richest_snapshot_by_task[task_idx] = {
+                "values": values,
+                "richness": richness,
+                "order": order,
+            }
+
+    for task_idx, snapshot_info in richest_snapshot_by_task.items():
+        values = snapshot_info["values"]
+        snapshot_operator_items, snapshot_evaluator_items, snapshot_ordered_items = _reconstruct_task_history_from_state(
+            values.get("current_task_messages", []),
+            values.get("evaluation_messages", []),
+        )
+
+        existing_operator_items = list(operator_items_by_task[task_idx])
+        existing_evaluator_items = list(evaluator_items_by_task[task_idx])
+        existing_ordered_items = list(ordered_items_by_task[task_idx])
+
+        if len(snapshot_operator_items) > len(existing_operator_items):
+            operator_items_by_task[task_idx] = _merge_unique_history_items(
+                snapshot_operator_items,
+                existing_operator_items,
+            )
+
+        if len(snapshot_evaluator_items) > len(existing_evaluator_items):
+            evaluator_items_by_task[task_idx] = _merge_unique_history_items(
+                snapshot_evaluator_items,
+                existing_evaluator_items,
+            )
+
+        should_prioritize_snapshot = (
+            len(snapshot_ordered_items) > len(existing_ordered_items)
+            or len(snapshot_operator_items) > len(existing_operator_items)
+            or len(snapshot_evaluator_items) > len(existing_evaluator_items)
+        )
+        if should_prioritize_snapshot and snapshot_ordered_items:
+            ordered_items_by_task[task_idx] = _merge_unique_history_items(
+                snapshot_ordered_items,
+                existing_ordered_items,
+            )
+
+
+def _plan_metadata_candidate_score(msgs: list) -> tuple:
+    has_revision = any(
+        _get_message_type(m) == "HumanMessage"
+        and REVISION_PROMPT_MARKER in _get_content(m)
+        for m in msgs
+    )
+    has_auto_improve = any(AUTO_IMPROVE_SNIPPET in _get_content(m) for m in msgs)
+    return (1 if has_revision else 0, 1 if has_auto_improve else 0, len(msgs))
+
+
+def _select_messages_for_plan_metadata(
+    messages: list,
+    state_history: list | None,
+) -> list:
+    """Pick the message list that still has strategist revision / replan signals.
+
+    Live `messages` are often shortened by summarization; older LangGraph snapshots
+    may retain full planner HumanMessages needed for revised-plan history.
+    """
+    candidates: list[list] = []
+    if messages:
+        candidates.append(messages)
+    for snap in state_history or []:
+        vals = _normalize_snapshot_values(snap)
+        if not vals:
+            continue
+        hist_msgs = vals.get("messages")
+        if hist_msgs:
+            candidates.append(_filter_checkin_session_messages(hist_msgs))
+    if not candidates:
+        return []
+    return max(candidates, key=_plan_metadata_candidate_score)
+
+
+def extract_checkpoint_history(
+    state_values: dict,
+    messages: list,
+    is_replan: bool = False,
+    state_history: list | None = None,
+) -> dict:
     """
     Extract structured history from checkpoint state for CLI display.
     
@@ -607,6 +1187,9 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
         Dictionary with plan, completed_steps, operator/evaluator/strategist items grouped by task
     """
     messages = _filter_checkin_session_messages(messages)
+    messages_for_plan_metadata = _select_messages_for_plan_metadata(
+        messages, state_history
+    )
 
     plan = state_values.get('plan', [])
     completed_steps = state_values.get('completed_steps', [])
@@ -618,8 +1201,7 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
     
     if not replan_detected:
         # Heuristic: search messages for the auto-improvement trigger
-        AUTO_IMPROVE_SNIPPET = "Please analyze the previous run results and automatically improve the workflow"
-        for msg in messages:
+        for msg in messages_for_plan_metadata:
             content = _get_content(msg)
             if AUTO_IMPROVE_SNIPPET in content:
                 replan_detected = True
@@ -634,17 +1216,28 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
     # Use the combined set for history reconstruction since we need to detect both modes
     STRATEGIST_TOOLS = STRATEGIST_TOOLS_NORMAL | STRATEGIST_TOOLS_REPLANNING
     
+    def _user_request_from_revision_prompt(prompt: str) -> str:
+        if not prompt or USER_FEEDBACK_SECTION not in prompt:
+            return ""
+        return prompt.split(USER_FEEDBACK_SECTION, 1)[1].strip()
+
     # Extract plans from strategist's AIMessages
     # Only scan messages from the planning phase (before operator starts working)
     # to avoid matching operator analysis text that contains "Task" and "###"
-    all_plans = []
+    plan_events = []
+    last_human_prompt = ""
     
     # Use initial_plan_content from state if available (more reliable)
     state_initial_plan = state_values.get('initial_plan_content', '').strip()
     
-    for msg in messages:
-        if isinstance(msg, AIMessage) and msg.content:
-            content = _extract_text(msg.content).strip()
+    for msg in messages_for_plan_metadata:
+        msg_type = _get_message_type(msg)
+        content = _get_content(msg).strip()
+
+        if msg_type == 'HumanMessage' and content:
+            last_human_prompt = content
+
+        if msg_type == 'AIMessage' and content:
             tool_calls = _get_tool_calls(msg)
             
             # If this AIMessage has tool calls that are NOT strategist tools,
@@ -657,13 +1250,48 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
             
             # Heuristic to identify plan messages
             if 'Task' in content and ('Guidance' in content or 'Task 1' in content or '###' in content):
-                all_plans.append(content)
+                plan_events.append({
+                    "content": content,
+                    "prompt": last_human_prompt,
+                })
     
     # In standard mode, we should have two plans (initial and reviewed)
     # in replanning mode, there might only be one.
+    all_plans = [event["content"] for event in plan_events]
     initial_plan_text = all_plans[0] if len(all_plans) > 1 else (state_initial_plan if state_initial_plan else "")
     full_plan_text = all_plans[-1] if all_plans else ""
-    
+    final_plan_status = "Reviewed Replan" if is_replan else "Reviewed Plan"
+    final_plan_update_status = ""
+    if plan_events:
+        last_prompt = plan_events[-1].get("prompt", "")
+        if REVISION_PROMPT_MARKER in last_prompt:
+            final_plan_status = "Revised Replan from user feedback" if is_replan else "Revised Plan from user feedback"
+            final_plan_update_status = "Revising plan from user feedback"
+
+    # Every AIMessage plan that followed a user revision HumanMessage (may be multiple rounds).
+    user_revised_plan_texts = [
+        event["content"]
+        for event in plan_events
+        if REVISION_PROMPT_MARKER in event.get("prompt", "")
+    ]
+    user_revised_plan_feedbacks = [
+        _user_request_from_revision_prompt(event.get("prompt", ""))
+        for event in plan_events
+        if REVISION_PROMPT_MARKER in event.get("prompt", "")
+    ]
+    first_user_revision_idx = next(
+        (
+            i
+            for i, event in enumerate(plan_events)
+            if REVISION_PROMPT_MARKER in event.get("prompt", "")
+        ),
+        None,
+    )
+    # Plan shown as "Reviewed Plan" before any user-requested revision (not the last intermediate revision).
+    reviewed_plan_text = ""
+    if first_user_revision_idx is not None and first_user_revision_idx > 0:
+        reviewed_plan_text = all_plans[first_user_revision_idx - 1]
+
     # Track items by task
     operator_items_by_task = defaultdict(list)
     evaluator_items_by_task = defaultdict(list)
@@ -722,38 +1350,10 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
             if "completed successfully" in content and "Please proceed" in content:
                 current_task_in_history += 1
                 in_evaluator = False
-            # Fail case: evaluator sends feedback, operator will retry
+                # Fail case: evaluator sends feedback, operator will retry
             elif "EVALUATION_FEEDBACK" in content:
-                # Extract retry info and summary from feedback message
-                # Format: "EVALUATION_FEEDBACK:\nTask N requirements are NOT satisfied (attempt X/Y).\n{summary}\n..."
-                import re
-                retry_match = re.search(r'\(attempt (\d+)/(\d+)\)', content)
-                if retry_match:
-                    attempt_num = retry_match.group(1)
-                    max_attempts = int(retry_match.group(2))
-                    # max_attempts is total attempts (4), but display should show max retries (3)
-                    max_retries = max_attempts - 1
-                    # Extract summary - everything after the attempt line, before the "Please resolve" part
-                    lines = content.split('\n')
-                    summary_lines = []
-                    capture = False
-                    for line in lines:
-                        if 'NOT satisfied' in line:
-                            capture = True
-                            continue
-                        if 'Please resolve' in line:
-                            break
-                        if capture and line.strip():
-                            summary_lines.append(line)
-                    summary = '\n'.join(summary_lines).strip()
-                    
-                    # Add evaluation failed item - display as Retry x/3 to match live format
-                    failed_item = {
-                        "type": "evaluation-failed",
-                        "content": f"Evaluation Failed - Retry {attempt_num}/{max_retries}",
-                        "summary": summary,
-                        "agent": "evaluator"
-                    }
+                failed_item = _extract_evaluation_failed_item(content)
+                if failed_item:
                     evaluator_items_by_task[current_task_in_history].append(failed_item)
                     ordered_items_by_task[current_task_in_history].append(failed_item)
                 in_evaluator = False
@@ -810,8 +1410,9 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
                 # Check if this is a plan message - if so, planning phase is complete
                 # Do this AFTER processing tool calls so strategist tool calls are identified first
                 is_plan_content = (
-                    content == full_plan_text or 
+                    content == full_plan_text or
                     content == initial_plan_text or
+                    (reviewed_plan_text and content == reviewed_plan_text) or
                     '<PLAN>' in content or 
                     '</PLAN>' in content or
                     content.startswith('### **Task 1:') or 
@@ -901,13 +1502,14 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
                 
                 # Add code-result for execute_code/execute_python
                 if tool_name in ("execute_code", "execute_python"):
-                    # Match runtime behavior: the code-result panel should show the
-                    # execution output, not the inline script source.
+                    # Match runtime behavior: same status line as step_complete and panel
+                    # (code preamble + truncated stdout), not only the raw ToolMessage body.
                     code_result = {
                         "type": "code-result",
                         "content": {
-                            "output": content_str,
-                            "filePath": tool_args.get("file_path", "")
+                            "output": _execute_python_panel_output(tool_args, content_str),
+                            "filePath": tool_args.get("file_path", ""),
+                            "status": _step_complete_status_execute_python(tool_name, tool_args),
                         },
                         "isError": is_error,
                         "agent": agent_name
@@ -986,19 +1588,18 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
                         # Store the output in the tool item for display
                         matching_tool["output"] = diff_output
 
-                # Add output for grep_search, search_web, fetch_web_page (collapsible details in history)
-                if tool_name in ("grep_search", "search_web", "fetch_web_page") and content_str:
-                    truncated = content_str[:5000] if len(content_str) > 5000 else content_str
-                    if len(content_str) > 5000:
-                        truncated += "\n\n... [Results truncated for display]"
-                    matching_tool["output"] = truncated
+                # Add output for tools that expose collapsible details in history.
+                if tool_name in ("query_rag", "grep_search", "search_web", "fetch_web_page") and content_str:
+                    matching_tool["output"] = _truncate_collapsible_output(content_str)
 
         # Handle text content from AIMessage (model thought/text)
         elif isinstance(msg, AIMessage) and msg.content:
             content = _extract_text(msg.content).strip()
             
             # Skip if it is a plan text (already shown in dedicated headers)
-            if content == full_plan_text or content == initial_plan_text:
+            if content == full_plan_text or content == initial_plan_text or (
+                reviewed_plan_text and content == reviewed_plan_text
+            ):
                 continue
             
             # Skip any content that looks like a plan (contains PLAN tags or Task/Guidance structure)
@@ -1104,17 +1705,29 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
                         if success_content:
                             matching_tool["content"] = success_content
                     
-                    # Add output for grep_search, search_web, fetch_web_page (collapsible details in history)
-                    if tool_name in ("grep_search", "search_web", "fetch_web_page") and content_str:
-                        truncated = content_str[:5000] if len(content_str) > 5000 else content_str
-                        if len(content_str) > 5000:
-                            truncated += "\n\n... [Results truncated for display]"
-                        matching_tool["output"] = truncated
+                    # Add output for tools that expose collapsible details in history.
+                    if tool_name in ("query_rag", "grep_search", "search_web", "fetch_web_page") and content_str:
+                        matching_tool["output"] = _truncate_collapsible_output(content_str)
 
     current_task_index = len(completed_steps)
     for item in _extract_interrupt_reason_items(current_task_messages):
         operator_items_by_task[current_task_index].append(item)
         ordered_items_by_task[current_task_index].append(item)
+
+    _supplement_task_history_from_snapshots(
+        state_values,
+        state_history,
+        operator_items_by_task,
+        evaluator_items_by_task,
+        ordered_items_by_task,
+    )
+
+    _apply_orphan_execute_merges(
+        strategist_items,
+        operator_items_by_task,
+        evaluator_items_by_task,
+        ordered_items_by_task,
+    )
     
     # Build backward-compatible flat list
     operator_tools = []
@@ -1145,6 +1758,11 @@ def extract_checkpoint_history(state_values: dict, messages: list, is_replan: bo
         "plan": plan,
         "initial_plan_text": initial_plan_text,
         "full_plan_text": full_plan_text,
+        "reviewed_plan_text": reviewed_plan_text,
+        "user_revised_plan_texts": user_revised_plan_texts,
+        "user_revised_plan_feedbacks": user_revised_plan_feedbacks,
+        "final_plan_status": final_plan_status,
+        "final_plan_update_status": final_plan_update_status,
         "completed_steps": completed_steps,
         "step_results": {str(k): v for k, v in step_results.items()},
         "current_task": len(completed_steps) + 1,

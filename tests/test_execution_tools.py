@@ -137,9 +137,9 @@ def test_execute_python_test_timeout(mock_popen, mock_workspace):
     assert mock_kill.called
 
 
-def test_execute_python_rejects_none_timeout(mock_workspace):
-    """Timeout must be a positive number and cannot be None."""
-    result = execute_python.func(None, code="print('hi')")
+def test_execute_python_rejects_non_positive_timeout(mock_workspace):
+    """Timeout must be a positive number when it is provided."""
+    result = execute_python.func(code="print('hi')", timeout=0)
     assert result == "Error: 'timeout' must be a positive number of minutes."
 
 

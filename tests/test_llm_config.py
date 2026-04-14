@@ -58,16 +58,14 @@ class TestInitializeLLM:
     """Test LLM initialization."""
     
     def test_initialize_llm_missing_model(self):
-        """Test that missing MODEL raises ValueError."""
+        """Test that missing MODEL returns a disabled client."""
         with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValueError, match="MODEL environment variable is required"):
-                initialize_llm()
-    
+            assert initialize_llm() == (None, None)
+
     def test_initialize_llm_missing_api_key(self):
-        """Test that missing API key raises ValueError."""
+        """Test that missing API key returns a disabled client."""
         with patch.dict(os.environ, {"MODEL": "gemini-2.5-pro"}, clear=True):
-            with pytest.raises(ValueError, match="MODEL_API_KEY environment variable is required"):
-                initialize_llm()
+            assert initialize_llm() == (None, None)
     
     @patch('src.llm_config.ChatGoogleGenerativeAI')
     def test_initialize_llm_gemini(self, mock_gemini):
@@ -119,7 +117,8 @@ class TestInitializeLLM:
             mock_openai.assert_called_once_with(
                 model="llama-3-70b",
                 api_key="test-key",
-                base_url="http://localhost:8000"
+                base_url="http://localhost:8000",
+                stream_usage=True,
             )
 
 

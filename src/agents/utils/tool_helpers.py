@@ -83,7 +83,10 @@ def extract_target_name(tool_name: str, tool_args: dict) -> Optional[str]:
         if isinstance(target, list):
             names = []
             for t in target:
-                t_str = str(t).strip()
+                t_str = str(t).strip().rstrip('/')
+                if t_str in ('', '.'):
+                    names.append('workspace')
+                    continue
                 if t_str.startswith('./'):
                     t_str = t_str[2:]
                 if os.path.isabs(t_str):
@@ -115,7 +118,7 @@ def extract_target_name(tool_name: str, tool_args: dict) -> Optional[str]:
             display_query = query[:50] + '...' if len(query) > 50 else query
             return f"{display_query}"
         return None
-    
+
     # Special handling for fetch_web_page - show domain/URL
     if tool_name == 'fetch_web_page':
         url = tool_args.get('url', '')
@@ -130,7 +133,7 @@ def extract_target_name(tool_name: str, tool_args: dict) -> Optional[str]:
             except:
                 return url[:50] + '...' if len(url) > 50 else url
         return None
-    
+
     # Special handling for grep_search - show pattern being searched
     if tool_name == 'grep_search':
         pattern = tool_args.get('pattern', '')
@@ -138,8 +141,21 @@ def extract_target_name(tool_name: str, tool_args: dict) -> Optional[str]:
             display_pattern = pattern[:50] + '...' if len(pattern) > 50 else pattern
             return f"{display_pattern}"
         return None
-    
+
     return None
+
+
+def _truncate_collapsible_output(
+    tool_result: Optional[str],
+    max_length: int = 5000,
+    truncation_msg: str = "\n\n... [Results truncated for display]",
+) -> str:
+    """Trim tool output to a UI-friendly size for collapsible sections."""
+    if not tool_result or not isinstance(tool_result, str):
+        return ""
+    if len(tool_result) <= max_length:
+        return tool_result
+    return tool_result[:max_length] + truncation_msg
 
 
 def get_execute_python_status(tool_args: dict) -> str:
@@ -368,7 +384,7 @@ def _handle_query_rag_status(agent: str, tool_args: Dict[str, Any], is_complete:
     
     # Detect errors in tool result (including validation errors)
     is_error = False
-    error_output = None
+    output = ""
     if is_complete and tool_result and isinstance(tool_result, str):
         result_lower = tool_result.lower()
         if (tool_result.startswith("Error:") or 
@@ -377,8 +393,7 @@ def _handle_query_rag_status(agent: str, tool_args: Dict[str, Any], is_complete:
             "validation error" in result_lower or
             "field required" in result_lower):
             is_error = True
-            # Include the error message as output for collapsible display
-            error_output = tool_result
+        output = _truncate_collapsible_output(tool_result)
     
     idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
     if is_complete:
@@ -387,17 +402,21 @@ def _handle_query_rag_status(agent: str, tool_args: Dict[str, Any], is_complete:
             if "validation error" in (tool_result or '').lower():
                 status_msg = "Query RAG Failed"
             else:
-                if library:
+                if library and display_query:
                     status_msg = f"Queried RAG {display_query} in {library}"
+                elif display_query:
+                    status_msg = f"Queried RAG {display_query}"
                 else:
-                    status_msg = f"Queried RAG {display_query}" if display_query else "Queried RAG"
-            send_agent_event(agent, "step_complete", status_msg, is_error=True, output=error_output)
+                    status_msg = "Queried RAG"
+            send_agent_event(agent, "step_complete", status_msg, is_error=True, output=output)
         else:
-            if library:
-                status_text = f"{display_query} in {library}"
+            if library and display_query:
+                status_msg = f"Queried RAG {display_query} in {library}"
+            elif display_query:
+                status_msg = f"Queried RAG {display_query}"
             else:
-                status_text = f"{display_query}"
-            send_agent_event(agent, "step_complete", f"Queried RAG {status_text}", is_error=False)
+                status_msg = "Queried RAG"
+            send_agent_event(agent, "step_complete", status_msg, is_error=False, output=output)
         send_agent_event(agent, "update", idle_status)
     else:
         if library:
@@ -637,8 +656,21 @@ def _handle_list_directory_status(agent: str, tool_args: Dict[str, Any], target_
     if is_multi:
         count = len(directory_path)
         if count <= 3:
-            names = [os.path.basename(str(d).rstrip('/')) if d and d != '.' else 'workspace' for d in directory_path]
-            display = target_name if target_name else ', '.join(names)
+            path_parts = []
+            for d in directory_path:
+                if d is None:
+                    continue
+                v_str = str(d).strip().rstrip('/')
+                if v_str in ('', '.'):
+                    path_parts.append('workspace')
+                    continue
+                if v_str.startswith('./'):
+                    v_str = v_str[2:]
+                if os.path.isabs(v_str):
+                    path_parts.append(os.path.basename(v_str))
+                else:
+                    path_parts.append(v_str)
+            display = target_name if target_name else ', '.join(path_parts)
         else:
             display = f"{count} directories"
         base_status = f"Listing {display}"

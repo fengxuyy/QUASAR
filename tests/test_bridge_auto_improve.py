@@ -105,7 +105,7 @@ def test_begin_plan_confirmation_wait_auto_confirms_only_for_automatic_cycles(mo
         {"remaining_cycles": 1, "current_run_is_automatic": True},
         persist=False,
     )
-    assert bridge.begin_plan_confirmation_wait() is True
+    assert bridge.begin_plan_confirmation_wait() == {"action": "confirm", "feedback": ""}
     assert [type_ for type_, _ in events] == []
 
     bridge._set_auto_improve_state(
@@ -119,7 +119,28 @@ def test_begin_plan_confirmation_wait_auto_confirms_only_for_automatic_cycles(mo
     monkeypatch.setattr(bridge._plan_confirm_event, "wait", fake_wait)
     events.clear()
 
-    assert bridge.begin_plan_confirmation_wait() is True
+    assert bridge.begin_plan_confirmation_wait() == {"action": "confirm", "feedback": ""}
+    assert events == [("plan_awaiting_confirm", {})]
+
+
+def test_begin_plan_confirmation_wait_returns_revision_feedback(monkeypatch):
+    _configure_bridge(monkeypatch)
+    events = _capture_send_json(monkeypatch)
+
+    bridge._set_auto_improve_state(
+        {"remaining_cycles": 0, "current_run_is_automatic": False},
+        persist=False,
+    )
+
+    def fake_wait():
+        bridge.set_plan_confirmation({"action": "revise", "feedback": "Split the validation into a separate task."})
+
+    monkeypatch.setattr(bridge._plan_confirm_event, "wait", fake_wait)
+
+    assert bridge.begin_plan_confirmation_wait() == {
+        "action": "revise",
+        "feedback": "Split the validation into a separate task.",
+    }
     assert events == [("plan_awaiting_confirm", {})]
 
 

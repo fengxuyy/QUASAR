@@ -49,7 +49,7 @@ const Banner: React.FC = () => {
         ? subtitle.substring(0, Math.max(0, safeContentWidth - 3)) + '...'
         : subtitle;
     
-    const version = 'v0.2.0';
+    const version = 'v0.3.0';
 
 	return (
 		<Box flexDirection="column" marginLeft={leftMargin}>

@@ -520,7 +520,7 @@ def _handle_execution_timeout(process: subprocess.Popen, script_path: Path) -> s
 
 
 def execute_python_with_state_preserved(
-    timeout: float,
+    timeout: Optional[float] = None,
     *,
     code: str,
     omp_num_threads: int = 1,
@@ -547,26 +547,27 @@ def execute_python_with_state_preserved(
 
 @tool
 def execute_python(
-    timeout: float,
     file_path: Optional[str] = None,
     code: Optional[str] = None,
+    timeout: Optional[float] = None,
     omp_num_threads: int = 1,
 ) -> Union[str, Dict[str, Any]]:
     """Execute Python code directly or from a file.
     
-    The code will have access to ASE, pymatgen, MACE, RASPA3, Quantum ESPRESSO, LAMMPS, and standard libraries.
+    The code will have access to ASE, pymatgen, MACE, RASPA3, Quantum ESPRESSO, LAMMPS, plus standard libraries.
     
     **Note:** Including `code` together with `file_path` is HIGHLY recommended. This ensures the script 
     is saved to a named file for traceability and reproducibility, rather than using a disposable temp file.
     
     Args:
-        timeout: Hard timeout in minutes for this execution. This must always be set. Pass a positive float to cap runtime
-                 (e.g. 2.0 for a 2-minute smoke test or 30.0 for a production guardrail).
         file_path: Optional path to the Python file. If provided with `code`, the code will be written 
                    to this file before execution. If provided without `code`, the existing file will be executed.
         code: Optional Python code to execute directly. If provided without `file_path`, a temporary file 
               will be used (recommended only for simple, quick scripts). If provided with `file_path`, 
               the code will be written to that file before execution.
+        timeout: Optional hard timeout in minutes. Use this ONLY for trial/smoke-test runs to cap runtime
+                 (e.g. 2.0 for a 2-minute trial). Do NOT set this for production runs — production runs
+                 should run without a timeout so they are not prematurely killed.
         omp_num_threads: Number of OpenMP threads per MPI process (default: 1). Set this when running 
                         hybrid MPI+OpenMP codes. Constraint: Concurrent Jobs x MPI_ranks x OMP_NUM_THREADS <= Total Physical cores
     
@@ -574,21 +575,24 @@ def execute_python(
         Execution results including stdout, stderr, and return code.
     
     Examples:
-        - execute_python(30.0, file_path="script.py") - Run with a 30-minute timeout
-        - execute_python(30.0, code="print('hello')", file_path="production.py") - Run with a 30-minute timeout
-        - execute_python(2.0, code="print('smoke')") - Run with a 2-minute timeout
+        - execute_python(file_path="production.py", code="...") - Production run (no timeout)
+        - execute_python(file_path="script.py", timeout=2.0) - Trial run with 2-minute timeout
+        - execute_python(code="print('smoke')", timeout=2.0) - Quick smoke test with timeout
     """
     global _running_process, _process_pgid, _process_start_time, _process_script_path
     global _process_timeout_seconds, _process_timeout_minutes, _process_use_temp_file
     global _process_output_capture
 
-    try:
-        timeout_minutes = float(timeout)
-    except (TypeError, ValueError):
-        return "Error: 'timeout' must be a positive number of minutes."
-    if timeout_minutes <= 0:
-        return "Error: 'timeout' must be a positive number of minutes."
-    execution_timeout_seconds = timeout_minutes * 60.0
+    execution_timeout_seconds = None
+    timeout_minutes = None
+    if timeout is not None:
+        try:
+            timeout_minutes = float(timeout)
+        except (TypeError, ValueError):
+            return "Error: 'timeout' must be a positive number of minutes."
+        if timeout_minutes <= 0:
+            return "Error: 'timeout' must be a positive number of minutes."
+        execution_timeout_seconds = timeout_minutes * 60.0
 
     # Validate arguments
     if file_path is None and code is None:
@@ -704,7 +708,7 @@ def execute_python(
         
         # Poll until process completes or check-in interval reached
         while True:
-            # Check for an external interrupt signal from the bridge layer.
+            # Check for external interrupt (e.g. from web UI)
             try:
                 import bridge
                 if bridge.interrupt_event.is_set():

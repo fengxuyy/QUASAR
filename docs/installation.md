@@ -28,7 +28,7 @@ permalink: /installation/
 
 - Access to a supported model provider and a valid API key
 - Docker installed on your device (required for Docker-based deployments)
-- Node.js 18 or newer (required only if running the local interactive CLI outside of a container)
+- Node.js 20 or newer (required only if running the local interactive CLI outside of a container)
 
 <div class="callout callout-accent">
   <strong>Note:</strong> QUASAR is currently optimised for Gemini-oriented setups. Other providers may work, but they are not yet the primary compatibility target.

@@ -2,7 +2,7 @@
 State definition for the strategist-operator architecture.
 """
 
-from typing import Annotated
+from typing import Annotated, Literal
 from typing_extensions import TypedDict, NotRequired
 from langgraph.graph.message import add_messages
 from langchain_core.messages import BaseMessage
@@ -22,6 +22,8 @@ class State(TypedDict):
     is_replanning: bool  # Whether in replanning mode (skip review phase)
     evaluation_messages: list[BaseMessage]  # Messages accumulated during evaluation (for checkpoint)
     plan_review_proceed: NotRequired[bool]  # Set by plan_review_confirm gate for routing
+    plan_review_action: NotRequired[Literal["confirm", "decline", "revise"]]  # Latest plan-confirmation decision
+    plan_review_feedback: NotRequired[str]  # User feedback for revising the reviewed plan
 
 
 def create_initial_state(user_input: str) -> State:

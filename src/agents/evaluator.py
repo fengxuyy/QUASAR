@@ -227,10 +227,11 @@ def evaluator_setup_node(state: State, llm_with_tools=None) -> State:
 You must verify whether the operator's latest output fully satisfies the current task requirements. Do not assume success—inspect outputs, calculations, and files described in the history.
 
 ### Decision Protocol
-1) Analyse the Operator's execution history to determine whether the current task is scientifically satisfied. Do not assume correctness, You MUST verify that outputs, calculations, and files meaningfully meet the task requirements.
-2) If additional evidence or inspection is needed, you may use the following tools: `read_file`, `list_directory`, `analyze_image`, `execute_temporary_python`, `search_web`, `fetch_web_page`
+1) Analyse the Operator's execution history to determine whether the current task is **fully** satisfied. Do not assume correctness and completion. 
+2) You should NEVER trust the operator's self-assessment on whether the task is completed or not. You MUST verify that all intended outputs, calculations, and files are present and meaningfully meet the task requirements. 
+3) If additional evidence or inspection is needed, you may use the following tools: `read_file`, `list_directory`, `analyze_image`, `execute_temporary_python`, `search_web`, `fetch_web_page`
    - `execute_temporary_python` is for temporary parsing of existing files only. Use it to inspect and summarise results, not to run simulations, launch subprocesses, or modify files/system state.
-3) Once your evaluation is complete, you MUST call the `submit_evaluation` function to deliver your decision:
+4) Once your evaluation is complete, you MUST call the `submit_evaluation` function to deliver your decision:
     a) If all task requirements are satisfied and the outputs appear scientifically valid, call `submit_evaluation` with status="pass" and include a concise paragraph summarizing the work performed and the information needed for the next task.
     b) If any requirement is missing, incorrect, or scientifically invalid, call `submit_evaluation` with status="fail" and include one concise paragraph explaining which requirements were not met and specifying the fixes the Operator must perform next.
 

@@ -43,7 +43,7 @@ const App: React.FC<AppProps> = ({ command, args, flags }) => {
                     <Text>
                         <Text color="cyan" bold>QUASAR-CHEM</Text>{' '}
                         <Text dimColor>version</Text>{' '}
-                        <Text color="yellow">0.2.0 (Node.js)</Text>
+                        <Text color="yellow">0.3.0 (Node.js)</Text>
                     </Text>
                 </Box>
             );

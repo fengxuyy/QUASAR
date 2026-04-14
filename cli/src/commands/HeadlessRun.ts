@@ -35,7 +35,7 @@ function printBanner(): void {
     const boxWidth = maxLen;
     
     const subtitle = 'Quantum Universal Autonomous System for Atomistic Research';
-    const version = 'v0.2.0';
+    const version = 'v0.3.0';
     
     // Helper to pad line to exact width
     const padLine = (text: string) => text + ' '.repeat(Math.max(0, boxWidth - text.length));
@@ -84,18 +84,17 @@ export function runHeadless(prompt: string, flags: any): void {
     const restartFromEnv = ['true', '1', 'yes', 'on'].includes((process.env.IF_RESTART || '').toLowerCase());
     const isResume = Boolean(flags.resume || flags.restart || restartFromEnv);
     
-    let bridgePath = process.env.QUASAR_BRIDGE_PATH;
-    if (!bridgePath) {
-        const candidates = [
-            path.resolve(process.cwd(), '../bridge.py'),
-            path.resolve(process.cwd(), 'bridge.py'),
-            '/app/bridge.py'
-        ];
-        for (const p of candidates) {
-            if (fs.existsSync(p)) {
-                bridgePath = p;
-                break;
-            }
+    // Find bridge.py
+    let bridgePath: string | undefined;
+    const candidates = [
+        path.resolve(process.cwd(), '../bridge.py'),
+        path.resolve(process.cwd(), 'bridge.py'),
+        '/app/bridge.py'
+    ];
+    for (const p of candidates) {
+        if (fs.existsSync(p)) {
+            bridgePath = p;
+            break;
         }
     }
     
@@ -104,8 +103,7 @@ export function runHeadless(prompt: string, flags: any): void {
         process.exit(1);
     }
 
-    const pythonBin = process.env.QUASAR_PYTHON_PATH || 'python3';
-    const child = spawn(pythonBin, [bridgePath], {
+    const child = spawn('python3', [bridgePath], {
         cwd: path.dirname(bridgePath),
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {

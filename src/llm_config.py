@@ -1,11 +1,11 @@
 """LLM configuration and initialization."""
 
 import os
-from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_anthropic import ChatAnthropic
 from langchain_xai import ChatXAI
 
+from .openai_compat import QuasarChatOpenAI as ChatOpenAI
 
 
 def _infer_provider_from_model(model_name: str) -> str:
@@ -36,18 +36,34 @@ def initialize_llm():
     
     Returns (None, None) if MODEL or MODEL_API_KEY are not set — the CLI will
     surface these as required settings before allowing a prompt to be submitted.
+    
+    If a custom base URL is set (API_BASE_URL or OPENAI_API_BASE), the
+    OpenAI-compatible client is always used regardless of the model name.
     """
     model = os.getenv("MODEL")
     if not model:
         return None, None
         
-    provider = _infer_provider_from_model(model)
     api_key = os.getenv("MODEL_API_KEY")
     
     if not api_key:
         return None, None
     
     os.environ["MODEL"] = model
+    
+    # If a custom base URL is provided, always route through the
+    # OpenAI-compatible client — the user is pointing at a proxy/gateway.
+    base_url = os.getenv("API_BASE_URL") or os.getenv("OPENAI_API_BASE")
+    if base_url:
+        llm = ChatOpenAI(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            stream_usage=True,
+        )
+        return llm, model
+    
+    provider = _infer_provider_from_model(model)
     
     if provider == "gemini":
         llm = ChatGoogleGenerativeAI(
@@ -69,20 +85,28 @@ def initialize_llm():
         llm = ChatOpenAI(model=model, api_key=api_key, stream_usage=True)
         return llm, model
     
-    # OpenAI-compatible models that need a custom base URL.
-    # Support both environment variable names for compatibility.
-    base_url = os.getenv("API_BASE_URL") or os.getenv("OPENAI_API_BASE")
-    if not base_url:
-        raise ValueError(
-            "API_BASE_URL environment variable is required for custom OpenAI-compatible "
-            "models (non-gpt OpenAI-style endpoints)."
-        )
-    llm = ChatOpenAI(model=model, api_key=api_key, base_url=base_url)
-    return llm, model
+    # Fallback: custom_openai without a base URL
+    raise ValueError(
+        "API_BASE_URL environment variable is required for custom OpenAI-compatible "
+        "models (non-gpt OpenAI-style endpoints)."
+    )
 
 
 def _create_llm_for_model(model: str, api_key: str, base_url: str = None):
-    """Create an LLM instance for a given model name, api key, and optional base URL."""
+    """Create an LLM instance for a given model name, api key, and optional base URL.
+    
+    If base_url is provided, always uses ChatOpenAI (OpenAI-compatible mode)
+    regardless of the model name.
+    """
+    # Custom base URL → always use OpenAI-compatible client
+    if base_url:
+        return ChatOpenAI(
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+            stream_usage=True,
+        )
+    
     provider = _infer_provider_from_model(model)
     
     if provider == "gemini":
@@ -101,13 +125,11 @@ def _create_llm_for_model(model: str, api_key: str, base_url: str = None):
     if provider == "openai":
         return ChatOpenAI(model=model, api_key=api_key, stream_usage=True)
     
-    # custom_openai
-    if not base_url:
-        raise ValueError(
-            f"API base URL is required for custom OpenAI-compatible model '{model}'. "
-            "Set the appropriate API_BASE_URL environment variable."
-        )
-    return ChatOpenAI(model=model, api_key=api_key, base_url=base_url)
+    # custom_openai without a base URL
+    raise ValueError(
+        f"API base URL is required for custom OpenAI-compatible model '{model}'. "
+        "Set the appropriate API_BASE_URL environment variable."
+    )
 
 
 def initialize_llm_for_agent(agent_name: str, fallback_llm=None, fallback_model_name=None):

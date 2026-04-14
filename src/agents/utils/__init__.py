@@ -3,7 +3,7 @@ Shared utilities for agent nodes.
 
 This package contains utilities organized into the following modules:
 - system: CPU, GPU, and Slurm detection
-- bridge: CLI communication
+- bridge: CLI/web interface communication
 - text: Text extraction and formatting
 - errors: Exception handling and API retry
 - logging: Conversation and execution logging

@@ -6,6 +6,17 @@ import type { CommittedItem, FileContent, TaskProgress, RagStatusInfo, Checkpoin
 import { normalizePlanText } from '../utils/planParsing.js';
 import { applyPlanDeclinedState } from '../utils/stateHelpers.js';
 
+const STRATEGIST_REVIEWED_PLAN_STATUSES = new Set([
+    'Reviewed Plan',
+    'Reviewed Replan',
+    'Created Replan'
+]);
+
+const STRATEGIST_REVISED_PLAN_STATUSES = new Set([
+    'Revised Plan from user feedback',
+    'Revised Replan from user feedback'
+]);
+
 // ========== TYPES ==========
 export interface MessageHandlerContext {
     // State setters
@@ -28,6 +39,7 @@ export interface MessageHandlerContext {
     setParsedPlan: (plan: string[]) => void;
     setIsPeriodicCheckinActive: (active: boolean) => void;
     setPeriodicCheckinToolCall: (toolCall: { content: string; isError: boolean } | null) => void;
+    setCleanupStatus: (status: { status: string; message: string } | null) => void;
     
     // Refs
     ragStatusRef: React.MutableRefObject<RagStatusInfo | null>;
@@ -77,14 +89,8 @@ function collapseCompletedTaskHistory(items: CommittedItem[], taskNum: number): 
 // ========== INDIVIDUAL HANDLERS ==========
 
 /** Handle bridge ready event */
-export function handleReadyMessage(ctx: MessageHandlerContext): void {
-    if (ctx.ragStatusRef.current?.status === 'done') {
-        setTimeout(() => {
-            if (ctx.bridgeRef.current) {
-                ctx.bridgeRef.current.stdin.write(JSON.stringify({ command: 'check_checkpoint' }) + "\n");
-            }
-        }, 500);
-    }
+export function handleReadyMessage(_ctx: MessageHandlerContext): void {
+    // Checkpoint retrieval is triggered by system_ready (fires after all init including RAG).
 }
 
 /** Handle model initialization */
@@ -111,6 +117,7 @@ export function handleLogMessage(ctx: MessageHandlerContext, payload: any): void
 
 /** Handle done event */
 export function handleDoneMessage(ctx: MessageHandlerContext): void {
+    ctx.setCleanupStatus(null);
     ctx.setIsLoading(false);
     ctx.setStatus(null);
     ctx.setIsPeriodicCheckinActive(false);
@@ -159,6 +166,13 @@ export function handleRagStatusMessage(ctx: MessageHandlerContext, payload: any)
 /** Handle system ready event */
 export function handleSystemReadyMessage(ctx: MessageHandlerContext): void {
     ctx.setIsSystemReady(true);
+    // system_ready fires after all initialization (RAG and non-RAG paths), making it
+    // the correct trigger for checkpoint retrieval on every startup path.
+    setTimeout(() => {
+        if (ctx.bridgeRef.current) {
+            ctx.bridgeRef.current.stdin.write(JSON.stringify({ command: 'check_checkpoint' }) + "\n");
+        }
+    }, 500);
 }
 
 /** Handle system status changes */
@@ -254,30 +268,23 @@ export function handleAgentEventMessage(ctx: MessageHandlerContext, payload: any
 
                 const newItems: CommittedItem[] = [...items, newToolItem];
 
-                const isStrategistInitialPlanMilestone =
-                    agent === 'strategist' &&
-                    (agentStatusText === 'Created Initial Plan' || agentStatusText === 'Created Initial Replan');
                 const isStrategistReviewedPlanMilestone =
-                    agent === 'strategist' &&
-                    (
-                        agentStatusText === 'Reviewed Plan' ||
-                        agentStatusText === 'Reviewed Replan' ||
-                        agentStatusText === 'Created Replan'
-                    );
+                    agent === 'strategist' && STRATEGIST_REVIEWED_PLAN_STATUSES.has(agentStatusText);
+                const isStrategistRevisedPlanMilestone =
+                    agent === 'strategist' && STRATEGIST_REVISED_PLAN_STATUSES.has(agentStatusText);
+                const strategistPlanPanelId = isStrategistReviewedPlanMilestone
+                    ? 'execution-plan-reviewed'
+                    : (isStrategistRevisedPlanMilestone ? 'execution-plan-revised' : null);
 
-                // Special case: only the reviewed plan milestone renders a plan panel.
+                // Special case: strategist review milestones render plan panels.
                 // The initial plan milestone just adds its tool row — no panel.
-                if (isStrategistReviewedPlanMilestone && payload.output) {
+                if (strategistPlanPanelId && payload.output) {
                     const normalizedPlanOutput = normalizePlanText(payload.output);
 
-                    const hasThisPlan = items.some(item =>
-                        item.id === 'execution-plan-complete' ||
-                        item.id === 'checkpoint-history-plan'
-                    );
-
-                    if (!hasThisPlan && normalizedPlanOutput) {
-                        newItems.push({
-                            id: 'execution-plan-complete',
+                    if (normalizedPlanOutput) {
+                        const nextItems = newItems.filter(item => item.id !== strategistPlanPanelId);
+                        nextItems.push({
+                            id: strategistPlanPanelId,
                             type: 'plan' as const,
                             content: {
                                 planContent: normalizedPlanOutput,
@@ -286,6 +293,7 @@ export function handleAgentEventMessage(ctx: MessageHandlerContext, payload: any
                             },
                             agentName: 'strategist'
                         });
+                        return nextItems;
                     }
                 }
 
@@ -531,6 +539,19 @@ export function handleFinalSummaryMessage(ctx: MessageHandlerContext, payload: a
     }
 }
 
+/** Handle cleanup/archiving status */
+export function handleCleanupStatusMessage(ctx: MessageHandlerContext, payload: any): void {
+    if (!payload) return;
+    const { status, message } = payload;
+    if (status === 'starting') {
+        ctx.setCleanupStatus({ status, message: message || 'Archiving workspace...' });
+    } else if (status === 'complete') {
+        ctx.setCleanupStatus(null);
+    } else if (status === 'error') {
+        ctx.setCleanupStatus(null);
+    }
+}
+
 /** Handle code execution results */
 export function handleCodeResultMessage(ctx: MessageHandlerContext, payload: any): void {
     if (payload?.output) {
@@ -628,6 +649,9 @@ export function createMessageHandler(ctx: MessageHandlerContext) {
                 break;
             case 'code_result':
                 handleCodeResultMessage(ctx, msg.payload);
+                break;
+            case 'cleanup_status':
+                handleCleanupStatusMessage(ctx, msg.payload);
                 break;
             case 'plan_awaiting_confirm':
                 handlePlanAwaitingConfirmMessage(ctx);

@@ -92,6 +92,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
     const [showInterruptWarning, setShowInterruptWarning] = useState(false);
     const isInterruptedRef = useRef(false);
     const escTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const [cleanupStatus, setCleanupStatus] = useState<{ status: string; message: string } | null>(null);
     
     const [exitPressedOnce, setExitPressedOnce] = useState(false);
     const [showExitWarning, setShowExitWarning] = useState(false);
@@ -285,8 +286,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             return;
         }
 
-        const pythonBin = process.env.QUASAR_PYTHON_PATH || 'python3';
-        const child = spawn(pythonBin, [bridgePath], {
+        const child = spawn('python3', [bridgePath], {
             cwd: path.dirname(bridgePath),
             stdio: ['pipe', 'pipe', 'pipe'],
             env: { ...process.env, SKIP_RAG: bridgeRestartCounter > 0 ? 'true' : 'false' }
@@ -318,6 +318,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             setParsedPlan,
             setIsPeriodicCheckinActive,
             setPeriodicCheckinToolCall,
+            setCleanupStatus,
             ragStatusRef,
             bridgeRef,
             taskProgressRef,
@@ -439,7 +440,8 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
         setInputPrefillRevision(0);
 
         if (checkpointMode === 'plan-awaiting-confirm') {
-            const answer = input.trim().toLowerCase();
+            const trimmedInput = input.trim();
+            const answer = trimmedInput.toLowerCase();
             if (answer === 'yes') {
                 if (bridgeRef.current) {
                     bridgeRef.current.stdin.write(JSON.stringify({ command: 'plan_confirm', proceed: true }) + '\n');
@@ -453,6 +455,17 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                     bridgeRef.current.stdin.write(JSON.stringify({ command: 'plan_confirm', proceed: false }) + '\n');
                 }
                 return;
+            }
+            if (trimmedInput) {
+                if (bridgeRef.current) {
+                    bridgeRef.current.stdin.write(JSON.stringify({
+                        command: 'plan_confirm',
+                        action: 'revise',
+                        feedback: trimmedInput
+                    }) + '\n');
+                }
+                setCheckpointMode('normal');
+                setIsLoading(true);
             }
             return;
         }
@@ -764,6 +777,20 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                                         </Text>
                                     </>
                                 )}
+                            </Text>
+                        </Box>
+                    )}
+
+                    {/* Archiving status indicator */}
+                    {cleanupStatus && (
+                        <Box marginLeft={leftMargin + INDENT_AGENT} paddingX={1}>
+                            <Text>
+                                <Text color="cyan">
+                                    <TriangleSpinner />{' '}
+                                </Text>
+                                <Text color="cyan" bold>
+                                    {cleanupStatus.message}
+                                </Text>
                             </Text>
                         </Box>
                     )}

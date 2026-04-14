@@ -68,19 +68,24 @@ try:
     graph = create_checkpoint_infrastructure(graph_builder)
     config = get_thread_config()
     state = graph.get_state(config)
+    state_history = list(graph.get_state_history(config))
 
     history = None
     if state and state.values:
         is_replan = state.values.get("is_replanning", False)
-        history = extract_checkpoint_history(state.values, state.values.get("messages", []), is_replan=is_replan)
+        history = extract_checkpoint_history(
+            state.values,
+            state.values.get("messages", []),
+            is_replan=is_replan,
+            state_history=state_history,
+        )
 
     print(json.dumps({"ok": True, "history": history}))
 except Exception as e:
     print(json.dumps({"ok": False, "error": str(e), "traceback": traceback.format_exc()}))
 `;
 
-    const pythonBin = process.env.QUASAR_PYTHON_PATH || 'python3';
-    const result = spawnSync(pythonBin, ['-c', script], {
+    const result = spawnSync('python3', ['-c', script], {
         cwd: path.dirname(bridgePath),
         env: { ...process.env },
         encoding: 'utf-8'

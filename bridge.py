@@ -6,7 +6,7 @@ import io
 import threading
 import traceback
 import signal
-from typing import Optional
+from typing import Optional, Literal
 
 # Global interrupt event for coordinated interruption
 interrupt_event = threading.Event()
@@ -14,7 +14,8 @@ interrupt_event = threading.Event()
 # Plan review confirmation (runner thread blocks until main thread receives plan_confirm)
 _plan_confirm_lock = threading.Lock()
 _plan_confirm_event = threading.Event()
-_plan_confirm_result: Optional[bool] = None
+PlanConfirmationAction = Literal["confirm", "decline", "revise"]
+_plan_confirm_result: Optional[dict[str, str]] = None
 
 AUTO_IMPROVE_STATE_KEY = "_auto_improve_state"
 DEFAULT_AUTO_IMPROVE_STATE = {
@@ -25,10 +26,47 @@ _auto_improve_state_lock = threading.Lock()
 _auto_improve_state = DEFAULT_AUTO_IMPROVE_STATE.copy()
 
 
-def begin_plan_confirmation_wait() -> bool:
+def _normalize_plan_confirmation_result(
+    result: Optional[object] = None,
+    *,
+    feedback: str = "",
+) -> dict[str, str]:
+    """Normalize legacy and structured confirmation payloads."""
+    action: PlanConfirmationAction = "confirm"
+    normalized_feedback = ""
+
+    if isinstance(result, bool):
+        action = "confirm" if result else "decline"
+    elif isinstance(result, str):
+        candidate = result.strip().lower()
+        if candidate in {"confirm", "decline", "revise"}:
+            action = candidate  # type: ignore[assignment]
+        normalized_feedback = feedback
+    elif isinstance(result, dict):
+        candidate = str(result.get("action", "")).strip().lower()
+        if candidate in {"confirm", "decline", "revise"}:
+            action = candidate  # type: ignore[assignment]
+        raw_feedback = result.get("feedback", "")
+        normalized_feedback = raw_feedback if isinstance(raw_feedback, str) else str(raw_feedback or "")
+    elif result is None:
+        action = "confirm"
+
+    if action != "revise":
+        normalized_feedback = ""
+
+    return {
+        "action": action,
+        "feedback": normalized_feedback.strip(),
+    }
+
+
+def begin_plan_confirmation_wait() -> dict[str, str]:
     """Block the graph runner until the CLI sends plan_confirm (or headless auto-confirms)."""
+    # Auto-confirm when AUTO_CONFIRM_PLAN env var is enabled (bypasses user review)
+    if os.getenv("AUTO_CONFIRM_PLAN", "").lower() in ("true", "1", "yes", "on"):
+        return _normalize_plan_confirmation_result(True)
     if _get_auto_improve_state().get("current_run_is_automatic"):
-        return True
+        return _normalize_plan_confirmation_result(True)
     global _plan_confirm_result
     with _plan_confirm_lock:
         _plan_confirm_event.clear()
@@ -37,15 +75,19 @@ def begin_plan_confirmation_wait() -> bool:
     _plan_confirm_event.wait()
     with _plan_confirm_lock:
         if _plan_confirm_result is None:
-            return True
-        return bool(_plan_confirm_result)
+            return _normalize_plan_confirmation_result(True)
+        return dict(_plan_confirm_result)
 
 
-def set_plan_confirmation(proceed: bool) -> None:
+def set_plan_confirmation(
+    proceed: bool | str | dict[str, object],
+    *,
+    feedback: str = "",
+) -> None:
     """Resume the graph after plan_review_confirm_node."""
     global _plan_confirm_result
     with _plan_confirm_lock:
-        _plan_confirm_result = proceed
+        _plan_confirm_result = _normalize_plan_confirmation_result(proceed, feedback=feedback)
     _plan_confirm_event.set()
 
 
@@ -284,7 +326,15 @@ def send_json(type_: str, payload: dict):
 # --- Agent Event API ---
 # These functions are called directly by agents to send events to Node.js CLI
 
-def send_agent_event(agent: str, event: str, status: str = "", is_error: bool = False, output: str = ""):
+def send_agent_event(
+    agent: str,
+    event: str,
+    status: str = "",
+    is_error: bool = False,
+    output: str = "",
+    user_feedback: str = "",
+    tool_name: str = "",
+):
     """Send agent lifecycle event (start, update, complete)."""
     payload = {
         "agent": agent,
@@ -294,6 +344,10 @@ def send_agent_event(agent: str, event: str, status: str = "", is_error: bool = 
     }
     if output:
         payload["output"] = output
+    if user_feedback:
+        payload["user_feedback"] = user_feedback
+    if tool_name:
+        payload["toolName"] = tool_name
     send_json("agent_event", payload)
 
 def send_plan_stream(content: str, is_complete: bool = False, parsed_plan: list = None, is_replanning: bool = False):
@@ -727,11 +781,17 @@ def main():
                             graph = create_checkpoint_infrastructure(graph_builder)
                             config = get_thread_config()
                             state = graph.get_state(config)
+                            state_history = list(graph.get_state_history(config))
                             
                             if state and state.values:
                                 # Use is_replanning from state (most reliable)
                                 is_replan = state.values.get('is_replanning', False)
-                                history = extract_checkpoint_history(state.values, state.values.get('messages', []), is_replan=is_replan)
+                                history = extract_checkpoint_history(
+                                    state.values,
+                                    state.values.get('messages', []),
+                                    is_replan=is_replan,
+                                    state_history=state_history,
+                                )
                         except Exception:
                             traceback.print_exc()
                 
@@ -861,8 +921,16 @@ def main():
                     send_json("archive_complete", {"success": False, "error": str(e)})
                 
             elif command == "plan_confirm":
-                proceed = data.get("proceed", True)
-                set_plan_confirmation(bool(proceed))
+                if "action" in data or "feedback" in data:
+                    set_plan_confirmation(
+                        {
+                            "action": data.get("action", "confirm"),
+                            "feedback": data.get("feedback", ""),
+                        }
+                    )
+                else:
+                    proceed = data.get("proceed", True)
+                    set_plan_confirmation(bool(proceed))
 
             elif command == "interrupt":
                 interrupt_event.set()

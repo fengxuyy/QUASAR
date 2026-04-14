@@ -46,10 +46,10 @@ from ..debug_logger import (
 )
 
 
-VALID_GRANULARITY_LEVELS = {"low", "medium", "high"}
+VALID_GRANULARITY_LEVELS = {"low", "medium", "high", "adaptive"}
 DEFAULT_GRANULARITY_LEVEL = "medium"
 
-VALID_ACCURACY_MODES = {"eco", "standard", "pro"}
+VALID_ACCURACY_MODES = {"eco", "standard", "pro", "adaptive"}
 
 # Regex patterns for parsing plan tasks
 TASK_PATTERNS = [
@@ -242,7 +242,7 @@ def _execute_tool_calls(tool_calls, is_replanning=False):
         
         log_custom("STRATEGIST", f"Using tool: {tool_name}")
         
-        # Emit tool-start status for downstream clients.
+        # Send status update to web UI - starting tool
         update_agent_status("strategist", tool_name, tool_args, is_complete=False)
         
         # Use shared tool execution function
@@ -259,7 +259,7 @@ def _execute_tool_calls(tool_calls, is_replanning=False):
         
         log_custom("STRATEGIST", f"Tool '{tool_name}' completed")
         
-        # Emit tool completion status with the result payload.
+        # Send step_complete event to web UI (with result for collapsible output)
         update_agent_status("strategist", tool_name, tool_args, is_complete=True, tool_result=result)
         
         tool_messages.append(tool_message)
@@ -372,7 +372,7 @@ You are directing an automated Operator agent capable of running complex computa
 
 * **Simulation Engines:** `mace` (MLFF), `quantum-espresso` (DFT), `lammps` (MD), `raspa3` (GCMC/MD).
 
-* **Python Stack:** `pymatgen`, `ase`, `matplotlib`/`seaborn`, `pandas`.
+* **Python Stack:** `pymatgen`, `ase`, `matplotlib`/`seaborn`, `pandas`, `scikit-learn`, `pytorch`.
 
 * **GPU Availability:** {gpu_info}
 
@@ -390,6 +390,9 @@ You must strictly follow the **accuracy mode** which determines the computationa
 
 * **eco (Balanced Speed/Accuracy):** "Efficient Discovery"
     * **Strategy:** Optimizes the balance between predictive accuracy and resource consumption. Utilizes validated approximations to maintain qualitative trends and reliable quantitative estimates without redundant overhead.
+
+* **adaptive (Dynamic Theory Calibration):** "Intelligent Multi-Level Scaling"
+    * **Strategy:** Dynamically balances speed and rigor. Start with efficient, lower-theory methods for initial screening or exploration (e.g., MLFF or coarse DFT). If results warrant higher precision, automatically plan "upgrade" steps to publication-grade methods for final validation.
     
 **Assigned Accuracy Mode:** {accuracy_mode}
 
@@ -412,6 +415,9 @@ You must strictly scale the **granularity** of the workflow. Note: "low" granula
     * **Goal:** Maximum control and step-by-step validation.
     * *Example:* "Task 1: Convergence test." -> "Task 2: Volume relaxation." -> "Task 3: Ion relaxation." -> "Task 4: Static run." -> "Task 5: DOS."
 
+* **adaptive (Context-Aware Decomposition):** "Scientific Complexity Scaling"
+    * **Strategy:** Automatically scales the workflow breakdown based on the perceived risk and complexity of the task. Consolidate routine operations for throughput; expand novel or high-stakes steps into fine-grained checkpoints for rigorous validation.
+
 **Assigned Granularity Level:** {granularity_level}
 
 ### **STEP 3: Workflow Plan Rules**
@@ -426,9 +432,10 @@ Create a concise list of high-level scientific tasks that captures the essential
    <PLAN>
    </PLAN>
    ```
-   - And state each task as:
-   ### **Task X:** [Primary Action (the scientific objective)]
-   **Guidance:** [Senior-level scientific insights in executing the task with exceptional intelligence, precision, and foresight. This encompasses a robust methodology, critical key points, and supplementary insights vital for attaining the objective while proactively mitigating risks of failure]
+   - And state each task strictly as:
+   ### **Task [X]:** [Primary Scientific Objective]
+   * **Guidance:** [Expert-level methodology, expected convergence parameters, proactive risk mitigation, and specific instructions for the Operator.]
+   * **Requires:** [Specify required inputs from prior tasks at a conceptual level (e.g., "relaxed structure from Task 2....").]
 
 2. **End-of-Workflow Requirement:**  
    - The final task should aggregate results, create plots if necessary, and write a summary analysis (`summary.md`).
@@ -458,21 +465,50 @@ def _self_review_plan(initial_plan_content, messages, llm, is_replanning):
     Returns:
         Tuple of (improved_plan_content, response_message)
     """
-    from ..debug_logger import log_custom
-    
     # Create a concise self-review prompt as a normal user message
     review_prompt = (
         "Please review your plan above and provide an improved version with the same format."
         "Does the plan address all aspects of the original task? Are there any scientific errors or missing critical steps?"
     )
-    
-    log_custom("STRATEGIST", "Starting self-review of initial plan")
-    
+    return _revise_plan(
+        messages=messages,
+        llm=llm,
+        review_prompt=review_prompt,
+        status_text="Self-reviewing plan",
+        is_replanning=is_replanning,
+    )
+
+
+def _latest_ai_message_content(messages):
+    """Return the content from the latest AI message in the conversation."""
+    for msg in reversed(messages):
+        if isinstance(msg, AIMessage):
+            content = _extract_text(getattr(msg, "content", ""))
+            if content:
+                return content
+    return ""
+
+
+def _build_plan_revision_prompt(feedback: str) -> str:
+    """Build a follow-up prompt that revises the latest reviewed plan from user feedback."""
+    return (
+        "Please revise your latest reviewed plan above based on the user's feedback below."
+        " Keep the same format, preserve scientific rigor, and return the full updated plan.\n\n"
+        f"User feedback:\n{feedback.strip()}"
+    )
+
+
+def _revise_plan(messages, llm, review_prompt, status_text, is_replanning):
+    """Run a review or revision pass over the current plan."""
+    from ..debug_logger import log_custom
+
+    log_custom("STRATEGIST", status_text)
+
     # Append the review prompt as a HumanMessage
     review_messages = messages + [HumanMessage(content=review_prompt)]
-    
+
     # Send update to UI
-    send_agent_event("strategist", "working", "Self-reviewing plan")
+    send_agent_event("strategist", "update", status_text)
     
     # Use shared streaming helper with callback for live UI updates
     improved_plan_text = ""
@@ -480,7 +516,7 @@ def _self_review_plan(initial_plan_content, messages, llm, is_replanning):
     def on_content(text):
         nonlocal improved_plan_text
         improved_plan_text += text
-        send_plan_stream(improved_plan_text, is_complete=False)
+        send_plan_stream(improved_plan_text, is_complete=False, is_replanning=is_replanning)
     
     def on_thought(text):
         nonlocal accumulated_thoughts
@@ -816,7 +852,7 @@ Do NOT call `{tool_name}` with the same arguments again.
                         blockquote = '\n'.join(f"> {line}" if line.strip() else ">" for line in lines)
                         _write_to_log(f"{blockquote}\n\n")
                         
-                        # Emit the initial plan as a completed step event.
+                        # Send initial plan as step_complete for collapsible display in web UI
                         send_agent_event("strategist", "step_complete", "Created Initial Plan", output=formatted_initial_plan)
                     
                     # Return state with initial_plan_content for review phase
@@ -904,41 +940,55 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
     is_replanning = state.get('is_replanning', False)
     
     initial_plan_content = state.get('initial_plan_content', '')
+    plan_review_feedback = (state.get('plan_review_feedback', '') or '').strip()
     
-    if not initial_plan_content:
+    messages = list(state.get('messages', []))
+    latest_plan_content = initial_plan_content or _latest_ai_message_content(messages)
+
+    if not latest_plan_content:
         log_custom("STRATEGIST_REVIEW", "No initial plan content found, skipping review")
         # If no initial plan content, just pass through
         return {
-            'messages': state.get('messages', []),
+            'messages': messages,
             'plan': state.get('plan', []),
             'completed_steps': state.get('completed_steps', []),
             'step_results': state.get('step_results', {}),
             'initial_plan_content': '',
             'is_replanning': state.get('is_replanning', False),
+            'plan_review_feedback': '',
         }
-    
-    log_custom("STRATEGIST_REVIEW", "Starting self-review of initial plan")
     
     # Use messages from state - they are now in correct order:
     # [SystemMessage, HumanMessage, AIMessage]
-    messages = list(state.get('messages', []))
+    is_user_revision = bool(plan_review_feedback)
+    review_prompt = (
+        _build_plan_revision_prompt(plan_review_feedback)
+        if is_user_revision else
+        (
+            "Please review your plan above and provide an improved version with the same format."
+            "Does the plan address all aspects of the original task? Are there any scientific errors or missing critical steps?"
+        )
+    )
+    status_text = "Revising plan from user feedback" if is_user_revision else "Self-reviewing plan"
+
+    log_custom(
+        "STRATEGIST_REVIEW",
+        "Starting plan revision" if is_user_revision else "Starting self-review of initial plan",
+    )
 
     # Write input messages to file for debugging
-    review_prompt = (
-        "Please review your plan above and provide an improved version with the same format."
-        "Does the plan address all aspects of the original task? Are there any scientific errors or missing critical steps?"
-    )
     # Create a separate list for logging to include the prompt that _self_review_plan will add
     log_messages = messages + [HumanMessage(content=review_prompt)]
     _write_input_messages(log_messages, "STRATEGIST_REVIEW")
     
     try:
         # Perform self-review and get improved plan
-        improved_content, improved_response = _self_review_plan(
-            initial_plan_content=initial_plan_content,
+        improved_content, improved_response = _revise_plan(
             messages=messages,
             llm=llm,
-            is_replanning=is_replanning
+            review_prompt=review_prompt,
+            status_text=status_text,
+            is_replanning=is_replanning,
         )
         
         # Extract final plan from improved content
@@ -946,7 +996,10 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
         log_strategist_plan_extracted(plan, improved_content)
         
         if plan:
-            review_label = "Reviewed Replan" if is_replanning else "Reviewed Plan"
+            if is_user_revision:
+                review_label = "Revised Replan from user feedback" if is_replanning else "Revised Plan from user feedback"
+            else:
+                review_label = "Reviewed Replan" if is_replanning else "Reviewed Plan"
             events_to_send = [
                 {"type": "plan_stream", "is_complete": True},
                 {"type": "agent_event", "agent": "strategist", "event": "complete", "status": review_label},
@@ -961,7 +1014,13 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
             blockquote = '\n'.join(f"> {line}" if line.strip() else ">" for line in lines)
             _write_to_log(f"{blockquote}\n\n")
             
-            send_agent_event("strategist", "step_complete", review_label, output=formatted_plan)  # For execution history
+            send_agent_event(
+                "strategist",
+                "step_complete",
+                review_label,
+                output=formatted_plan,
+                user_feedback=plan_review_feedback if is_user_revision else "",
+            )  # For execution history
             send_agent_event("strategist", "complete")  # For agent state transition (empty status avoids duplicate log)
             # task_progress is sent from operator_node when execution starts (after plan confirmation gate)
         
@@ -969,10 +1028,6 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
         # This preserves strategist's tool-calling AIMessages and ToolMessages for history retrieval
         return_messages = list(messages)  # Copy all messages from initial phase
         # Add the review prompt and improved response
-        review_prompt = (
-            "Does the plan address all aspects of the user's request? Are there any scientific errors or missing critical steps? "
-            "Please review your plan above and provide an improved version with the same format"
-        )
         return_messages.append(HumanMessage(content=review_prompt))
         return_messages.append(improved_response)
         
@@ -983,6 +1038,7 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
             'step_results': {},
             'initial_plan_content': '',  # Clear, no longer needed
             'is_replanning': is_replanning,
+            'plan_review_feedback': '',
         }
         
         log_strategist_return(return_state)
@@ -992,19 +1048,20 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
         log_exception("STRATEGIST_REVIEW", e, {"context": "self-review failed"})
         
         # Fall back to using initial plan if review fails
-        plan = _extract_plan_from_content(initial_plan_content)
+        plan = _extract_plan_from_content(latest_plan_content)
         
         if plan:
-            send_plan_stream(initial_plan_content, is_complete=True, parsed_plan=plan)
+            send_plan_stream(latest_plan_content, is_complete=True, parsed_plan=plan, is_replanning=is_replanning)
             send_agent_event("strategist", "complete", "Initial Plan (Review Failed)")
         
         return_state = {
-            'messages': state.get('messages', []),
+            'messages': messages,
             'plan': plan,
             'completed_steps': [],
             'step_results': {},
             'initial_plan_content': '',
             'is_replanning': is_replanning,
+            'plan_review_feedback': '',
         }
         log_strategist_return(return_state)
         return return_state

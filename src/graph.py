@@ -106,6 +106,8 @@ def build_graph(llm, agent_llms=None):
 
     def route_after_plan_review_confirm(state: State) -> str:
         """After user confirmation: operator, or end run (CLI returns to input with prompt prefilled)."""
+        if state.get("plan_review_action") == "revise":
+            return "strategist_review"
         if state.get("plan_review_proceed") is False:
             return "end"
         return "operator"
@@ -280,7 +282,7 @@ def build_graph(llm, agent_llms=None):
     graph_builder.add_conditional_edges(
         "plan_review_confirm",
         route_after_plan_review_confirm,
-        {"operator": "operator", "end": END},
+        {"strategist_review": "strategist_review", "operator": "operator", "end": END},
     )
     
     # Operator edges - now routes to evaluator_setup
@@ -303,7 +305,7 @@ def build_graph(llm, agent_llms=None):
     log_custom("GRAPH", "Graph built successfully", {
         "nodes": ["strategist_initial", "strategist_review", "plan_review_confirm", "operator", "evaluator_setup", "evaluator_loop"],
         "edges": ["START->strategist_initial", "strategist_initial->review/operator/end",
-                  "strategist_review->plan_review_confirm/end", "plan_review_confirm->operator/end",
+                  "strategist_review->plan_review_confirm/end", "plan_review_confirm->strategist_review/operator/end",
                   "operator->continue/evaluator_setup/end", "evaluator_setup->loop/operator/end", "evaluator_loop->continue/operator/end"]
     })
     

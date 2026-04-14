@@ -250,7 +250,7 @@ def operator_node(state: State, llm_with_tools, all_tools) -> State:
 
         # Read accuracy mode from environment (same source as strategist)
         _accuracy_raw = os.getenv("ACCURACY", "").lower()
-        _valid_accuracy_modes = {"eco", "standard", "pro"}
+        _valid_accuracy_modes = {"eco", "standard", "pro", "adaptive"}
         accuracy_mode = _accuracy_raw if _accuracy_raw in _valid_accuracy_modes else "standard"
         
         if rag_enabled:
@@ -304,7 +304,7 @@ You are responsible for fulfilling high-level scientific objectives in computati
 
 ### 1. Operational Environment & Resources
 * **Simulation Engines:** `mace` (MLFF), `quantum-espresso` (DFT), `lammps` (MD), `raspa3` (GCMC/MD).
-* **Python Stack:** `pymatgen`, `ase`, `matplotlib`/`seaborn`, `pandas`.
+* **Python Stack:** `pymatgen`, `ase`, `matplotlib`/`seaborn`, `pandas`, `scikit-learn`, `pytorch`.
 **Data Access:**
 * **Local Filesystem:** read/write access.
 * **Remote:** `wget`/`curl` for external files{pmg_mapi_available}
@@ -349,6 +349,8 @@ The **assigned accuracy mode** controls how aggressively you set numerical param
 
 * **eco (Balanced Speed/Accuracy — Efficient Discovery):** Use coarse numerical settings (within physically reasonable limits) to reduce cost. Prioritize speed while retaining qualitative correctness and meaningful trends.
 
+* **adaptive (Dynamic Theory Calibration — Intelligent Multi-Level Scaling):** Dynamically adjust numerical settings as the workflow evolves. Start with efficient, lower-rigor parameters for screening or initial runs, and switch to high-accuracy settings for final confirmation steps.
+
 **Assigned Accuracy Mode:** {accuracy_mode}
 
 > **Override rule:** If the current task explicitly specifies a parameter value (e.g. a particular k-point grid, timestep, cutoff, or number of steps), always honour that value — the accuracy mode only governs parameters the task leaves unspecified.
@@ -356,7 +358,7 @@ The **assigned accuracy mode** controls how aggressively you set numerical param
 ### 5. Execution Rules
 1. **Simulation Verification:** Before running the production calculation, you must do the following:
     * **Step 1: Input Parameters:** Verify that the simulation parameters are appropriate for achieving high-quality results and reasonable computational speed.
-    * **Step 2: Execute Script:** Run the script using `execute_python` function, always supplying a positive `timeout` value for both trial and production runs.
+    * **Step 2: Execute Script:** Run the script using `execute_python`. For **trial/smoke-test runs**, you MUST supply a `timeout` to cap runtime and catch issues early. For **production runs**, do NOT set `timeout` so the simulation runs to completion without being prematurely killed.
     * **Step 3: Analyze Output:** Inspect the output to confirm error-free execution, correct physics, and reasonable computational performance. If errors, bottlenecks, or poor scaling are observed, adjust runtime parameters and re-run.
 
 2. **Restart Calculations:** If a simulation is interrupted or fails and valid partial data exists, resume execution from the last checkpoint rather than starting from scratch:
@@ -366,7 +368,8 @@ The **assigned accuracy mode** controls how aggressively you set numerical param
 
 3. **Hard Constraints:** 
     - Focus solely on the `## CURRENT TASK` and execute all actions within a dedicated folder named `task_N` for that task unless the task specifies a different folder.
-    - Once the designated task is finished, you MUST call the `complete_task` tool to officially mark it as complete.
+    - You must complete the task thoroughly and rigorously, ensuring no steps are skipped and no part of the task is left unfinished.
+    - Once the designated task is finished and you have verified all outputs, you MUST call the `complete_task` tool to officially mark it as complete.
     - Do NOT use `pymatgen` or `ase` wrappers such as `ase.calculators.espresso` for running qe or lammps calculations. You must generate input files in their native format.
     - Concurrent Jobs x MPI_ranks x OMP_NUM_THREADS <= Total Physical cores.
     - Upon task completion, remove outdated or failed scripts and any temporary files (e.g., DFT restart files), while retaining all files necessary for reproducibility.
@@ -376,6 +379,7 @@ The **assigned accuracy mode** controls how aggressively you set numerical param
 5. **Golden Rules:**
     - Completion of a simulation does not guarantee correct outputs; always verify output quality and report results faithfully.
     - If exhaustive checks determine the task requirements are infeasible, identify and implement an appropriate workaround or alternative solution.
+    - If execution stops and outputs are incomplete due to a timeout, but the process appears to be running correctly, you should extend the timeout instead of assuming the task is infeasible.
     - You can invoke multiple tools in a single response. For independent information requests likely to succeed, execute in parallel to maximize efficiency and performance.
     - When reading, listing, or deleting multiple files or directories, batch them into a single read_file, list_directory, or delete_file call where supported. Otherwise, initiate multiple parallel tool calls to minimize overhead and boost efficiency.
     - Be precise with your tool calls and obtain and execute exactly what is needed in as few steps as possible to avoid unnecessary overhead.
@@ -1198,14 +1202,28 @@ The process has likely finished or exited silently. Inspect the log for:
         if is_api_connection_error(e):
             raise e
             
+        validation_tool_hint = None
         if ValidationError and isinstance(e, ValidationError):
             error_message = format_validation_error(e)
+            m = re.search(r"validation error for (\w+)", str(e), re.I)
+            if m:
+                validation_tool_hint = m.group(1)
         else:
             error_message = f"Error executing step: {str(e)}"
-            
-        send_agent_event("operator", "error", error_message)
+
+        status_text = (
+            error_message
+            if isinstance(error_message, str) and error_message.lower().strip().startswith("error:")
+            else f"Error: {error_message}"
+        )
+        send_agent_event(
+            "operator",
+            "error",
+            status_text,
+            tool_name=validation_tool_hint or "",
+        )
         _write_to_log(f"\n[OPERATOR] Error: {error_message}\n")
-        error_msg = AIMessage(content=error_message)
+        error_msg = AIMessage(content=status_text)
         update = {
             'messages': [error_msg],
             'current_task_messages': current_task_messages + [error_msg]

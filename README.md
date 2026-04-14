@@ -132,7 +132,7 @@ singularity exec --cleanenv \
 Prerequisites:
 
 - Python 3.10 or newer
-- Node.js 18 or newer for the local interactive CLI
+- Node.js 20 or newer for the local interactive CLI
 - Scientific software installed separately as needed for your workflows
 
 Example setup:

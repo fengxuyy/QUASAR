@@ -40,20 +40,37 @@ def _extract_thoughts(content_obj: Any) -> str:
     if isinstance(content_obj, list):
         parts = []
         for part in content_obj:
-            if isinstance(part, dict):
-                if part.get('type') == 'thinking':
-                    thinking_val = part.get('thinking') or part.get('text') or part.get('content') or ''
-                else:
-                    thinking_val = part.get('thinking') or ''
-                if thinking_val:
-                    parts.append(thinking_val if isinstance(thinking_val, str) else str(thinking_val))
+            thinking_val = _extract_thoughts(part)
+            if thinking_val:
+                parts.append(thinking_val)
         return "".join(parts)
     if isinstance(content_obj, dict):
-        if content_obj.get('type') == 'thinking':
+        block_type = str(content_obj.get('type') or '').lower()
+
+        if block_type == 'thinking':
             thinking_val = content_obj.get('thinking') or content_obj.get('text') or content_obj.get('content') or ''
             return thinking_val if isinstance(thinking_val, str) else str(thinking_val)
-        thinking_val = content_obj.get('thinking')
-        return thinking_val if isinstance(thinking_val, str) else ""
+
+        if block_type == 'reasoning':
+            summary = content_obj.get('summary')
+            if isinstance(summary, list):
+                summary_parts = [_extract_thoughts(part) for part in summary]
+                summary_text = "".join(part for part in summary_parts if part)
+                if summary_text:
+                    return summary_text
+            reasoning_val = content_obj.get('reasoning') or content_obj.get('text') or content_obj.get('content') or ''
+            return reasoning_val if isinstance(reasoning_val, str) else str(reasoning_val)
+
+        if block_type == 'summary_text':
+            summary_text = content_obj.get('text') or content_obj.get('content') or ''
+            return summary_text if isinstance(summary_text, str) else str(summary_text)
+
+        for key in ('thinking', 'reasoning', 'reasoning_content'):
+            thinking_val = content_obj.get(key)
+            if thinking_val:
+                return thinking_val if isinstance(thinking_val, str) else str(thinking_val)
+
+        return ""
     return ""
 
 

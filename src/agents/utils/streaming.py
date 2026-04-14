@@ -16,6 +16,79 @@ from .text import _extract_text, _extract_thoughts
 _last_input_tokens: dict[str, int] = {}
 
 
+def _get_content_overlap_length(existing: str, incoming: str) -> int:
+    """Return the suffix/prefix overlap length between two text chunks."""
+    max_overlap = min(len(existing), len(incoming))
+    for overlap in range(max_overlap, 0, -1):
+        if existing[-overlap:] == incoming[:overlap]:
+            return overlap
+    return 0
+
+
+def _get_common_prefix_length(left: str, right: str) -> int:
+    """Return the number of matching characters from the start of both strings."""
+    max_length = min(len(left), len(right))
+    idx = 0
+    while idx < max_length and left[idx] == right[idx]:
+        idx += 1
+    return idx
+
+
+def _get_common_suffix_length(left: str, right: str) -> int:
+    """Return the number of matching characters from the end of both strings."""
+    max_length = min(len(left), len(right))
+    idx = 0
+    while idx < max_length and left[-1 - idx] == right[-1 - idx]:
+        idx += 1
+    return idx
+
+
+def _looks_like_revised_cumulative_snapshot(existing: str, incoming: str) -> bool:
+    """Detect cumulative snapshots that were re-sent with a small mid-stream rewrite."""
+    min_length = min(len(existing), len(incoming))
+    if min_length < 48:
+        return False
+
+    common_prefix = _get_common_prefix_length(existing, incoming)
+    common_suffix = _get_common_suffix_length(
+        existing[common_prefix:],
+        incoming[common_prefix:],
+    )
+    preserved_ratio = (common_prefix + common_suffix) / min_length
+
+    has_strong_shared_shape = (
+        (common_prefix >= 24 and preserved_ratio >= 0.7)
+        or preserved_ratio >= 0.85
+    )
+    incoming_looks_like_snapshot = (
+        len(incoming) >= len(existing) or common_suffix >= 16
+    )
+    return has_strong_shared_shape and incoming_looks_like_snapshot
+
+
+def merge_stream_text(existing: str, incoming: str) -> str:
+    """Merge delta or cumulative stream chunks into one stable text buffer."""
+    if not existing:
+        return incoming
+    if not incoming:
+        return existing
+    if incoming == existing:
+        return existing
+
+    if incoming.startswith(existing):
+        return incoming
+    if _looks_like_revised_cumulative_snapshot(existing, incoming):
+        return incoming
+    if existing.startswith(incoming):
+        return existing
+
+    overlap = _get_content_overlap_length(existing, incoming)
+    min_significant_overlap = max(3, min(8, len(incoming) // 2))
+    if overlap >= min_significant_overlap:
+        return existing + incoming[overlap:]
+    return existing + incoming
+
+
 def _get_real_attr(obj, attr_name: str):
     """Read an actual attribute without triggering MagicMock child synthesis."""
     try:
@@ -77,6 +150,19 @@ def _normalize_usage_metadata(usage) -> Optional[dict]:
             normalized[attr] = copy.deepcopy(value)
 
     return normalized or None
+
+
+def _extract_chunk_thoughts(chunk) -> str:
+    """Extract streamed thought/reasoning text from a chunk."""
+    for source in (
+        _get_real_attr(chunk, "content"),
+        _get_real_attr(chunk, "additional_kwargs"),
+        _get_real_attr(chunk, "response_metadata"),
+    ):
+        thought_text = _extract_thoughts(source)
+        if thought_text:
+            return thought_text
+    return ""
 
 
 def _select_usage_metadata(llm_instance, usage_snapshots: list[dict], aggregated_usage: Optional[dict]) -> Optional[dict]:
@@ -390,23 +476,22 @@ def stream_with_token_tracking(
     
     try:
         for chunk in llm_instance.stream(messages):
-            # Extract text content
-            if hasattr(chunk, 'content') and chunk.content:
-                thought_chunk = _extract_thoughts(chunk.content)
-                if thought_chunk and on_thought:
-                    on_thought(thought_chunk)
-                chunk_text = _extract_text(chunk.content)
-                if chunk_text:
-                    full_content += chunk_text
-                    if on_content:
-                        on_content(chunk_text)
-                    
-                    # Check for repetition if detection is enabled
-                    if detector and detector.add_chunk(chunk_text):
-                        # Repetition detected - stop generation and get clean content
-                        full_content = detector.get_clean_content()
-                        was_stopped_early = True
-                        break
+            thought_chunk = _extract_chunk_thoughts(chunk)
+            if thought_chunk and on_thought:
+                on_thought(thought_chunk)
+
+            chunk_text = _extract_text(_get_real_attr(chunk, "content"))
+            if chunk_text:
+                full_content = merge_stream_text(full_content, chunk_text)
+                if on_content:
+                    on_content(chunk_text)
+
+                # Check for repetition if detection is enabled
+                if detector and detector.add_chunk(chunk_text):
+                    # Repetition detected - stop generation and get clean content
+                    full_content = detector.get_clean_content()
+                    was_stopped_early = True
+                    break
             
             # Accumulate tool call chunks
             if hasattr(chunk, 'tool_call_chunks') and chunk.tool_call_chunks:

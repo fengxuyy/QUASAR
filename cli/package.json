@@ -1,13 +1,17 @@
 {
   "name": "cli-node",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "index.js",
   "bin": {
     "quasar": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc",
+    "bundle": "esbuild src/cli.tsx --bundle --platform=node --format=esm --external:fsevents --define:process.env.DEV=\\\"false\\\" --banner:js=\"import { createRequire as __quasarCreateRequire } from 'module'; const require = __quasarCreateRequire(import.meta.url);\" --outfile=../quasar_node/dist/cli.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -28,6 +32,8 @@
     "zod": "^4.2.1"
   },
   "devDependencies": {
+    "esbuild": ">=0.24.0",
+    "react-devtools-core": "^6.1.5",
     "@types/ink": "^0.5.2",
     "@types/ink-text-input": "^2.0.5",
     "@types/node": "^25.0.3",

@@ -75,20 +75,20 @@ class TestRouteAfterInitial:
 class TestRouteAfterReview:
     """Test route_after_review logic."""
     
-    def test_with_plan_goes_to_operator(self):
-        """With a plan, should route to operator."""
+    def test_with_plan_goes_to_confirmation_gate(self):
+        """With a plan, should route to the confirmation gate."""
         state = {"plan": ["Task 1", "Task 2"]}
         plan = state.get("plan")
         
-        result = "operator" if plan else "end"
-        assert result == "operator"
+        result = "plan_review_confirm" if plan else "end"
+        assert result == "plan_review_confirm"
     
     def test_without_plan_goes_to_end(self):
         """Without a plan, should route to end."""
         state = {"plan": []}
         plan = state.get("plan")
         
-        result = "operator" if plan else "end"
+        result = "plan_review_confirm" if plan else "end"
         assert result == "end"
     
     def test_none_plan_goes_to_end(self):
@@ -96,8 +96,31 @@ class TestRouteAfterReview:
         state = {"plan": None}
         plan = state.get("plan")
         
-        result = "operator" if plan else "end"
+        result = "plan_review_confirm" if plan else "end"
         assert result == "end"
+
+
+class TestRouteAfterPlanReviewConfirm:
+    """Test plan confirmation routing logic."""
+
+    def _route_after_plan_review_confirm(self, state):
+        if state.get("plan_review_action") == "revise":
+            return "strategist_review"
+        if state.get("plan_review_proceed") is False:
+            return "end"
+        return "operator"
+
+    def test_confirm_goes_to_operator(self):
+        state = {"plan_review_action": "confirm", "plan_review_proceed": True}
+        assert self._route_after_plan_review_confirm(state) == "operator"
+
+    def test_decline_ends_run(self):
+        state = {"plan_review_action": "decline", "plan_review_proceed": False}
+        assert self._route_after_plan_review_confirm(state) == "end"
+
+    def test_revise_loops_back_to_strategist_review(self):
+        state = {"plan_review_action": "revise", "plan_review_proceed": False}
+        assert self._route_after_plan_review_confirm(state) == "strategist_review"
 
 
 class TestIsMeaningfulWork:

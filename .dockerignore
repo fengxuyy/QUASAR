@@ -11,8 +11,6 @@ build/
 
 # Node.js
 **/node_modules/
-docs/
-quasar_node/
 
 # Virtual environments
 .venv/
@@ -34,6 +32,13 @@ Thumbs.db
 # Git
 .git/
 .gitignore
+
+# CI / site / docs (not copied into images; shrinks build context)
+.github/
+docs/
+
+# Never bake host node_modules into COPY cli
+cli/node_modules/
 
 # Docker
 Dockerfile
