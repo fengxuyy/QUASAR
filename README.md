@@ -255,17 +255,18 @@ QUASAR builds on a strong open-source scientific software ecosystem. In particul
 
 If QUASAR is useful in your research, please cite:
 
-> Yang, Fengxu, and Jack D. Evans. "QUASAR: A Universal Autonomous System for Atomistic Simulation and a Benchmark of Its Capabilities." arXiv:2602.00185, 2026. [https://doi.org/10.48550/arXiv.2602.00185](https://doi.org/10.48550/arXiv.2602.00185)
+> Yang, Fengxu, and Jack D. Evans. "QUASAR: A Universal Autonomous System for Atomistic Simulation and a Benchmark of Its Capabilities." *Journal of Chemical Information and Modeling*, [https://doi.org/10.1021/acs.jcim.6c00295](https://doi.org/10.1021/acs.jcim.6c00295)
 
 ```bibtex
-@misc{yang2026quasar,
+@article{yang2026quasar,
   title={QUASAR: A Universal Autonomous System for Atomistic Simulation and a Benchmark of Its Capabilities},
-  author={Fengxu Yang and Jack D. Evans},
+  author={Yang, Fengxu and Evans, Jack D.},
+  journal={Journal of Chemical Information and Modeling},
   year={2026},
-  eprint={2602.00185},
-  archivePrefix={arXiv},
-  primaryClass={physics.chem-ph},
-  url={https://arxiv.org/abs/2602.00185}
+  month=may,
+  pages={acs.jcim.6c00295},
+  doi={10.1021/acs.jcim.6c00295},
+  url={https://doi.org/10.1021/acs.jcim.6c00295}
 }
 ```
 
