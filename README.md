@@ -220,7 +220,7 @@ Checkpoint metadata restores non-secret settings such as model choice, accuracy,
 
 QUASAR integrates with several third-party computational chemistry packages. Most are open-source, but **ORCA** is distributed under its own license terms:
 
-> **ORCA** is free for academic use but is **not open-source**. By using ORCA through QUASAR, you agree to the [ORCA license terms](https://www.faccts.de/orca/). Users are responsible for obtaining a valid ORCA license and ensuring compliance with its terms of use.
+> **ORCA** is free for academic use but is **not free for commercial use**. By using ORCA through QUASAR, you agree to the [ORCA license terms](https://www.faccts.de/orca/). Users are responsible for obtaining a valid ORCA license and ensuring compliance with its terms of use.
 
 ## Acknowledgements
 
