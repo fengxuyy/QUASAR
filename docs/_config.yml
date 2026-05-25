@@ -2,7 +2,7 @@ title: QUASAR
 version: 0.4.0
 description: Documentation for QUASAR, the Universal Autonomous System for Atomistic Research.
 url: https://fengxuyy.github.io
-baseurl: /QUASAR-CHEM
+baseurl: /QUASAR
 markdown: kramdown
 highlighter: rouge
 permalink: pretty
@@ -13,4 +13,4 @@ defaults:
       path: ""
     values:
       layout: default
-repository_url: https://github.com/fengxuyy/QUASAR-CHEM
+repository_url: https://github.com/fengxuyy/QUASAR

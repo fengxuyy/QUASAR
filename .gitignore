@@ -29,3 +29,6 @@ dist/
 # Misc
 .DS_Store
 cli/node_modules
+
+# Jekyll
+docs/_site/
