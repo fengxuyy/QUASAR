@@ -23,7 +23,7 @@ If not, complete [Get Started]({{ '/installation/' | relative_url }}) first.
 Here we provide a scientific request to QUASAR. A more detailed prompt is usually better because it gives QUASAR the scientific context needed to plan the right actions and return the specific outputs you need. For tutorial purposes, we use a short prompt.
 
 ```text
-        ╭─────────────────────────────────────────────────────────────────────────────────────────╮
+       ╭─────────────────────────────────────────────────────────────────────────────────────────╮
        │                                                                                         │
        │        ██████    █████  █████   █████████    █████████    █████████   ███████████       │
        │      ███░░░░███ ░░███  ░░███   ███░░░░░███  ███░░░░░███  ███░░░░░███ ░░███░░░░░███      │
