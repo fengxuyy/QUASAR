@@ -22,6 +22,15 @@ def test_create_initial_state():
     assert state["initial_plan_content"] == ""
     assert state["is_replanning"] is False
     assert state["evaluation_messages"] == []
+    assert state["prompt_profile"] == "dynamic-v2"
+    assert state["prompt_version"] == "2026-05-19.1"
+    assert state["prompt_metadata"] == {
+        "profile": "dynamic-v2",
+        "version": "2026-05-19.1",
+        "agents": {},
+    }
+    assert state["prompt_runtime_events"] == []
+    assert "resume_steering" not in state
     assert "plan_review_proceed" not in state
     assert "plan_review_action" not in state
     assert "plan_review_feedback" not in state
@@ -49,6 +58,11 @@ def test_state_has_correct_keys():
         "initial_plan_content",
         "is_replanning",
         "evaluation_messages",
+        "prompt_profile",
+        "prompt_version",
+        "prompt_metadata",
+        "prompt_runtime_events",
+        "resume_steering",
         "plan_review_proceed",
         "plan_review_action",
         "plan_review_feedback",

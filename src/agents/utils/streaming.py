@@ -452,7 +452,7 @@ def stream_with_token_tracking(
     """
     from ...context_budget import build_context_usage_snapshot
     from ...context_summarizer import get_effective_model_name
-    from ...usage_tracker import record_api_call
+    from ...usage_tracker import extract_cache_read_tokens, record_api_call
     from .bridge import send_context_usage
     
     full_content = ""
@@ -540,6 +540,7 @@ def stream_with_token_tracking(
     if selected_usage:
         input_tokens = selected_usage.get('input_tokens', 0)
         output_tokens = selected_usage.get('output_tokens', 0)
+        cache_read_tokens = extract_cache_read_tokens(selected_usage)
 
         # Keep the returned response object consistent with the corrected accounting.
         if full_response is not None:
@@ -551,7 +552,8 @@ def stream_with_token_tracking(
         record_api_call(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            agent_name=agent_name
+            agent_name=agent_name,
+            cache_read_tokens=cache_read_tokens,
         )
         # Track last-seen input tokens for context summarization checks
         if agent_name and input_tokens > 0:

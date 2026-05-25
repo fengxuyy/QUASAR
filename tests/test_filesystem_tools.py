@@ -1,20 +1,21 @@
 import os
-import pytest
-import shutil
-from pathlib import Path
-from src.tools.filesystem import read_file, write_file, list_directory, delete_file, edit_file
+from src.tools.filesystem import read_file, list_directory, edit_file
 from src.tools.base import MAX_OUTPUT_CHARS
 from src.tools.base import PROTECTED_SYSTEM_FILES
 
-def test_write_and_read_file(mock_workspace):
-    """Test writing to a file and then reading it back."""
+def _write_workspace_file(mock_workspace, file_path, content, mode="w"):
+    path = mock_workspace / file_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open(mode, encoding="utf-8") as handle:
+        handle.write(content)
+    return path
+
+
+def test_read_file(mock_workspace):
+    """Test reading a file."""
     filename = "test_file.txt"
     content = "Hello, World!"
-    
-    # Write file
-    result = write_file.invoke({"file_path": filename, "content": content})
-    assert "Successfully wrote" in result
-    assert (mock_workspace / filename).exists()
+    _write_workspace_file(mock_workspace, filename, content)
     
     # Read file
     read_result = read_file.invoke({"file_path": filename})
@@ -30,7 +31,7 @@ def test_read_file_params(mock_workspace):
     """Test first_lines, last_lines, and keyword parameters."""
     filename = "lines.txt"
     content = "\n".join([f"Line {i}" for i in range(1, 11)]) # 10 lines
-    write_file.invoke({"file_path": filename, "content": content})
+    _write_workspace_file(mock_workspace, filename, content)
     
     # Test first_lines
     result_first = read_file.invoke({"file_path": filename, "first_lines": 3})
@@ -57,7 +58,7 @@ def test_read_large_file_truncation(mock_workspace):
     filename = "large_file.txt"
     # Create a file significantly larger than expected truncation limit (approx 16k chars usually)
     content = "A" * 50000 
-    write_file.invoke({"file_path": filename, "content": content})
+    _write_workspace_file(mock_workspace, filename, content)
     
     result = read_file.invoke({"file_path": filename})
     assert "truncated" in result.lower()
@@ -69,7 +70,7 @@ def test_read_file_keyword_mode_respects_global_output_limit(mock_workspace):
     filename = "keyword_huge.log"
     repeated_line = "keyword " + ("X" * 400)
     content = "\n".join(f"{i}: {repeated_line}" for i in range(500))
-    write_file.invoke({"file_path": filename, "content": content})
+    _write_workspace_file(mock_workspace, filename, content)
 
     result = read_file.invoke({
         "file_path": filename,
@@ -87,7 +88,7 @@ def test_read_file_first_lines_mode_respects_global_output_limit(mock_workspace)
     filename = "first_lines_huge.log"
     long_line = "Y" * 600
     content = "\n".join(f"{i}: {long_line}" for i in range(300))
-    write_file.invoke({"file_path": filename, "content": content})
+    _write_workspace_file(mock_workspace, filename, content)
 
     result = read_file.invoke({
         "file_path": filename,
@@ -103,7 +104,7 @@ def test_read_file_last_lines_mode_respects_global_output_limit(mock_workspace):
     filename = "last_lines_huge.log"
     long_line = "Z" * 600
     content = "\n".join(f"{i}: {long_line}" for i in range(300))
-    write_file.invoke({"file_path": filename, "content": content})
+    _write_workspace_file(mock_workspace, filename, content)
 
     result = read_file.invoke({
         "file_path": filename,
@@ -125,8 +126,8 @@ def test_read_protected_file(mock_workspace):
 
 def test_list_directory(mock_workspace):
     """Test listing directory contents."""
-    write_file.invoke({"file_path": "file1.txt", "content": "content"})
-    write_file.invoke({"file_path": "file2.py", "content": "print('hello')"})
+    _write_workspace_file(mock_workspace, "file1.txt", "content")
+    _write_workspace_file(mock_workspace, "file2.py", "print('hello')")
     os.makedirs(mock_workspace / "subfolder")
     
     # List all
@@ -149,31 +150,11 @@ def test_list_directory_exclude_docs(mock_workspace):
     assert "docs" not in result
     assert "other" in result
 
-def test_delete_file(mock_workspace):
-    """Test deleting a file."""
-    filename = "to_delete.txt"
-    write_file.invoke({"file_path": filename, "content": "content"})
-    assert (mock_workspace / filename).exists()
-    
-    result = delete_file.invoke({"file_path": filename})
-    assert "Successfully deleted" in result
-    assert not (mock_workspace / filename).exists()
-
-def test_delete_protected_file(mock_workspace):
-    """Test attempting to delete a protected file."""
-    protected_file = list(PROTECTED_SYSTEM_FILES)[0]
-    (mock_workspace / protected_file).touch()
-    
-    result = delete_file.invoke({"file_path": protected_file})
-    assert "Error" in result
-    assert "internal system file" in result
-    assert (mock_workspace / protected_file).exists()
-
 def test_edit_file(mock_workspace):
     """Test editing a file."""
     filename = "edit_test.txt"
     content = "Hello World\nAnother Line"
-    write_file.invoke({"file_path": filename, "content": content})
+    _write_workspace_file(mock_workspace, filename, content)
     
     # Edit replacing "World" with "Python"
     result = edit_file.invoke({"file_path": filename, "old_string": "World", "new_string": "Python"})
@@ -187,7 +168,7 @@ def test_edit_file_fuzzy_match(mock_workspace):
     """Test editing logic with whitespace mismatch (fuzzy match)."""
     filename = "fuzzy.py"
     content = "def hello():\n    print('world')"
-    write_file.invoke({"file_path": filename, "content": content})
+    _write_workspace_file(mock_workspace, filename, content)
     
     # Target has different whitespace
     old_target = "def hello():\n\tprint('world')" 
@@ -213,28 +194,18 @@ def test_edit_file_fuzzy_match(mock_workspace):
 
 def test_path_traversal_prevention(mock_workspace):
     """Test preventing access to files outside workspace."""
-    # Attempt to write to a file outside the workspace using ../
+    # Attempt to read a file outside the workspace using ../
     # Note: _resolve_path usually resolves paths. _validate_workspace_path checks if it starts with workspace.
-    
-    filename = "../outside.txt"
-    result = write_file.invoke({"file_path": filename, "content": "bad"})
+    outside_file = mock_workspace.parent / "outside.txt"
+    outside_file.write_text("bad", encoding="utf-8")
+
+    result = read_file.invoke({"file_path": "../outside.txt"})
     
     assert "Error" in result
     # We expect some error about path or security
 
 
 # Additional rigorous tests below
-
-def test_write_file_creates_parent_dirs(mock_workspace):
-    """Test that write_file creates parent directories if needed."""
-    nested_path = "deep/nested/dir/file.txt"
-    content = "Nested content"
-    
-    result = write_file.invoke({"file_path": nested_path, "content": content})
-    
-    assert "Successfully wrote" in result
-    assert (mock_workspace / "deep/nested/dir/file.txt").exists()
-
 
 def test_list_directory_nested(mock_workspace):
     """Test listing with nested directory structure."""
@@ -270,7 +241,7 @@ def test_read_file_binary_detection(mock_workspace):
 def test_edit_file_no_match(mock_workspace):
     """Test editing when old_string doesn't exist."""
     filename = "nomatch.txt"
-    write_file.invoke({"file_path": filename, "content": "Original content"})
+    _write_workspace_file(mock_workspace, filename, "Original content")
     
     result = edit_file.invoke({
         "file_path": filename,
@@ -282,38 +253,13 @@ def test_edit_file_no_match(mock_workspace):
     assert "not found" in result.lower() or "no match" in result.lower() or "error" in result.lower()
 
 
-def test_delete_nonexistent_file(mock_workspace):
-    """Test deleting a file that doesn't exist."""
-    result = delete_file.invoke({"file_path": "does_not_exist.txt"})
-    
-    assert "Error" in result or "not found" in result.lower()
-
-
-def test_write_file_append_mode(mock_workspace):
-    """Test writing in append mode."""
-    filename = "append_test.txt"
-    
-    # Write initial content
-    write_file.invoke({"file_path": filename, "content": "First line\n"})
-    
-    # Append more content
-    result = write_file.invoke({"file_path": filename, "content": "Second line\n", "mode": "a"})
-    
-    assert "Successfully" in result
-    
-    # Verify content
-    content = (mock_workspace / filename).read_text()
-    assert "First line" in content
-    assert "Second line" in content
-
-
 def test_grep_search_basic(mock_workspace):
     """Test basic grep search functionality."""
     from src.tools.filesystem import grep_search
     
     # Create searchable files
-    write_file.invoke({"file_path": "search1.py", "content": "def hello():\n    print('world')"})
-    write_file.invoke({"file_path": "search2.py", "content": "def goodbye():\n    print('done')"})
+    _write_workspace_file(mock_workspace, "search1.py", "def hello():\n    print('world')")
+    _write_workspace_file(mock_workspace, "search2.py", "def goodbye():\n    print('done')")
     
     result = grep_search.invoke({"pattern": "hello", "directory_path": "."})
     
@@ -325,7 +271,7 @@ def test_grep_search_no_match(mock_workspace):
     """Test grep search with no matches."""
     from src.tools.filesystem import grep_search
     
-    write_file.invoke({"file_path": "nomatch.txt", "content": "Some content here"})
+    _write_workspace_file(mock_workspace, "nomatch.txt", "Some content here")
     
     result = grep_search.invoke({"pattern": "zzz_nonexistent_zzz", "directory_path": "."})
     
@@ -337,7 +283,7 @@ def test_grep_search_case_insensitive(mock_workspace):
     """Test case-insensitive grep search."""
     from src.tools.filesystem import grep_search
     
-    write_file.invoke({"file_path": "case.txt", "content": "Hello WORLD"})
+    _write_workspace_file(mock_workspace, "case.txt", "Hello WORLD")
     
     result = grep_search.invoke({
         "pattern": "hello",
@@ -348,46 +294,12 @@ def test_grep_search_case_insensitive(mock_workspace):
     assert "case.txt" in result or "Hello" in result
 
 
-def test_move_file(mock_workspace):
-    """Test moving a file."""
-    from src.tools.filesystem import move_file
-    
-    # Create source file and destination dir
-    write_file.invoke({"file_path": "source.txt", "content": "moveable"})
-    (mock_workspace / "dest_dir").mkdir()
-    
-    result = move_file.invoke({
-        "source_path": "source.txt",
-        "destination_path": "dest_dir/source.txt"
-    })
-    
-    assert "Successfully" in result or "moved" in result.lower()
-    assert not (mock_workspace / "source.txt").exists()
-    assert (mock_workspace / "dest_dir" / "source.txt").exists()
-
-
-def test_rename_file(mock_workspace):
-    """Test renaming a file."""
-    from src.tools.filesystem import rename_file
-    
-    write_file.invoke({"file_path": "old_name.txt", "content": "content"})
-    
-    result = rename_file.invoke({
-        "file_path": "old_name.txt",
-        "new_name": "new_name.txt"
-    })
-    
-    assert "Successfully" in result or "renamed" in result.lower()
-    assert not (mock_workspace / "old_name.txt").exists()
-    assert (mock_workspace / "new_name.txt").exists()
-
-
 # ── Multi-path tests ──────────────────────────────────────────────────────
 
 def test_read_multiple_files(mock_workspace):
     """Test reading multiple files at once by passing a list of paths."""
-    write_file.invoke({"file_path": "multi1.txt", "content": "Alpha content"})
-    write_file.invoke({"file_path": "multi2.txt", "content": "Beta content"})
+    _write_workspace_file(mock_workspace, "multi1.txt", "Alpha content")
+    _write_workspace_file(mock_workspace, "multi2.txt", "Beta content")
 
     result = read_file.invoke({"file_path": ["multi1.txt", "multi2.txt"]})
     assert "Alpha content" in result
@@ -398,7 +310,7 @@ def test_read_multiple_files(mock_workspace):
 
 def test_read_multiple_files_one_missing(mock_workspace):
     """Test reading a list where one file does not exist – should still return partial results."""
-    write_file.invoke({"file_path": "exists.txt", "content": "I exist"})
+    _write_workspace_file(mock_workspace, "exists.txt", "I exist")
 
     result = read_file.invoke({"file_path": ["exists.txt", "ghost.txt"]})
     assert "I exist" in result
@@ -407,8 +319,8 @@ def test_read_multiple_files_one_missing(mock_workspace):
 
 def test_read_multiple_files_with_first_lines(mock_workspace):
     """Test reading multiple files with first_lines parameter."""
-    write_file.invoke({"file_path": "a.txt", "content": "line1\nline2\nline3"})
-    write_file.invoke({"file_path": "b.txt", "content": "lineA\nlineB\nlineC"})
+    _write_workspace_file(mock_workspace, "a.txt", "line1\nline2\nline3")
+    _write_workspace_file(mock_workspace, "b.txt", "lineA\nlineB\nlineC")
 
     result = read_file.invoke({"file_path": ["a.txt", "b.txt"], "first_lines": 1})
     assert "line1" in result
@@ -433,31 +345,7 @@ def test_list_multiple_directories(mock_workspace):
 
 def test_read_single_file_unchanged(mock_workspace):
     """Verify that passing a single string still works identically."""
-    write_file.invoke({"file_path": "solo.txt", "content": "Solo content"})
+    _write_workspace_file(mock_workspace, "solo.txt", "Solo content")
     result = read_file.invoke({"file_path": "solo.txt"})
     assert "Solo content" in result
     assert "---" not in result  # No multi-file separator
-
-
-def test_delete_multiple_files(mock_workspace):
-    """Test deleting multiple files at once by passing a list of paths."""
-    write_file.invoke({"file_path": "del1.txt", "content": "content1"})
-    write_file.invoke({"file_path": "del2.txt", "content": "content2"})
-    assert (mock_workspace / "del1.txt").exists()
-    assert (mock_workspace / "del2.txt").exists()
-
-    result = delete_file.invoke({"file_path": ["del1.txt", "del2.txt"]})
-    assert "Successfully deleted" in result
-    assert "---" in result  # Multi-file separator
-    assert not (mock_workspace / "del1.txt").exists()
-    assert not (mock_workspace / "del2.txt").exists()
-
-
-def test_delete_multiple_files_one_missing(mock_workspace):
-    """Test deleting a list where one file does not exist – should still delete the other."""
-    write_file.invoke({"file_path": "exists_del.txt", "content": "content"})
-
-    result = delete_file.invoke({"file_path": ["exists_del.txt", "ghost_del.txt"]})
-    assert "Successfully deleted" in result
-    assert "Error" in result  # The missing file should produce an error
-    assert not (mock_workspace / "exists_del.txt").exists()

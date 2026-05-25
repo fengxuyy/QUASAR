@@ -1,7 +1,7 @@
 """
 Documentation downloader for QUASAR-CHEM.
 
-Downloads documentation repositories (ASE, pymatgen, MACE, RASPA3, Q-E, LAMMPS)
+Downloads documentation repositories (ASE, pymatgen, MACE, RASPA3, Q-E, LAMMPS, RDKit)
 to the workspace for reference and example access.
 """
 
@@ -65,6 +65,12 @@ REPO_CONFIGS = [
         "url": "https://github.com/lammps/lammps.git",
         "target": "lammps",
         "sparse_paths": ["doc/src", "examples", "README", "doc/README"],
+    },
+    {
+        "name": "RDKit",
+        "url": "https://github.com/rdkit/rdkit.git",
+        "target": "rdkit",
+        "sparse_paths": ["Docs/Book", "Docs/Notebooks", "rdkit"],
     }
 ]
 

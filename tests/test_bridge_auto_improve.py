@@ -14,7 +14,7 @@ from src.runner import PromptRunResult
 
 
 def _read_checkpoint_settings(workspace):
-    settings_path = workspace / "checkpoint_settings.json"
+    settings_path = workspace / "quasar_logs" / "checkpoint_settings.json"
     if not settings_path.exists():
         return {}
     return json.loads(settings_path.read_text(encoding="utf-8"))
@@ -114,7 +114,7 @@ def test_begin_plan_confirmation_wait_auto_confirms_only_for_automatic_cycles(mo
     )
 
     def fake_wait():
-        bridge.set_plan_confirmation(True)
+        bridge.set_plan_confirmation("confirm")
 
     monkeypatch.setattr(bridge._plan_confirm_event, "wait", fake_wait)
     events.clear()
@@ -193,12 +193,13 @@ def test_interrupted_automatic_cycle_preserves_remaining_budget_across_resume(mo
     }
     assert [payload for type_, payload in events if type_ == "done"][-1] == {"status": "interrupted"}
 
-    (mock_workspace / "checkpoints.sqlite").touch()
+    checkpoint_path = mock_workspace / "quasar_logs" / "checkpoints.sqlite"
+    checkpoint_path.parent.mkdir(exist_ok=True)
+    checkpoint_path.touch()
     original_prepare = bridge._prepare_auto_improve_state_for_prompt
 
     def prepare_and_drop_checkpoint(*, restart):
         state = original_prepare(restart=restart)
-        checkpoint_path = mock_workspace / "checkpoints.sqlite"
         if checkpoint_path.exists():
             checkpoint_path.unlink()
         return state

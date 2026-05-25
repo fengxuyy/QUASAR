@@ -4,14 +4,22 @@ import shutil
 
 from .tools.base import WORKSPACE_DIR, LOGS_DIR
 from .debug_logger import log_custom
+from .artifacts import (
+    ARCHIVE_DIR_NAME,
+    create_archive_run_path,
+    get_checkpoint_db_path,
+    get_checkpoint_settings_path,
+    get_checkpoint_sidecar_paths,
+    has_archive_runs,
+    migrate_legacy_runtime_artifacts,
+)
 
-IGNORED_ARCHIVE_NAMES = {"archive", "docs"}
+IGNORED_ARCHIVE_NAMES = {ARCHIVE_DIR_NAME, "docs"}
 
 
 def setup_final_results_folder():
-    """Archive workspace files to run_N folder and create new final_results folder."""
+    """Archive workspace files to a unique run folder and create final_results."""
     final_results_dir = WORKSPACE_DIR / "final_results"
-    archive_dir = WORKSPACE_DIR / "archive"
     
     items_to_archive = [
         item for item in WORKSPACE_DIR.iterdir()
@@ -22,19 +30,7 @@ def setup_final_results_folder():
         final_results_dir.mkdir(parents=True, exist_ok=True)
         return
     
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Find highest run number
-    max_run_num = 0
-    for item in archive_dir.iterdir():
-        if item.is_dir() and item.name.startswith("run_"):
-            try:
-                max_run_num = max(max_run_num, int(item.name.split("_", 1)[1]))
-            except (ValueError, IndexError):
-                continue
-    
-    archive_path = archive_dir / f"run_{max_run_num + 1}"
-    archive_path.mkdir(parents=True, exist_ok=True)
+    archive_path = create_archive_run_path(WORKSPACE_DIR)
     
     # Archive items
     archived_items = []
@@ -75,12 +71,13 @@ def final_results_exists_and_not_empty():
 
 
 def cleanup_workspace_keep_archive():
-    """Delete everything in workspace except docs, archive, and dotfiles.
+    """Delete everything in workspace except docs, archives, and dotfiles.
     This clears current results and checkpoints but preserves archived runs.
     Also explicitly deletes checkpoint_settings.json.
     """
     # Explicitly delete checkpoint_settings.json if it exists
-    checkpoint_settings_path = WORKSPACE_DIR / "checkpoint_settings.json"
+    migrate_legacy_runtime_artifacts(WORKSPACE_DIR)
+    checkpoint_settings_path = get_checkpoint_settings_path(WORKSPACE_DIR)
     if checkpoint_settings_path.exists():
         try:
             checkpoint_settings_path.unlink()
@@ -92,8 +89,8 @@ def cleanup_workspace_keep_archive():
         # Skip dot-files/folders
         if item.name.startswith("."):
             continue
-        # Skip docs and archive - only delete current workspace files
-        if item.name in ("docs", "archive"):
+        # Skip docs and archives - only delete current workspace files
+        if item.name in ("docs", ARCHIVE_DIR_NAME):
             continue
             
         try:
@@ -114,7 +111,8 @@ def cleanup_workspace_for_fresh_start():
     Also explicitly deletes checkpoint_settings.json.
     """
     # Explicitly delete checkpoint_settings.json if it exists
-    checkpoint_settings_path = WORKSPACE_DIR / "checkpoint_settings.json"
+    migrate_legacy_runtime_artifacts(WORKSPACE_DIR)
+    checkpoint_settings_path = get_checkpoint_settings_path(WORKSPACE_DIR)
     if checkpoint_settings_path.exists():
         try:
             checkpoint_settings_path.unlink()
@@ -143,16 +141,15 @@ def cleanup_workspace_for_fresh_start():
 
 
 def archive_completed_run():
-    """Archive workspace files including checkpoint to run_N folder on completion.
+    """Archive workspace files including checkpoint to a unique folder on completion.
     
     This is called when a run completes successfully. It:
-    1. Creates archive/run_N folder
+    1. Creates a unique archive run folder
     2. Copies all workspace items (including checkpoint files) to archive
     3. Deletes checkpoint files from workspace (but keeps them in archive)
     """
-    archive_dir = WORKSPACE_DIR / "archive"
-    
-    checkpoint_settings = WORKSPACE_DIR / "checkpoint_settings.json"
+    migrate_legacy_runtime_artifacts(WORKSPACE_DIR)
+    checkpoint_settings = get_checkpoint_settings_path(WORKSPACE_DIR)
     
     # Collect items to archive (everything except archive and most dotfiles)
     items_to_archive = [
@@ -164,19 +161,7 @@ def archive_completed_run():
     if not items_to_archive:
         return
     
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Find highest run number
-    max_run_num = 0
-    for item in archive_dir.iterdir():
-        if item.is_dir() and item.name.startswith("run_"):
-            try:
-                max_run_num = max(max_run_num, int(item.name.split("_", 1)[1]))
-            except (ValueError, IndexError):
-                continue
-    
-    archive_path = archive_dir / f"run_{max_run_num + 1}"
-    archive_path.mkdir(parents=True, exist_ok=True)
+    archive_path = create_archive_run_path(WORKSPACE_DIR)
     
     # Archive items
     archived_items = []
@@ -205,8 +190,7 @@ def archive_completed_run():
             log_custom("RESULTS", f"Warning: Could not remove {item.name}", {"error": str(e)})
 
     # Also ensure checkpoint sqlite files are removed even if they weren't in items_to_archive
-    for suffix in ["", "-shm", "-wal"]:
-        checkpoint_file = WORKSPACE_DIR / f"checkpoints.sqlite{suffix}"
+    for checkpoint_file in get_checkpoint_sidecar_paths(WORKSPACE_DIR):
         if checkpoint_file.exists():
             try:
                 checkpoint_file.unlink()
@@ -218,27 +202,19 @@ def archive_exists_without_checkpoint():
     """Check if archive has runs and no active checkpoint exists.
     
     Returns True if:
-    - archive folder exists with at least one run_N folder
+    - archive folder exists with at least one run folder
     - no checkpoint file exists in workspace
     
     This indicates a previous run completed and was archived.
     """
-    archive_dir = WORKSPACE_DIR / "archive"
-    checkpoint_file = WORKSPACE_DIR / "checkpoints.sqlite"
+    migrate_legacy_runtime_artifacts(WORKSPACE_DIR)
+    checkpoint_file = get_checkpoint_db_path(WORKSPACE_DIR)
     
     # Check that checkpoint doesn't exist
     if checkpoint_file.exists():
         return False
     
-    # Check that archive exists and has run folders
-    if not archive_dir.exists() or not archive_dir.is_dir():
-        return False
-    
     try:
-        return any(
-            item.is_dir() and item.name.startswith("run_")
-            for item in archive_dir.iterdir()
-        )
+        return has_archive_runs(WORKSPACE_DIR)
     except (OSError, PermissionError):
         return False
-

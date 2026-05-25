@@ -4,8 +4,8 @@
  */
 import React from 'react';
 import { Text } from 'ink';
-import chalk from 'chalk';
 import { formatLine, TextSegment } from '../../../utils/formatting.js';
+import { cliChalk } from '../../theme.js';
 
 interface RenderLineProps {
     segments: TextSegment[];
@@ -40,21 +40,21 @@ function buildStyledText(
 export function RenderLine({ segments, isHeader, isTask }: RenderLineProps): React.ReactElement {
     if (isHeader) {
         const plainText = segments.map(s => s.text).join('');
-        return <Text bold color="gray">{plainText}</Text>;
+        return <Text>{cliChalk.muted(plainText)}</Text>;
     }
     
     if (isTask) {
         const styledText = buildStyledText(segments, (seg, prefix) => {
             // Highlight "Guidance:" in cyan
             if (seg.text.toLowerCase().includes('guidance:')) {
-                return prefix + chalk.cyan.bold(seg.text);
+                return prefix + cliChalk.primaryBold(seg.text);
             }
             
             switch (seg.style) {
                 case 'code':
-                    return prefix + chalk.magenta.bold(seg.text);
+                    return prefix + cliChalk.code(seg.text);
                 case 'bold':
-                    return prefix + chalk.cyan.bold(seg.text);
+                    return prefix + cliChalk.primaryBold(seg.text);
                 default:
                     return prefix + seg.text;
             }
@@ -65,11 +65,11 @@ export function RenderLine({ segments, isHeader, isTask }: RenderLineProps): Rea
     const styledText = buildStyledText(segments, (seg, prefix) => {
         switch (seg.style) {
             case 'code':
-                return prefix + chalk.magenta.bold(seg.text);
+                return prefix + cliChalk.code(seg.text);
             case 'bold':
-                return prefix + chalk.cyan.bold(seg.text);
+                return prefix + cliChalk.primaryBold(seg.text);
             case 'italic':
-                return prefix + chalk.gray.italic(seg.text);
+                return prefix + cliChalk.mutedItalic(seg.text);
             default:
                 return prefix + seg.text;
         }

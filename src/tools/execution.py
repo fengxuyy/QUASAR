@@ -7,6 +7,7 @@ import time
 import traceback
 import io
 import threading
+import math
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,29 +44,26 @@ class OutputCaptureState:
     threads: list[threading.Thread] = field(default_factory=list)
 
 
-def _get_resource_usage_lazy(pid: int = None) -> str:
-    """Lazy-import wrapper to avoid circular import between src.tools and src.agents."""
-    from ..agents.utils.system import get_resource_usage
-    return get_resource_usage(pid=pid)
 
 
-def _get_check_interval() -> Optional[int]:
-    """Get check-in interval from environment variable.
-    
-    CHECK_INTERVAL is specified in minutes (matching the UI settings).
-    Returns the interval in seconds.
-    Default: Disabled if unset. A value <= 0 disables periodic check-ins.
-    """
-    val = os.getenv("CHECK_INTERVAL", "")
-    if not val:
-        return None
+
+def _parse_check_in_after_seconds(
+    value: Optional[float],
+    field_name: str = "check_in_after",
+) -> tuple[Optional[float], Optional[str]]:
+    """Convert an agent-provided check-in delay in minutes to seconds."""
+    if value is None:
+        return None, None
+
     try:
-        minutes = float(val)
-        if minutes <= 0:
-            return None
-        return int(minutes * 60)
-    except ValueError:
-        return None
+        minutes = float(value)
+    except (TypeError, ValueError):
+        return None, f"Error: '{field_name}' must be a positive number of minutes."
+
+    if not math.isfinite(minutes) or minutes <= 0:
+        return None, f"Error: '{field_name}' must be a positive number of minutes."
+
+    return minutes * 60.0, None
 
 
 def _format_elapsed_time(seconds: float) -> str:
@@ -78,7 +76,7 @@ def _format_elapsed_time(seconds: float) -> str:
 
 
 def _format_timeout_minutes(timeout_minutes: float) -> str:
-    """Format a timeout value in minutes without unnecessary trailing zeros."""
+    """Format an internal runtime-limit value in minutes without unnecessary trailing zeros."""
     timeout_value = float(timeout_minutes)
     if timeout_value.is_integer():
         return str(int(timeout_value))
@@ -497,64 +495,57 @@ def _find_processes_in_group(pgid: Optional[int], exclude_pids: Optional[set[int
     return matches
 
 
-def _handle_execution_timeout(process: subprocess.Popen, script_path: Path) -> str:
-    """Terminate the active execution after exceeding its configured timeout."""
+def _handle_internal_runtime_limit(process: subprocess.Popen, script_path: Path) -> str:
+    """Terminate an internal helper execution after exceeding its runtime guard."""
     timeout_minutes = _process_timeout_minutes
 
     _kill_process_and_children(process, _process_pgid)
     result = _collect_execution_result(process, script_path)
     _clear_execution_state(cleanup_temp_file=True)
 
-    timeout_info = "\n\n**Execution Timeout:**\n\n"
+    timeout_info = "\n\n**Internal Runtime Limit:**\n\n"
     if timeout_minutes is None:
-        timeout_info += "> Execution exceeded the configured timeout.\n"
+        timeout_info += "> Internal helper execution exceeded its configured runtime limit.\n"
     else:
         timeout_info += (
-            f"> Execution exceeded the configured timeout of "
+            f"> Internal helper execution exceeded the configured runtime limit of "
             f"{_format_timeout_minutes(timeout_minutes)} minutes.\n"
         )
     timeout_info += "> The process was terminated.\n"
-    timeout_info += "> Increase `timeout` if this run needs more time.\n\n"
+    timeout_info += "> Use a narrower helper snippet if more inspection is needed.\n\n"
 
     return timeout_info + result
 
 
 def execute_python_with_state_preserved(
-    timeout: Optional[float] = None,
     *,
     code: str,
     omp_num_threads: int = 1,
+    max_runtime_minutes: Optional[float] = None,
 ) -> Union[str, Dict[str, Any]]:
     """Run execute_python while preserving any currently tracked long-running execution."""
     snapshot = _snapshot_execution_state()
-    env_sentinel = object()
-    original_check_interval = os.environ.get("CHECK_INTERVAL", env_sentinel)
 
     try:
-        os.environ.pop("CHECK_INTERVAL", None)
-        return execute_python.func(
-            timeout=timeout,
+        return _execute_python_impl(
             code=code,
             omp_num_threads=omp_num_threads,
+            max_runtime_minutes=max_runtime_minutes,
         )
     finally:
-        if original_check_interval is env_sentinel:
-            os.environ.pop("CHECK_INTERVAL", None)
-        else:
-            os.environ["CHECK_INTERVAL"] = original_check_interval
         _restore_execution_state(snapshot)
 
 
 @tool
 def execute_python(
+    check_in_after: float,
     file_path: Optional[str] = None,
     code: Optional[str] = None,
-    timeout: Optional[float] = None,
     omp_num_threads: int = 1,
 ) -> Union[str, Dict[str, Any]]:
     """Execute Python code directly or from a file.
     
-    The code will have access to ASE, pymatgen, MACE, RASPA3, Quantum ESPRESSO, LAMMPS, plus standard libraries.
+    The code will have access to ASE, pymatgen, MACE, RASPA3, Quantum ESPRESSO, LAMMPS, RDKit, and command-line tools such as ORCA and xTB, plus standard libraries.
     
     **Note:** Including `code` together with `file_path` is HIGHLY recommended. This ensures the script 
     is saved to a named file for traceability and reproducibility, rather than using a disposable temp file.
@@ -565,19 +556,43 @@ def execute_python(
         code: Optional Python code to execute directly. If provided without `file_path`, a temporary file 
               will be used (recommended only for simple, quick scripts). If provided with `file_path`, 
               the code will be written to that file before execution.
-        timeout: Optional hard timeout in minutes. Use this ONLY for trial/smoke-test runs to cap runtime
-                 (e.g. 2.0 for a 2-minute trial). Do NOT set this for production runs — production runs
-                 should run without a timeout so they are not prematurely killed.
+        check_in_after: Required agent-selected delay in minutes before asking the agent to review
+                        whether a still-running execution should continue or be interrupted.
         omp_num_threads: Number of OpenMP threads per MPI process (default: 1). Set this when running 
                         hybrid MPI+OpenMP codes. Constraint: Concurrent Jobs x MPI_ranks x OMP_NUM_THREADS <= Total Physical cores
     
     Returns:
-        Execution results including stdout, stderr, and return code.
+        Execution results including stdout, stderr, and return code. Still-running
+        executions are never terminated by a tool timeout; they return a check-in
+        request when the agent-selected check-in delay is reached.
     
     Examples:
-        - execute_python(file_path="production.py", code="...") - Production run (no timeout)
-        - execute_python(file_path="script.py", timeout=2.0) - Trial run with 2-minute timeout
-        - execute_python(code="print('smoke')", timeout=2.0) - Quick smoke test with timeout
+        - execute_python(file_path="production.py", code="...", check_in_after=30) - Production run with an agent-scheduled check-in after 30 minutes
+        - execute_python(code="print('smoke')", check_in_after=2.0) - Quick smoke test with agent review after 2 minutes if still running
+    """
+    if check_in_after is None:
+        return "Error: 'check_in_after' is required and must be an agent-selected positive number of minutes."
+
+    return _execute_python_impl(
+        file_path=file_path,
+        code=code,
+        check_in_after=check_in_after,
+        omp_num_threads=omp_num_threads,
+    )
+
+
+def _execute_python_impl(
+    file_path: Optional[str] = None,
+    code: Optional[str] = None,
+    max_runtime_minutes: Optional[float] = None,
+    check_in_after: Optional[float] = None,
+    omp_num_threads: int = 1,
+) -> Union[str, Dict[str, Any]]:
+    """Internal Python execution implementation.
+
+    The public execute_python tool has no hard runtime timeout. The private
+    max_runtime_minutes guard is reserved for short-lived internal helper
+    snippets such as execute_temporary_python.
     """
     global _running_process, _process_pgid, _process_start_time, _process_script_path
     global _process_timeout_seconds, _process_timeout_minutes, _process_use_temp_file
@@ -585,24 +600,23 @@ def execute_python(
 
     execution_timeout_seconds = None
     timeout_minutes = None
-    if timeout is not None:
+    if max_runtime_minutes is not None:
         try:
-            timeout_minutes = float(timeout)
+            timeout_minutes = float(max_runtime_minutes)
         except (TypeError, ValueError):
-            return "Error: 'timeout' must be a positive number of minutes."
+            return "Error: internal runtime limit must be a positive number of minutes."
         if timeout_minutes <= 0:
-            return "Error: 'timeout' must be a positive number of minutes."
+            return "Error: internal runtime limit must be a positive number of minutes."
         execution_timeout_seconds = timeout_minutes * 60.0
 
     # Validate arguments
     if file_path is None and code is None:
         return "Error: Either 'file_path' or 'code' must be provided."
     
-    # Get check-in interval
-    check_interval = _get_check_interval()
-    
+    check_interval, check_interval_error = _parse_check_in_after_seconds(check_in_after)
+    if check_interval_error:
+        return check_interval_error
 
-    
     use_temp_file = False
     script_path: Optional[Path] = None
     
@@ -649,7 +663,7 @@ def execute_python(
                 return f"Error: Cannot execute files outside workspace directory."
 
             if not script_path.exists() or not script_path.is_file():
-                return f"Error: File '{file_path}' does not exist. Create the file using write_file first, or provide the 'code' argument."
+                return f"Error: File '{file_path}' does not exist. Create the file with Python/pathlib or provide the 'code' argument."
 
         # Protect internal/hidden files from being executed or written to during execution
         if script_path.name in PROTECTED_SYSTEM_FILES:
@@ -706,7 +720,7 @@ def execute_python(
         _process_use_temp_file = use_temp_file
         _process_output_capture = capture_state
         
-        # Poll until process completes or check-in interval reached
+        # Poll until process completes or the agent-selected check-in delay is reached
         while True:
             # Check for external interrupt (e.g. from web UI)
             try:
@@ -737,10 +751,10 @@ def execute_python(
                 _clear_execution_state(cleanup_temp_file=True)
                 return result
             
-            # Check if we've reached the execution timeout or check-in interval
+            # Check if we've reached the internal helper guard or agent-selected check-in delay
             elapsed = time.time() - start_time
             if _process_timeout_seconds is not None and elapsed >= _process_timeout_seconds:
-                return _handle_execution_timeout(process, script_path)
+                return _handle_internal_runtime_limit(process, script_path)
             if check_interval is not None and elapsed >= check_interval:
                 # Return check-in request - operator will handle prompting LLM
                 return {
@@ -749,15 +763,15 @@ def execute_python(
                     "elapsed_display": _format_elapsed_time(elapsed),
                     "file_path": str(script_path),
                     "use_temp_file": use_temp_file,
-                    "resource_usage": _get_resource_usage_lazy(pid=process.pid)
                 }
             
             # Sleep briefly before next poll (100ms)
             time.sleep(0.1)
             
     except subprocess.TimeoutExpired as e:
-        # Special handling for subprocess timeout - kill all child processes and return to LLM
-        # This catches when user's script has an uncaught subprocess.wait(timeout=X) that expires
+        # Special handling for script-level subprocess timeouts. QUASAR no longer
+        # exposes a hard execution timeout, but a generated script can still raise
+        # TimeoutExpired if it used subprocess.run(..., timeout=...).
         
         # Try to kill all child processes spawned by the script using psutil + killpg
         if _running_process is not None:
@@ -773,7 +787,7 @@ def execute_python(
         _clear_execution_state(cleanup_temp_file=True)
         
         # Return helpful message with partial output
-        timeout_info = f"\n\n**Subprocess Timeout:**\n\n> A subprocess in your script timed out after {e.timeout} seconds.\n> All child processes have been terminated.\n> You can:\n> - Increase the timeout value if the process needs more time\n> - Check the partial output below to diagnose issues\n> - Modify your approach if the process is stuck\n\n"
+        timeout_info = f"\n\n**Subprocess Timeout:**\n\n> A subprocess in your script timed out after {e.timeout} seconds.\n> All child processes have been terminated.\n> Use `check_in_after` and the check-in decision tools for runtime control instead of script-level hard timeouts.\n> Check the partial output below to diagnose the issue.\n\n"
         
         return timeout_info + result_msg
     
@@ -788,10 +802,14 @@ def execute_python(
         return f"**Execution Result:**\n\n> Error executing code: {str(e)}\n\n**Traceback:**\n\n```\n{traceback.format_exc()}```"
 
 
-def resume_execution() -> Union[str, Dict[str, Any]]:
+def resume_execution(check_in_after: float) -> Union[str, Dict[str, Any]]:
     """Resume monitoring a running Python process after check-in.
     
     This is called by the operator after LLM decides to continue execution.
+    Args:
+        check_in_after: Required agent-selected delay in minutes before the next
+                        check-in.
+
     Returns the result when process completes, or another check-in request.
     """
     global _running_process, _process_pgid, _process_start_time, _process_script_path
@@ -803,11 +821,20 @@ def resume_execution() -> Union[str, Dict[str, Any]]:
     process = _running_process
     start_time = _process_start_time if _process_start_time is not None else time.time()
     script_path = _process_script_path
+
+    if check_in_after is None:
+        return "Error: 'next_check_in_after' is required and must be an agent-selected positive number of minutes."
     
-    check_interval = _get_check_interval()
+    check_interval, check_interval_error = _parse_check_in_after_seconds(
+        check_in_after,
+        field_name="next_check_in_after",
+    )
+    if check_interval_error:
+        return check_interval_error
+
     last_check_time = time.time()
     
-    # Poll until process completes or next check-in interval reached
+    # Poll until process completes or the next agent-selected check-in delay is reached
     while True:
         poll_result = process.poll()
         if poll_result is not None:
@@ -819,12 +846,12 @@ def resume_execution() -> Union[str, Dict[str, Any]]:
             _clear_execution_state(cleanup_temp_file=True)
             return result
         
-        # Check if we've reached the next check-in interval
+        # Check if we've reached the next agent-selected check-in delay
         elapsed_since_check = time.time() - last_check_time
         total_elapsed = time.time() - start_time
 
         if _process_timeout_seconds is not None and total_elapsed >= _process_timeout_seconds:
-            return _handle_execution_timeout(process, script_path)
+            return _handle_internal_runtime_limit(process, script_path)
         
         if check_interval is not None and elapsed_since_check >= check_interval:
             # Return check-in request
@@ -834,7 +861,6 @@ def resume_execution() -> Union[str, Dict[str, Any]]:
                 "elapsed_display": _format_elapsed_time(total_elapsed),
                 "file_path": str(script_path),
                 "use_temp_file": _process_use_temp_file,
-                "resource_usage": _get_resource_usage_lazy(pid=process.pid)
             }
         
         # Sleep briefly before next poll

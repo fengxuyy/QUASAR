@@ -11,14 +11,15 @@ from typing import Optional
 MODEL_MAX_CONTEXT: dict[str, int] = {
     "gemini-2.5-pro": 1_048_576,
     "gemini-2.5-flash": 1_048_576,
+    "gemini-3.5-flash": 1_048_576,
     "gemini-3.1-pro-preview": 1_048_576,
     "gemini-3-flash-preview": 1_048_576,
 }
 
 CONTEXT_THRESHOLD_RATIOS: dict[str, float] = {
-    "low": 0.40,
-    "medium": 0.60,
-    "high": 0.80,
+    "low": 0.20,
+    "medium": 0.40,
+    "hard": 0.60,
 }
 
 DEFAULT_CONTEXT_THRESHOLD_LEVEL = "medium"

@@ -82,17 +82,26 @@
     activeNavLink.setAttribute("aria-current", "page");
     sidebarSections.hidden = false;
 
+    function contentHasOwnScroll() {
+      return content.scrollHeight > content.clientHeight + 1;
+    }
+
     activeNavLink.addEventListener("click", function (event) {
       event.preventDefault();
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      if (contentHasOwnScroll()) {
+        content.scrollTo({ top: 0, behavior: "smooth" });
+      } else {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
     });
 
     function getCurrentHeadingId() {
-      var offset = 72;
+      var offset = 24;
+      var containerTop = content.getBoundingClientRect().top;
       var current = items[0].heading.id;
 
       items.forEach(function (item) {
-        if (item.heading.getBoundingClientRect().top - offset <= 0) {
+        if (item.heading.getBoundingClientRect().top - containerTop - offset <= 0) {
           current = item.heading.id;
         }
       });
@@ -105,11 +114,17 @@
     }
 
     items.forEach(function (item) {
-      item.link.addEventListener("click", function () {
+      item.link.addEventListener("click", function (event) {
+        event.preventDefault();
+        item.heading.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (window.history && window.history.replaceState) {
+          window.history.replaceState(null, "", "#" + item.heading.id);
+        }
         setActive(items, item.heading.id);
       });
     });
 
+    content.addEventListener("scroll", syncActiveHeading, { passive: true });
     window.addEventListener("scroll", syncActiveHeading, { passive: true });
     window.addEventListener("resize", syncActiveHeading);
     window.addEventListener("load", syncActiveHeading);

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import os from 'os';
+import { cliTheme } from '../ui/theme.js';
 
 const Info: React.FC = () => {
     const infoData = {
@@ -21,7 +22,7 @@ const Info: React.FC = () => {
                     <Box width={20}>
                         <Text bold>{key}:</Text>
                     </Box>
-                    <Text color="cyan">{value}</Text>
+                    <Text color={cliTheme.ink.primary}>{value}</Text>
                 </Box>
             ))}
 		</Box>

@@ -32,6 +32,7 @@ LIBRARY_NAME_MAP = {
     "qe": "quantum-espresso", "quantum-espresso": "quantum-espresso",
     "quantum espresso": "quantum-espresso", "quantumespresso": "quantum-espresso",
     "mace": "mace", "pymatgen": "pymatgen", "ase": "ase", "lammps": "lammps",
+    "rdkit": "rdkit",
 }
 
 VALID_LIBRARIES_MSG = """Valid library names are:
@@ -41,6 +42,7 @@ VALID_LIBRARIES_MSG = """Valid library names are:
 - "pymatgen"
 - "ase"
 - "lammps"
+- "rdkit"
 
 If you want to search across all documentation, omit the library parameter."""
 
@@ -81,7 +83,7 @@ def query_rag(query: str, top_k: int = 3, workspace_dir: Optional[Path] = None, 
         query: Search query
         top_k: Number of results to return (default: 3)
         workspace_dir: Workspace directory (defaults to current directory)
-        library: Optional library filter (raspa3, qe, mace, pymatgen, ase, lammps)
+        library: Optional library filter (raspa3, qe, mace, pymatgen, ase, lammps, rdkit)
     
     Returns:
         Retrieved documentation snippets

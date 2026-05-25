@@ -7,7 +7,7 @@ import type { AgentInfo } from '../../hooks/types.js';
 import { INDENT_EVALUATOR, INDENT_AGENT } from '../../utils/constants.js';
 import TriangleSpinner from './TriangleSpinner.js';
 import DotsSpinner from './DotsSpinner.js';
-import chalk from 'chalk';
+import { cliTheme } from '../theme.js';
 
 interface ActiveAgentStatusProps {
     agent: AgentInfo;
@@ -27,9 +27,9 @@ const ActiveAgentStatus: React.FC<ActiveAgentStatusProps> = ({ agent, leftMargin
         return (
             <Box marginLeft={indent} paddingX={1}>
                 <Text>
-                    <Text>{chalk.ansi256(253)('L ')}</Text>
-                    <Text color="red" bold>✗ API Error</Text>
-                    <Text color="gray"> (see logs/conversation.md)</Text>
+                    <Text color={cliTheme.ink.muted}>{cliTheme.glyph.branch} </Text>
+                    <Text color={cliTheme.ink.danger} bold>{cliTheme.glyph.error} API Error</Text>
+                    <Text color={cliTheme.ink.muted}> (see quasar_logs/conversation.md)</Text>
                 </Text>
             </Box>
         );
@@ -47,19 +47,19 @@ const ActiveAgentStatus: React.FC<ActiveAgentStatusProps> = ({ agent, leftMargin
             agent.statusText?.toLowerCase().includes('writing')
         )));
 
-    const statusColor = isApiRetrying ? "yellow" : (isPanelStatus ? "cyan" : "blue");
+    const statusColor = isApiRetrying ? cliTheme.ink.warning : (isPanelStatus ? cliTheme.ink.primary : cliTheme.ink.blue);
 
     return (
         <Box marginLeft={indent} paddingX={1}>
             <Text>
-                <Text>{chalk.ansi256(253)('L ')}</Text>
+                <Text color={cliTheme.ink.muted}>{cliTheme.glyph.branch} </Text>
                 {!agent.isStreaming && (
                     <Text color={statusColor}>
                         {isPanelStatus ? <TriangleSpinner /> : <DotsSpinner />}
                         {' '}
                     </Text>
                 )}
-                <Text color={agent.isStreaming ? "white" : statusColor} bold={!agent.isStreaming}>
+                <Text color={agent.isStreaming ? cliTheme.ink.text : statusColor} bold={!agent.isStreaming}>
                     {agent.statusText}
                 </Text>
             </Text>

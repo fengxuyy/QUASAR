@@ -15,11 +15,10 @@ export const ENV_VAR_DEFS: EnvVarDef[] = [
     { key: 'MODEL_API_KEY', description: 'API key', isSensitive: true },
     { key: 'OPENAI_API_BASE', description: 'API base URL' },
     { key: 'ACCURACY', description: 'Accuracy mode', options: ['eco', 'standard', 'pro', 'adaptive'], defaultValue: 'standard' },
-    { key: 'GRANULARITY', description: 'Task breakdown', options: ['low', 'medium', 'high', 'adaptive'], defaultValue: 'medium' },
-    { key: 'CONTEXT_THRESHOLD', description: 'Context compression threshold', options: ['low', 'medium', 'high'], defaultValue: 'medium' },
+    { key: 'GRANULARITY', description: 'Task breakdown', options: ['low', 'medium', 'high', 'adaptive'], defaultValue: 'adaptive' },
+    { key: 'CONTEXT_THRESHOLD', description: 'Context compression threshold', options: ['low', 'medium', 'hard'], defaultValue: 'medium' },
     { key: 'ENABLE_RAG', description: 'Doc search', options: ['true', 'false'], defaultValue: 'true' },
     { key: 'PMG_MAPI_KEY', description: 'Materials Project key', isSensitive: true },
-    { key: 'CHECK_INTERVAL', description: 'Check-in interval (min)' },
     { key: 'AUTO_IMPROVE_CYCLES', description: 'Automatic auto-improve follow-up runs', defaultValue: '0' },
     { key: 'NUM_CORES', description: 'CPU cores', defaultValue: 'Auto' },
     { key: 'STRATEGIST_MODEL', description: 'Strategist model' },
@@ -34,6 +33,34 @@ export const ENV_VAR_DEFS: EnvVarDef[] = [
 ];
 
 const PROJECT_WORKSPACE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../workspace');
+export const QUASAR_LOGS_DIR = 'quasar_logs';
+export const CHECKPOINT_DB_FILE = 'checkpoints.sqlite';
+export const CHECKPOINT_SETTINGS_FILE = 'checkpoint_settings.json';
+
+export function checkpointArtifactPath(workspaceDir: string, fileName: string): string {
+    return path.join(workspaceDir, QUASAR_LOGS_DIR, fileName);
+}
+
+export function legacyCheckpointArtifactPath(workspaceDir: string, fileName: string): string {
+    return path.join(workspaceDir, fileName);
+}
+
+export function existingCheckpointArtifactPath(workspaceDir: string, fileName: string): string {
+    const primaryPath = checkpointArtifactPath(workspaceDir, fileName);
+    if (fs.existsSync(primaryPath)) {
+        return primaryPath;
+    }
+    const legacyPath = legacyCheckpointArtifactPath(workspaceDir, fileName);
+    return fs.existsSync(legacyPath) ? legacyPath : primaryPath;
+}
+
+export function checkpointDbPath(workspaceDir: string): string {
+    return existingCheckpointArtifactPath(workspaceDir, CHECKPOINT_DB_FILE);
+}
+
+export function checkpointSettingsPath(workspaceDir: string): string {
+    return existingCheckpointArtifactPath(workspaceDir, CHECKPOINT_SETTINGS_FILE);
+}
 
 export function resolveWorkspaceDir(): string {
     const candidates = [process.env.WORKSPACE_DIR, PROJECT_WORKSPACE_DIR, '/workspace'].filter(
@@ -50,10 +77,9 @@ export function applyDefaultEnv() {
     
     try {
         const workspaceDir = resolveWorkspaceDir();
-        const checkpointDbPath = path.join(workspaceDir, 'checkpoints.sqlite');
-        const settingsPath = path.join(workspaceDir, 'checkpoint_settings.json');
+        const settingsPath = checkpointSettingsPath(workspaceDir);
         
-        if (fs.existsSync(checkpointDbPath) && fs.existsSync(settingsPath)) {
+        if (fs.existsSync(checkpointDbPath(workspaceDir)) && fs.existsSync(settingsPath)) {
             hasCheckpoint = true;
             const content = fs.readFileSync(settingsPath, 'utf-8');
             checkpointSettings = JSON.parse(content);

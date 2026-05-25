@@ -61,6 +61,7 @@ def test_is_multimodal_model():
     from src.tools.base import _is_multimodal_model
     
     # Known multimodal models
+    assert _is_multimodal_model("gemini-3.5-flash") is True
     assert _is_multimodal_model("gemini-2.5-pro") is True
     assert _is_multimodal_model("gpt-4o") is True
     assert _is_multimodal_model("claude-sonnet-4-5-20250929") is True
@@ -176,7 +177,6 @@ def test_get_all_files(mock_workspace):
     
     # Should not include __pycache__ files
     assert not any("__pycache__" in f for f in files)
-
 
 
 

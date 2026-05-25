@@ -2,7 +2,7 @@
 Vector store management for RAG.
 
 This module handles:
-1. Downloading documentation (ASE, pymatgen, MACE, RASPA3, Q-E, LAMMPS)
+1. Downloading documentation (ASE, pymatgen, MACE, RASPA3, Q-E, LAMMPS, RDKit)
 2. Loading the pre-built RAG index from HuggingFace Hub
 
 Indexing is handled separately by scripts/build_rag_index.py.

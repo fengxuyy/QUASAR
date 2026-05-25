@@ -1,8 +1,8 @@
 import React from 'react';
 import { Box, Text, Static } from 'ink';
 import Spinner from 'ink-spinner';
-import chalk from 'chalk';
 import ExecutionPlanPanel from './ExecutionPlanPanel.js';
+import { cliChalk, cliTheme } from './theme.js';
 
 interface HistoryItem {
     type: 'tool' | 'log';
@@ -124,16 +124,16 @@ const AgentTree: React.FC<AgentTreeProps> = ({
                 {(item) => (
                     <Box key={item.id} marginLeft={item.indent}>
                         {item.type === 'header' && (
-                            <Text>{chalk.ansi256(99).bold(`¤ ${item.content}`)}</Text>
+                            <Text>{cliChalk.accentBold(`${cliTheme.glyph.agent} ${item.content}`)}</Text>
                         )}
                         {item.type === 'evaluator-header' && (
                             <Text>
-                                <Text>{chalk.ansi256(253)('L ')}</Text>
-                                <Text>{chalk.ansi256(99).bold(`¤ ${item.content}`)}</Text>
+                                <Text>{cliChalk.muted(`${cliTheme.glyph.branch} `)}</Text>
+                                <Text>{cliChalk.accentBold(`${cliTheme.glyph.agent} ${item.content}`)}</Text>
                             </Text>
                         )}
                         {item.type === 'tool' && (
-                            <Text color="green" bold>✓ {item.content}</Text>
+                            <Text color={cliTheme.ink.success} bold>{cliTheme.glyph.success} {item.content}</Text>
                         )}
                         {item.type === 'log' && (
                             <Text>{item.content}</Text>
@@ -148,7 +148,7 @@ const AgentTree: React.FC<AgentTreeProps> = ({
                     {/* Agent Name - only show if no history yet (not in Static) */}
                     {(!agent.history || agent.history.length === 0) && (
                         <Box>
-                            <Text>{chalk.ansi256(99).bold(`¤ ${capitalizeFirst(agent.name)}`)}</Text>
+                            <Text>{cliChalk.accentBold(`${cliTheme.glyph.agent} ${capitalizeFirst(agent.name)}`)}</Text>
                         </Box>
                     )}
                     
@@ -167,8 +167,8 @@ const AgentTree: React.FC<AgentTreeProps> = ({
                     {agent.status !== 'complete' && (
                         <Box marginLeft={2}>
                             <Text>
-                                {!agent.isStreaming && <Text color="blue"><SpinnerComponent type="dots" /> </Text>}
-                                <Text color={agent.isStreaming ? "white" : "blue"} bold={!agent.isStreaming}>
+                                {!agent.isStreaming && <Text color={cliTheme.ink.blue}><SpinnerComponent type="dots" /> </Text>}
+                                <Text color={agent.isStreaming ? cliTheme.ink.text : cliTheme.ink.blue} bold={!agent.isStreaming}>
                                     {agent.statusText}
                                 </Text>
                             </Text>
@@ -178,7 +178,7 @@ const AgentTree: React.FC<AgentTreeProps> = ({
                     {/* Completed agent status */}
                     {agent.status === 'complete' && (
                         <Box marginLeft={2}>
-                            <Text color="green" bold>✓ {agent.statusText.replace('Creating', 'Created')}</Text>
+                            <Text color={cliTheme.ink.success} bold>{cliTheme.glyph.success} {agent.statusText.replace('Creating', 'Created')}</Text>
                         </Box>
                     )}
 
@@ -188,8 +188,8 @@ const AgentTree: React.FC<AgentTreeProps> = ({
                             {/* Evaluator header - only if no history yet */}
                             {(!evaluatorAgent.history || evaluatorAgent.history.length === 0) && (
                                 <Box>
-                                    <Text>{chalk.ansi256(253)('L ')}</Text>
-                                    <Text>{chalk.ansi256(99).bold(`¤ ${capitalizeFirst(evaluatorAgent.name)}`)}</Text>
+                                    <Text>{cliChalk.muted(`${cliTheme.glyph.branch} `)}</Text>
+                                    <Text>{cliChalk.accentBold(`${cliTheme.glyph.agent} ${capitalizeFirst(evaluatorAgent.name)}`)}</Text>
                                 </Box>
                             )}
                             
@@ -197,8 +197,8 @@ const AgentTree: React.FC<AgentTreeProps> = ({
                             {evaluatorAgent.status !== 'complete' && (
                                 <Box marginLeft={2}>
                                     <Text>
-                                        {!evaluatorAgent.isStreaming && <Text color="blue"><SpinnerComponent type="dots" /> </Text>}
-                                        <Text color={evaluatorAgent.isStreaming ? "white" : "blue"} bold={!evaluatorAgent.isStreaming}>
+                                        {!evaluatorAgent.isStreaming && <Text color={cliTheme.ink.blue}><SpinnerComponent type="dots" /> </Text>}
+                                        <Text color={evaluatorAgent.isStreaming ? cliTheme.ink.text : cliTheme.ink.blue} bold={!evaluatorAgent.isStreaming}>
                                             {evaluatorAgent.statusText}
                                         </Text>
                                     </Text>
@@ -209,9 +209,9 @@ const AgentTree: React.FC<AgentTreeProps> = ({
                             {evaluatorAgent.status === 'complete' && (
                                 <Box marginLeft={2}>
                                     {evaluatorAgent.statusText.includes('Failed') ? (
-                                        <Text color="red" bold>✗ {evaluatorAgent.statusText}</Text>
+                                        <Text color={cliTheme.ink.danger} bold>{cliTheme.glyph.error} {evaluatorAgent.statusText}</Text>
                                     ) : (
-                                        <Text color="green" bold>✓ {evaluatorAgent.statusText.replace('Creating', 'Created')}</Text>
+                                        <Text color={cliTheme.ink.success} bold>{cliTheme.glyph.success} {evaluatorAgent.statusText.replace('Creating', 'Created')}</Text>
                                     )}
                                 </Box>
                             )}

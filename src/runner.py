@@ -6,6 +6,8 @@ from langchain_core.messages import AIMessage
 
 from .tools.base import WORKSPACE_DIR, LOGS_DIR
 from .state import create_initial_state
+from .resume_steering import append_resume_steering_message, checkpoint_allows_resume_steering
+from .artifacts import has_archive_runs
 
 from .checkpoint import (
     checkpoint_file_exists,
@@ -74,6 +76,15 @@ def log_conversation(user_input: str, overwrite: bool = False):
         pass
 
 
+def log_resume_steering(user_input: str):
+    """Log a user steering message supplied while resuming a checkpoint."""
+    try:
+        with open(CONVERSATION_LOG, 'a', encoding='utf-8') as f:
+            f.write(f"## [User]: Resume Steering\n\n{user_input}\n\n")
+    except Exception:
+        pass
+
+
 def process_prompt(user_input: str, llm, if_restart: bool = False, agent_llms: dict = None) -> PromptRunResult:
     """
     Process user prompt and execute the agent workflow.
@@ -128,7 +139,8 @@ def process_prompt(user_input: str, llm, if_restart: bool = False, agent_llms: d
     
     config = get_thread_config()
     has_history = has_checkpoint_history(graph, config)
-    # Only log user request for new projects, not when resuming from checkpoint
+    # Only log user request for new projects. Resume steering is logged after
+    # checking that the interrupted checkpoint is resuming into the operator.
     if is_new_project:
         log_conversation(user_input, overwrite=True)
    
@@ -140,6 +152,8 @@ def process_prompt(user_input: str, llm, if_restart: bool = False, agent_llms: d
         "if_restart": if_restart
     })
    
+    checkpoint_state_values = {}
+    checkpoint_next = ()
     if has_history:
         # Send checkpoint status to CLI
         try:
@@ -147,6 +161,8 @@ def process_prompt(user_input: str, llm, if_restart: bool = False, agent_llms: d
             # Get state to extract task progress
             state = graph.get_state(config)
             state_values = state.values if state else {}
+            checkpoint_state_values = state_values if isinstance(state_values, dict) else {}
+            checkpoint_next = getattr(state, "next", ()) or ()
             plan = state_values.get('plan', [])
             completed = state_values.get('completed_steps', [])
             task_num = len(completed) + 1
@@ -154,13 +170,59 @@ def process_prompt(user_input: str, llm, if_restart: bool = False, agent_llms: d
             bridge.send_checkpoint_status(True, task_num, total_tasks)
         except ImportError:
             pass  # Not running in bridge mode
+        if not checkpoint_state_values:
+            try:
+                state = graph.get_state(config)
+                state_values = state.values if state else {}
+                checkpoint_state_values = state_values if isinstance(state_values, dict) else {}
+                checkpoint_next = getattr(state, "next", ()) or ()
+            except Exception:
+                checkpoint_state_values = {}
 
+    inputs = None
+    resume_state_update = None
     if has_history:
         if if_restart:
-            inputs = None
+            pass
         else:
-            # Use input only if it's not empty/whitespace
-            inputs = {"messages": [("user", user_input)]} if user_input and user_input.strip() else None
+            # Steering on resume is task-local context, not a new global user turn.
+            steering = user_input.strip() if user_input and user_input.strip() else ""
+            if steering:
+                if checkpoint_allows_resume_steering(checkpoint_next, checkpoint_state_values):
+                    log_resume_steering(steering)
+                    current_task_messages, appended = append_resume_steering_message(
+                        checkpoint_state_values.get("current_task_messages", []),
+                        steering,
+                    )
+                    resume_state_update = {
+                        "current_task_messages": current_task_messages,
+                        "resume_steering": "",
+                    }
+                    if appended:
+                        try:
+                            import bridge
+                            bridge.send_agent_event(
+                                "operator",
+                                "step_complete",
+                                "User Steering Received",
+                                output=steering,
+                            )
+                        except ImportError:
+                            pass
+                else:
+                    log_custom(
+                        "RUNNER",
+                        "Ignoring resume steering because checkpoint is not resuming into operator",
+                        {
+                            "checkpoint_next": (
+                                list(checkpoint_next)
+                                if isinstance(checkpoint_next, tuple)
+                                else checkpoint_next
+                            ),
+                        },
+                    )
+            else:
+                pass
     else:
         if if_restart:
             pass
@@ -169,6 +231,14 @@ def process_prompt(user_input: str, llm, if_restart: bool = False, agent_llms: d
     try:
         last_plan = []
         live = None
+
+        if resume_state_update is not None:
+            log_custom("RUNNER", "Applying resume steering to checkpoint state", {
+                "checkpoint_next": list(checkpoint_next) if isinstance(checkpoint_next, tuple) else checkpoint_next,
+            })
+            updated_config = graph.update_state(config, resume_state_update)
+            if updated_config:
+                config = updated_config
         
         # DEBUG: Log stream start
         log_graph_stream_start(inputs if inputs else {})
@@ -178,8 +248,7 @@ def process_prompt(user_input: str, llm, if_restart: bool = False, agent_llms: d
         if not has_history:
             try:
                 import bridge
-                archive_dir = WORKSPACE_DIR / "archive"
-                is_replanning = archive_dir.exists() and archive_dir.is_dir()
+                is_replanning = has_archive_runs(WORKSPACE_DIR)
                 status_text = "Replanning" if is_replanning else "Analysing Request"
                 # Send both start (to activate indicator) and update (to show status text in log)
                 bridge.send_agent_event("strategist", "start", status_text)

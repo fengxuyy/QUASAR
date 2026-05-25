@@ -8,23 +8,21 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/QUASAR/assets/styles.css">
-    <script defer src="/QUASAR/assets/docs-nav.js"></script>
+    <link rel="stylesheet" href="/QUASAR-CHEM/assets/styles.css">
+    <script defer src="/QUASAR-CHEM/assets/docs-nav.js"></script>
   </head>
   <body>
-    <div class="page-glow page-glow-a"></div>
-    <div class="page-glow page-glow-b"></div>
     <div class="site-shell">
       <header class="topbar">
         <div class="brand-lockup">
-          <a class="brand" href="/QUASAR/" aria-label="QUASAR documentation home">
-            <img src="/QUASAR/assets/quasar-logo.png" alt="QUASAR wordmark">
+          <a class="brand" href="/QUASAR-CHEM/" aria-label="QUASAR documentation home">
+            <img src="/QUASAR-CHEM/assets/quasar-logo.png" alt="QUASAR wordmark">
             <span class="brand-tag">Documentation</span>
           </a>
-          <span class="brand-version" aria-label="QUASAR version">v0.3.0</span>
+          <span class="brand-version" aria-label="QUASAR version">v0.4.0</span>
         </div>
         <div class="topbar-actions">
-          <a class="github-icon-button" href="https://github.com/fengxuyy/QUASAR" target="_blank" rel="noopener noreferrer" aria-label="QUASAR on GitHub">
+          <a class="github-icon-button" href="https://github.com/fengxuyy/QUASAR-CHEM" target="_blank" rel="noopener noreferrer" aria-label="QUASAR on GitHub">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
           </a>
         </div>
@@ -39,7 +37,7 @@
     
     
     <div class="nav-item">
-      <a class="nav-link" href="/QUASAR/">
+      <a class="nav-link" href="/QUASAR-CHEM/">
         <span>Home</span>
       </a>
       
@@ -48,7 +46,7 @@
     
     
     <div class="nav-item">
-      <a class="nav-link" href="/QUASAR/quick-tutorial/">
+      <a class="nav-link" href="/QUASAR-CHEM/quick-tutorial/">
         <span>Quick Tutorial</span>
       </a>
       
@@ -57,7 +55,7 @@
     
     
     <div class="nav-item">
-      <a class="nav-link" href="/QUASAR/installation/">
+      <a class="nav-link" href="/QUASAR-CHEM/installation/">
         <span>Get Started</span>
       </a>
       
@@ -66,7 +64,7 @@
     
     
     <div class="nav-item">
-      <a class="nav-link" href="/QUASAR/cli/">
+      <a class="nav-link" href="/QUASAR-CHEM/cli/">
         <span>CLI</span>
       </a>
       
@@ -75,7 +73,7 @@
     
     
     <div class="nav-item">
-      <a class="nav-link" href="/QUASAR/configuration/">
+      <a class="nav-link" href="/QUASAR-CHEM/configuration/">
         <span>Configuration</span>
       </a>
       
@@ -84,7 +82,7 @@
     
     
     <div class="nav-item is-active">
-      <a class="nav-link is-active" href="/QUASAR/workspace-history/" data-active-nav-link>
+      <a class="nav-link is-active" href="/QUASAR-CHEM/workspace-history/" data-active-nav-link>
         <span>Workspace & History</span>
       </a>
       
@@ -97,7 +95,7 @@
     
     
     <div class="nav-item">
-      <a class="nav-link" href="/QUASAR/extending-quasar/">
+      <a class="nav-link" href="/QUASAR-CHEM/extending-quasar/">
         <span>Extending QUASAR</span>
       </a>
       
@@ -106,7 +104,7 @@
     
     
     <div class="nav-item">
-      <a class="nav-link" href="/QUASAR/contact/">
+      <a class="nav-link" href="/QUASAR-CHEM/contact/">
         <span>Contact</span>
       </a>
       
@@ -134,18 +132,19 @@
 <div class="language-text highlighter-rouge"><div class="highlight"><pre class="highlight"><code>workspace/
 ├── final_results/
 │   └── summary.md
-├── logs/
+├── quasar_logs/
 │   ├── usage_report.md
 │   ├── execution_overview.md
 │   ├── input_messages.md
-│   └── conversation.md
-├── archive/
-│   ├── run_1/
-│   └── run_N/
+│   ├── conversation.md
+│   ├── checkpoints.sqlite
+│   ├── checkpoint_settings.json
+│   └── pending_execution.json
+├── quasar_archive/
+│   ├── quasar_run_YYYYMMDD_HHMMSS_&lt;id&gt;/
+│   └── quasar_run_.../
 ├── docs/
 ├── .rag_index/
-├── checkpoints.sqlite
-├── checkpoint_settings.json
 └── ...
 </code></pre></div></div>
 
@@ -164,11 +163,11 @@
       <td>Final user-facing outputs for the active run.</td>
     </tr>
     <tr>
-      <td><code class="language-plaintext highlighter-rouge">logs/</code></td>
-      <td>Run summaries, usage reports, input history, and conversation traces.</td>
+      <td><code class="language-plaintext highlighter-rouge">quasar_logs/</code></td>
+      <td>Run summaries, usage reports, input history, conversation traces, checkpoint data, and pending execution state.</td>
     </tr>
     <tr>
-      <td><code class="language-plaintext highlighter-rouge">archive/run_N/</code></td>
+      <td><code class="language-plaintext highlighter-rouge">quasar_archive/quasar_run_YYYYMMDD_HHMMSS_&lt;id&gt;/</code></td>
       <td>Historical snapshots of completed runs.</td>
     </tr>
     <tr>
@@ -180,12 +179,16 @@
       <td>Cached retrieval index and embedding resources.</td>
     </tr>
     <tr>
-      <td><code class="language-plaintext highlighter-rouge">checkpoints.sqlite</code></td>
+      <td><code class="language-plaintext highlighter-rouge">quasar_logs/checkpoints.sqlite</code></td>
       <td>Active checkpoint database that powers resume and history features.</td>
     </tr>
     <tr>
-      <td><code class="language-plaintext highlighter-rouge">checkpoint_settings.json</code></td>
+      <td><code class="language-plaintext highlighter-rouge">quasar_logs/checkpoint_settings.json</code></td>
       <td>Stored run settings and usage metadata used during resume and reporting.</td>
+    </tr>
+    <tr>
+      <td><code class="language-plaintext highlighter-rouge">quasar_logs/pending_execution.json</code></td>
+      <td>Recovery metadata for an interrupted Python execution.</td>
     </tr>
   </tbody>
 </table>
@@ -195,13 +198,13 @@
 <ul>
   <li><code class="language-plaintext highlighter-rouge">docs/</code> is preserved across normal cleanup and fresh starts</li>
   <li><code class="language-plaintext highlighter-rouge">.rag_index/</code> and other dotfiles are preserved by the CLI cleanup commands</li>
-  <li><code class="language-plaintext highlighter-rouge">archive/</code> is preserved when you clear a checkpoint, but removed during a full fresh reset</li>
+  <li><code class="language-plaintext highlighter-rouge">quasar_archive/</code> is preserved when you clear a checkpoint, but removed during a full fresh reset</li>
   <li>active checkpoint files stay in place until a run completes or you clear them</li>
 </ul>
 
 <h2 id="completion-behavior">Completion Behavior</h2>
 
-<p>When a run completes successfully, QUASAR archives the active workspace into <code class="language-plaintext highlighter-rouge">archive/run_N/</code> and removes checkpoint artifacts from the live workspace. That gives you a clean active area while keeping the finished run intact for inspection.</p>
+<p>When a run completes successfully, QUASAR archives the active workspace into <code class="language-plaintext highlighter-rouge">quasar_archive/quasar_run_YYYYMMDD_HHMMSS_&lt;id&gt;/</code> and removes checkpoint artifacts from the live workspace. That gives you a clean active area while keeping the finished run intact for inspection.</p>
 
 <h2 id="interrupted-runs">Interrupted Runs</h2>
 
@@ -223,8 +226,8 @@
     <tr>
       <th>Action</th>
       <th>Keeps <code class="language-plaintext highlighter-rouge">docs/</code></th>
-      <th>Keeps <code class="language-plaintext highlighter-rouge">archive/</code></th>
-      <th>Keeps checkpoint</th>
+      <th>Keeps <code class="language-plaintext highlighter-rouge">quasar_archive/</code></th>
+      <th>Active checkpoint after action</th>
     </tr>
   </thead>
   <tbody>
@@ -244,19 +247,34 @@
       <td>Completed run archive</td>
       <td>Yes</td>
       <td>Yes</td>
+      <td>No in the live workspace; archived checkpoint data is preserved with the run.</td>
+    </tr>
+    <tr>
+      <td>Task revert / <code class="language-plaintext highlighter-rouge">\revert &lt;task&gt;</code></td>
       <td>Yes</td>
+      <td>Yes</td>
+      <td>Yes, rewound to the selected task</td>
     </tr>
   </tbody>
 </table>
 
 <h2 id="history-surfaces">History Surfaces</h2>
 
-<p>There are two main ways to inspect past work:</p>
+<p>There are three main ways to inspect past work:</p>
 
 <ul>
-  <li>the archived files under <code class="language-plaintext highlighter-rouge">workspace/archive/run_N/</code>, which preserve summaries, logs, traces, and generated outputs</li>
+  <li>the archived files under <code class="language-plaintext highlighter-rouge">workspace/quasar_archive/quasar_run_YYYYMMDD_HHMMSS_&lt;id&gt;/</code>, which preserve summaries, logs, traces, and generated outputs</li>
   <li>the <strong>CLI <code class="language-plaintext highlighter-rouge">--history</code> command</strong>, which lets you inspect checkpoint task history step by step</li>
 </ul>
+
+<h2 id="reverting-to-a-task">Reverting to a Task</h2>
+
+<p>When an active checkpoint exists, QUASAR can time-travel the run back to the start of a selected task. Use the interactive CLI command:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="se">\r</span>evert 2
+</code></pre></div></div>
+
+<p>The revert operation prompts for confirmation, removes checkpoints after the selected task, deletes task folders from that task onward, clears stale pending execution state, and reloads the checkpoint view. It is intended for stopped or interrupted runs; the CLI refuses to revert while execution is running.</p>
 
         </main>
       </div>

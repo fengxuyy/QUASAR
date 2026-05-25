@@ -2,6 +2,7 @@
 Tool execution helpers - status messages, extraction, and execution utilities.
 """
 
+import math
 import os
 import queue
 import re
@@ -24,12 +25,8 @@ MAX_REPEATED_TOOL_CALLS = 10  # Maximum allowed consecutive identical tool calls
 TOOL_STATUS_MESSAGES = {
     'query_rag': ('Querying RAG', 'Queried RAG'),
     'read_file': ('Reading', 'Read'),
-    'write_file': ('Writing', 'Wrote'),
     'edit_file': ('Editing', 'Edited'),
-    'delete_file': ('Deleting', 'Deleted'),
     'list_directory': ('Listing directory', 'Listed directory'),
-    'move_file': ('Moving', 'Moved'),
-    'rename_file': ('Renaming', 'Renamed'),
     'analyze_image': ('Analyzing image', 'Analyzed image'),
     'search_web': ('Searching web', 'Searched web'),
     'fetch_web_page': ('Fetching web page', 'Fetched web page'),
@@ -66,12 +63,8 @@ def extract_target_name(tool_name: str, tool_args: dict) -> Optional[str]:
     
     target_keys = {
         'read_file': 'file_path',
-        'write_file': 'file_path',
         'edit_file': 'file_path',
-        'delete_file': 'file_path',
         'list_directory': 'directory_path',
-        'move_file': 'source_path',
-        'rename_file': 'file_path',
         'analyze_image': 'file_path',
         'execute_python': 'file_path',
     }
@@ -168,6 +161,90 @@ def get_execute_python_status(tool_args: dict) -> str:
     return base_status
 
 
+def _format_positive_minutes(value: Any) -> Optional[str]:
+    """Format a positive minute value for compact status labels."""
+    if value is None:
+        return None
+
+    try:
+        minutes = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if not math.isfinite(minutes) or minutes <= 0:
+        return None
+
+    if minutes.is_integer():
+        return str(int(minutes))
+    return f"{minutes:g}"
+
+
+def _execute_python_status_suffixes(tool_args: dict) -> tuple[str, str]:
+    """Build start/complete suffixes for execute_python status labels."""
+    start_parts = []
+
+    check_in_minutes = _format_positive_minutes(tool_args.get('check_in_after'))
+    if check_in_minutes is not None:
+        start_parts.append(f"{check_in_minutes} min check-in")
+
+    start_suffix = f" ({', '.join(start_parts)})" if start_parts else ""
+    complete_suffix = ""
+    return start_suffix, complete_suffix
+
+
+def _is_tool_validation_error(tool_result: Optional[str]) -> bool:
+    """Return whether a tool result is a schema/argument validation failure."""
+    if not tool_result or not isinstance(tool_result, str):
+        return False
+    result_lower = tool_result.lower()
+    return "validation error" in result_lower or "field required" in result_lower
+
+
+def _validation_failure_title(tool_name: str) -> str:
+    """User-facing title for a failed tool invocation caused by invalid args."""
+    tool_error_names = {
+        'query_rag': 'Query RAG Failed',
+        'read_file': 'Read File Failed',
+        'edit_file': 'Edit File Failed',
+        'list_directory': 'List Directory Failed',
+        'execute_python': 'Execute Python Failed',
+        'execute_code': 'Execute Code Failed',
+        'analyze_image': 'Analyze Image Failed',
+        'search_web': 'Search Web Failed',
+        'fetch_web_page': 'Fetch Web Page Failed',
+        'execute_temporary_python': 'Temporary Python Parse Failed',
+        'grep_search': 'Grep Files Failed',
+        'get_hardware_info': 'Hardware Check Failed',
+    }
+    return tool_error_names.get(tool_name, f"{tool_name} Failed")
+
+
+def _validation_failure_detail(tool_result: Optional[str], max_length: int = 140) -> str:
+    """Compact validation details for a one-line status row."""
+    if not tool_result or not isinstance(tool_result, str):
+        return ""
+
+    detail = tool_result.strip()
+    if detail.lower().startswith("error:"):
+        detail = detail[6:].strip()
+
+    match = re.match(r"validation error \(\d+\s+issues?\):\s*(.+)", detail, re.IGNORECASE | re.DOTALL)
+    if match:
+        detail = match.group(1).strip()
+
+    detail = " ".join(detail.split())
+    if len(detail) > max_length:
+        detail = detail[: max_length - 3].rstrip() + "..."
+    return detail
+
+
+def _format_validation_failure_status(tool_name: str, tool_result: Optional[str]) -> str:
+    """Build a concise failed status with the validation reason included."""
+    title = _validation_failure_title(tool_name)
+    detail = _validation_failure_detail(tool_result)
+    return f"{title}: {detail}" if detail else title
+
+
 def _get_execute_python_status_pair(tool_args: dict, target_name: Optional[str] = None) -> tuple[str, str]:
     """Compute matching start/complete labels for execute-style Python tools."""
     if not isinstance(tool_args, dict):
@@ -175,30 +252,18 @@ def _get_execute_python_status_pair(tool_args: dict, target_name: Optional[str] 
 
     file_path = tool_args.get('file_path', '')
     code = tool_args.get('code', '')
-    timeout = tool_args.get('timeout')
-
-    timeout_display = ""
-    if timeout is not None:
-        try:
-            timeout_val = float(timeout)
-            if timeout_val > 0:
-                if float(timeout_val).is_integer():
-                    timeout_display = f" (timeout {int(timeout_val)} min)"
-                else:
-                    timeout_display = f" (timeout {timeout_val:.1f} min)"
-        except (TypeError, ValueError):
-            pass
+    start_suffix, complete_suffix = _execute_python_status_suffixes(tool_args)
 
     if file_path:
         file_name = target_name if target_name else os.path.basename(file_path)
-        return f"Executing {file_name}{timeout_display}", f"Executed {file_name}{timeout_display}"
+        return f"Executing {file_name}{start_suffix}", f"Executed {file_name}{complete_suffix}"
     if code:
         first_line = code.strip().split('\n')[0]
         code_preview = first_line[:50]
         if len(first_line) > 50 or '\n' in code.strip():
             code_preview += "..."
-        return f"Executing {code_preview}{timeout_display}", f"Executed {code_preview}{timeout_display}"
-    return f"Executing{timeout_display}", f"Executed{timeout_display}"
+        return f"Executing {code_preview}{start_suffix}", f"Executed {code_preview}{complete_suffix}"
+    return f"Executing{start_suffix}", f"Executed{complete_suffix}"
 
 
 def extract_analyze_image_output(result: str) -> str:
@@ -532,7 +597,7 @@ def _handle_fetch_web_page_status(agent: str, tool_args: Dict[str, Any], is_comp
         send_agent_event(agent, "update", f"Fetching {display_url}")
 
 
-def _handle_execute_python_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool, tool_result: Optional[str] = None) -> None:
+def _handle_execute_python_status(agent: str, tool_name: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool, tool_result: Optional[str] = None) -> None:
     """Handle execute_python status updates."""
     file_path = tool_args.get('file_path') if isinstance(tool_args, dict) else None
     code = tool_args.get('code') if isinstance(tool_args, dict) else None
@@ -541,6 +606,7 @@ def _handle_execute_python_status(agent: str, tool_args: Dict[str, Any], target_
     idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
     if is_complete:
         is_error = False
+        is_validation_error = _is_tool_validation_error(tool_result)
         if tool_result and isinstance(tool_result, str):
             result_lower = tool_result.lower()
             exit_code_match = re.search(r'exit code:\s*(-?\d+)', result_lower)
@@ -552,6 +618,8 @@ def _handle_execute_python_status(agent: str, tool_args: Dict[str, Any], target_
                 is_error = True
             if 'was interrupted' in result_lower:
                 is_error = False
+            if is_validation_error:
+                is_error = True
         
         # Build output: for code-only execution, prepend the full code
         output = ""
@@ -561,9 +629,12 @@ def _handle_execute_python_status(agent: str, tool_args: Dict[str, Any], target_
         
         if tool_result and isinstance(tool_result, str):
             truncated_result = tool_result[:2000] if len(tool_result) > 2000 else tool_result
+            if is_validation_error and not truncated_result.lower().startswith("error:"):
+                truncated_result = f"Error: {truncated_result}"
             output += truncated_result
         
-        send_agent_event(agent, "step_complete", base_complete, is_error=is_error, output=output)
+        complete_status = _format_validation_failure_status(tool_name, tool_result) if is_validation_error else base_complete
+        send_agent_event(agent, "step_complete", complete_status, is_error=is_error, output=output, tool_name=tool_name)
         send_agent_event(agent, "update", idle_status)
     else:
         # Build output for executing state: show the code being executed
@@ -572,23 +643,7 @@ def _handle_execute_python_status(agent: str, tool_args: Dict[str, Any], target_
             # Show full code for inline execution during execution
             executing_output = f"**Code:**\n```python\n{code}\n```"
         
-        send_agent_event(agent, "update", base_status, output=executing_output)
-
-
-def _handle_write_file_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool) -> None:
-    """Handle write_file status updates."""
-    file_path = tool_args.get('file_path') if isinstance(tool_args, dict) else None
-    
-    file_name = target_name if target_name else (os.path.basename(file_path) if file_path else 'file')
-    base_status = f"Writing {file_name}"
-    base_complete = f"Wrote {file_name}"
-    
-    idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
-    if is_complete:
-        send_agent_event(agent, "step_complete", base_complete)
-        send_agent_event(agent, "update", idle_status)
-    else:
-        send_agent_event(agent, "update", base_status)
+        send_agent_event(agent, "update", base_status, output=executing_output, tool_name=tool_name)
 
 
 def _handle_edit_file_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool, tool_result: Optional[str] = None) -> None:
@@ -719,121 +774,6 @@ def _handle_list_directory_status(agent: str, tool_args: Dict[str, Any], target_
             else:
                 base_complete = f"Listed {path_display}"
     
-    idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
-    if is_complete:
-        send_agent_event(agent, "step_complete", base_complete, is_error=is_error)
-        send_agent_event(agent, "update", idle_status)
-    else:
-        send_agent_event(agent, "update", base_status)
-
-
-def _handle_move_file_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool, tool_result: Optional[str] = None) -> None:
-    """Handle move_file status updates."""
-    source_path = tool_args.get('source_path') if isinstance(tool_args, dict) else None
-    destination_path = tool_args.get('destination_path') if isinstance(tool_args, dict) else None
-    
-    src_display = target_name if target_name else (os.path.basename(source_path) if source_path else 'file')
-    dst_display = destination_path if destination_path else 'destination'
-    
-    base_status = f"Moving {src_display} to {dst_display}"
-    
-    is_error = False
-    if is_complete and tool_result and isinstance(tool_result, str):
-        result_lower = tool_result.lower()
-        if tool_result.startswith("Error:") or "not found" in result_lower or "already exists" in result_lower:
-            is_error = True
-            
-    idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
-    if is_complete:
-        if is_error:
-            base_complete = f"Failed to move {src_display}"
-        else:
-            base_complete = f"Moved {src_display} to {dst_display}"
-        send_agent_event(agent, "step_complete", base_complete, is_error=is_error, output=tool_result if is_error else None)
-        send_agent_event(agent, "update", idle_status)
-    else:
-        send_agent_event(agent, "update", base_status)
-
-
-def _handle_rename_file_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool, tool_result: Optional[str] = None) -> None:
-    """Handle rename_file status updates."""
-    file_path = tool_args.get('file_path') if isinstance(tool_args, dict) else None
-    new_name = tool_args.get('new_name') if isinstance(tool_args, dict) else None
-    
-    src_display = target_name if target_name else (os.path.basename(file_path) if file_path else 'file')
-    dst_display = new_name if new_name else 'new name'
-    
-    base_status = f"Renaming {src_display} to {dst_display}"
-    
-    is_error = False
-    if is_complete and tool_result and isinstance(tool_result, str):
-        result_lower = tool_result.lower()
-        if tool_result.startswith("Error:") or "not found" in result_lower or "already exists" in result_lower:
-            is_error = True
-
-    idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
-    if is_complete:
-        if is_error:
-            base_complete = f"Failed to rename {src_display}"
-        else:
-            base_complete = f"Renamed {src_display} to {dst_display}"
-        send_agent_event(agent, "step_complete", base_complete, is_error=is_error, output=tool_result if is_error else None)
-        send_agent_event(agent, "update", idle_status)
-    else:
-        send_agent_event(agent, "update", base_status)
-
-
-def _handle_delete_file_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool, tool_result: Optional[str]) -> None:
-    """Handle delete_file status updates with multi-file support."""
-    file_path_arg = tool_args.get('file_path') if isinstance(tool_args, dict) else None
-    is_multi = isinstance(file_path_arg, list)
-
-    # Detect errors in tool result
-    is_error = False
-    if is_complete and tool_result and isinstance(tool_result, str):
-        result_lower = tool_result.lower()
-        if tool_result.startswith("Error:") or "not found" in result_lower or "does not exist" in result_lower or "error deleting" in result_lower:
-            is_error = True
-        # For multi-file deletes, partial errors should not flag the whole call
-        if is_multi and "**Delete File:**" in tool_result:
-            is_error = False
-
-    # Handle validation errors or missing target name
-    if not target_name:
-        idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
-        if is_complete:
-            send_agent_event(agent, "step_complete", "Failed to delete file", is_error=True)
-            send_agent_event(agent, "update", idle_status)
-        else:
-            send_agent_event(agent, "update", "Deleting file")
-        return
-
-    # For multi-file deletes, use simplified status messages
-    if is_multi:
-        count = len(file_path_arg) if isinstance(file_path_arg, list) else 0
-        if count <= 3:
-            display = target_name  # Already comma-joined by extract_target_name
-        else:
-            display = f"{count} files"
-        base_status = f"Deleting {display}"
-        base_complete = f"Deleted {display}"
-
-        idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
-        if is_complete:
-            send_agent_event(agent, "step_complete", base_complete, is_error=is_error)
-            send_agent_event(agent, "update", idle_status)
-        else:
-            send_agent_event(agent, "update", base_status)
-        return
-
-    # Single file
-    file_name = target_name
-    base_status = f"Deleting {file_name}"
-    if is_error:
-        base_complete = f"Failed to delete {file_name}"
-    else:
-        base_complete = f"Deleted {file_name}"
-
     idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
     if is_complete:
         send_agent_event(agent, "step_complete", base_complete, is_error=is_error)
@@ -999,7 +939,7 @@ def update_agent_status(
     
     # Special handling for execute_python-style tools
     if tool_name in ('execute_python', 'execute_temporary_python'):
-        _handle_execute_python_status(agent, tool_args, target_name, is_complete, tool_result)
+        _handle_execute_python_status(agent, tool_name, tool_args, target_name, is_complete, tool_result)
         return
     
     # Special handling for list_directory - show directory and pattern
@@ -1007,29 +947,9 @@ def update_agent_status(
         _handle_list_directory_status(agent, tool_args, target_name, is_complete, tool_result)
         return
     
-    # Special handling for write_file - show content being written
-    if tool_name == 'write_file':
-        _handle_write_file_status(agent, tool_args, target_name, is_complete)
-        return
-    
     # Special handling for edit_file - show diff of old and new content
     if tool_name == 'edit_file':
         _handle_edit_file_status(agent, tool_args, target_name, is_complete, tool_result)
-        return
-    
-    # Special handling for move_file - show source and destination
-    if tool_name == 'move_file':
-        _handle_move_file_status(agent, tool_args, target_name, is_complete, tool_result)
-        return
-
-    # Special handling for rename_file - show old and new names
-    if tool_name == 'rename_file':
-        _handle_rename_file_status(agent, tool_args, target_name, is_complete, tool_result)
-        return
-    
-    # Special handling for delete_file - multi-file support and error detection
-    if tool_name == 'delete_file':
-        _handle_delete_file_status(agent, tool_args, target_name, is_complete, tool_result)
         return
     
     # Skip complete_task entirely - the evaluator handles its own "start" event
@@ -1107,31 +1027,13 @@ def format_tool_status(
         result_lower = tool_result.lower()
         if tool_result.startswith("Error:") or "not found" in result_lower:
             is_error = True
-        if "validation error" in result_lower or "field required" in result_lower:
+        if _is_tool_validation_error(tool_result):
             is_error = True
             is_validation_error = True
     
     # Handle validation errors with friendly failure messages
     if is_validation_error:
-        tool_error_names = {
-            'query_rag': 'Query RAG Failed',
-            'read_file': 'Read File Failed',
-            'write_file': 'Write File Failed',
-            'edit_file': 'Edit File Failed',
-            'delete_file': 'Delete File Failed',
-            'list_directory': 'List Directory Failed',
-            'move_file': 'Move File Failed',
-            'rename_file': 'Rename File Failed',
-            'execute_python': 'Execute Python Failed',
-            'execute_code': 'Execute Code Failed',
-            'analyze_image': 'Analyze Image Failed',
-            'search_web': 'Search Web Failed',
-            'fetch_web_page': 'Fetch Web Page Failed',
-            'execute_temporary_python': 'Temporary Python Parse Failed',
-            'grep_search': 'Grep Files Failed',
-            'get_hardware_info': 'Hardware Check Failed',
-        }
-        return tool_error_names.get(tool_name, f"{tool_name} Failed"), is_error
+        return _format_validation_failure_status(tool_name, tool_result), is_error
 
     if tool_name == 'execute_temporary_python':
         base_status, base_complete = _get_execute_python_status_pair(tool_args or {})

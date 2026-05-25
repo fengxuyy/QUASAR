@@ -4,11 +4,11 @@
  */
 import React from 'react';
 import { Box, Text } from 'ink';
-import chalk from 'chalk';
 import { formatLines, TextSegment } from '../../../utils/formatting.js';
 import { getVisualLength } from '../../../utils/helpers.js';
 import { INDENT_AGENT, INDENT_EVALUATOR, OFFSET_PLAN, OFFSET_TASK, OFFSET_SUMMARY, OFFSET_RESUME } from '../../../utils/constants.js';
 import { RenderLine, processSummaryLine, ProcessedLine, wrapText } from './lineRenderer.js';
+import { cliTheme } from '../../theme.js';
 
 interface PanelProps {
     leftMargin: number;
@@ -90,19 +90,20 @@ export function PlanPanel({ planContent, isPlanComplete, isContinuation, id, lef
     const allLines = planContent.split('\n');
     const allProcessedLines = processLinesForPanel(allLines, planContentWidth, false);
     
-    const { top: topBorder, bottom: bottomBorder } = createPanelBorders('Execution Plan', planPanelWidth);
+    const panelColor = cliTheme.ink.primary;
+    const { top: topBorder, bottom: bottomBorder } = createPanelBorders(`${cliTheme.glyph.active} Execution Plan`, planPanelWidth);
     
     return (
         <Box key={id} marginLeft={leftMargin + INDENT_AGENT + 2} paddingX={1} flexDirection="column">
-            {!isContinuation && <Text color="cyan">{topBorder}</Text>}
+            {!isContinuation && <Text color={panelColor}>{topBorder}</Text>}
             {allProcessedLines.map((line, idx) => (
                 <Text key={idx}>
-                    <Text color="cyan">│ </Text>
+                    <Text color={panelColor}>│ </Text>
                     <RenderLine segments={line.segments} isHeader={line.isHeader} isTask={line.isTask} />
-                    <Text color="cyan">{' '.repeat(Math.max(0, planContentWidth - getVisualLength(line.plainText)))} │</Text>
+                    <Text color={panelColor}>{' '.repeat(Math.max(0, planContentWidth - getVisualLength(line.plainText)))} │</Text>
                 </Text>
             ))}
-            {isPlanComplete && <Text color="cyan">{bottomBorder}</Text>}
+            {isPlanComplete && <Text color={panelColor}>{bottomBorder}</Text>}
         </Box>
     );
 }
@@ -120,7 +121,8 @@ export function EvaluationSummaryPanel({ content, id, leftMargin, terminalWidth,
     const summaryPanelWidth = Math.max(30, availableWidth - summaryParentOffset);
     const summaryContentWidth = Math.max(20, summaryPanelWidth - 4);
     
-    const { top: summaryTopBorder, bottom: summaryBottomBorder } = createPanelBorders('Evaluation Summary', summaryPanelWidth);
+    const panelColor = cliTheme.ink.success;
+    const { top: summaryTopBorder, bottom: summaryBottomBorder } = createPanelBorders(`${cliTheme.glyph.success} Evaluation Summary`, summaryPanelWidth);
     
     const summaryLines = content.split('\n');
     const filteredLines: string[] = [];
@@ -136,15 +138,15 @@ export function EvaluationSummaryPanel({ content, id, leftMargin, terminalWidth,
     
     return (
         <Box key={id} marginLeft={leftMargin + INDENT_EVALUATOR + 2} paddingX={1} flexDirection="column">
-            <Text color="cyan">{summaryTopBorder}</Text>
+            <Text color={panelColor}>{summaryTopBorder}</Text>
             {processedSummaryLines.map((line, idx) => (
                 <Text key={idx}>
-                    <Text color="cyan">│ </Text>
+                    <Text color={panelColor}>│ </Text>
                     <RenderLine segments={line.segments} isHeader={line.isHeader} isTask={line.isTask} />
-                    <Text color="cyan">{' '.repeat(Math.max(0, summaryContentWidth - getVisualLength(line.plainText)))} │</Text>
+                    <Text color={panelColor}>{' '.repeat(Math.max(0, summaryContentWidth - getVisualLength(line.plainText)))} │</Text>
                 </Text>
             ))}
-            <Text color="cyan">{summaryBottomBorder}</Text>
+            <Text color={panelColor}>{summaryBottomBorder}</Text>
         </Box>
     );
 }
@@ -161,20 +163,21 @@ export function InterruptReasonPanel({ content, id, leftMargin, terminalWidth, a
     const reasonParentOffset = OFFSET_PLAN + 3;
     const reasonPanelWidth = Math.max(30, availableWidth - reasonParentOffset);
     const reasonContentWidth = Math.max(20, reasonPanelWidth - 4);
-    const { top: topBorder, bottom: bottomBorder } = createPanelBorders('Interrupt Reason', reasonPanelWidth);
+    const panelColor = cliTheme.ink.danger;
+    const { top: topBorder, bottom: bottomBorder } = createPanelBorders(`${cliTheme.glyph.error} Interrupt Reason`, reasonPanelWidth);
     const processedLines = processLinesForPanel(content.split('\n'), reasonContentWidth, false);
 
     return (
         <Box key={id} marginLeft={leftMargin + INDENT_AGENT + 2} paddingX={1} flexDirection="column">
-            <Text color="red">{topBorder}</Text>
+            <Text color={panelColor}>{topBorder}</Text>
             {processedLines.map((line, idx) => (
                 <Text key={idx}>
-                    <Text color="red">│ </Text>
+                    <Text color={panelColor}>│ </Text>
                     <RenderLine segments={line.segments} isHeader={line.isHeader} isTask={line.isTask} />
-                    <Text color="red">{' '.repeat(Math.max(0, reasonContentWidth - getVisualLength(line.plainText)))} │</Text>
+                    <Text color={panelColor}>{' '.repeat(Math.max(0, reasonContentWidth - getVisualLength(line.plainText)))} │</Text>
                 </Text>
             ))}
-            <Text color="red">{bottomBorder}</Text>
+            <Text color={panelColor}>{bottomBorder}</Text>
         </Box>
     );
 }
@@ -196,19 +199,55 @@ export function FinalSummaryPanel({ content, id, leftMargin, terminalWidth, avai
     const allLines = content.split('\n');
     const allProcessedLines = processLinesForPanel(allLines, summaryContentWidth, false);
     
-    const { top: topBorder, bottom: bottomBorder } = createPanelBorders('Run Summary', summaryPanelWidth);
+    const panelColor = cliTheme.ink.success;
+    const { top: topBorder, bottom: bottomBorder } = createPanelBorders(`${cliTheme.glyph.success} Run Summary`, summaryPanelWidth);
     
     return (
         <Box key={id} marginLeft={leftMargin + INDENT_AGENT - 1} paddingX={1} flexDirection="column" marginTop={1}>
-            <Text color="green">{topBorder}</Text>
+            <Text color={panelColor}>{topBorder}</Text>
             {allProcessedLines.map((line, idx) => (
                 <Text key={idx}>
-                    <Text color="green">│ </Text>
+                    <Text color={panelColor}>│ </Text>
                     <RenderLine segments={line.segments} isHeader={line.isHeader} isTask={line.isTask} />
-                    <Text color="green">{' '.repeat(Math.max(0, summaryContentWidth - getVisualLength(line.plainText)))} │</Text>
+                    <Text color={panelColor}>{' '.repeat(Math.max(0, summaryContentWidth - getVisualLength(line.plainText)))} │</Text>
                 </Text>
             ))}
-            <Text color="green">{bottomBorder}</Text>
+            <Text color={panelColor}>{bottomBorder}</Text>
+        </Box>
+    );
+}
+
+interface ReportPanelProps extends PanelProps {
+    title: string;
+    content: string;
+    sourcePath?: string;
+    isError?: boolean;
+    id: string;
+}
+
+/**
+ * Markdown report panel for local run artifacts.
+ */
+export function ReportPanel({ title, content, sourcePath, isError, id, leftMargin, availableWidth }: ReportPanelProps): React.ReactElement {
+    const reportPanelWidth = Math.max(40, availableWidth - OFFSET_RESUME);
+    const reportContentWidth = Math.max(24, reportPanelWidth - 4);
+    const panelColor = isError ? cliTheme.ink.danger : cliTheme.ink.blue;
+    const { top: topBorder, bottom: bottomBorder } = createPanelBorders(`${cliTheme.glyph.info} ${title}`, reportPanelWidth);
+    const displaySourcePath = sourcePath?.replace(`${process.cwd()}/`, '');
+    const sourceLine = displaySourcePath ? [`Source: ${displaySourcePath}`, ''] : [];
+    const processedLines = processLinesForPanel([...sourceLine, ...content.split('\n')], reportContentWidth, false);
+
+    return (
+        <Box key={id} marginLeft={leftMargin} paddingX={1} flexDirection="column" marginTop={1}>
+            <Text color={panelColor}>{topBorder}</Text>
+            {processedLines.map((line, idx) => (
+                <Text key={idx}>
+                    <Text color={panelColor}>│ </Text>
+                    <RenderLine segments={line.segments} isHeader={line.isHeader} isTask={line.isTask} />
+                    <Text color={panelColor}>{' '.repeat(Math.max(0, reportContentWidth - getVisualLength(line.plainText)))} │</Text>
+                </Text>
+            ))}
+            <Text color={panelColor}>{bottomBorder}</Text>
         </Box>
     );
 }
@@ -242,15 +281,15 @@ export function ActiveTaskPanel({ description, taskNum, id, leftMargin, availabl
     
     return (
         <Box key={id} marginLeft={leftMargin + taskParentOffset - 1} width={taskPanelWidth} flexDirection="column">
-            <Text color="yellow">{taskTopBorder}</Text>
+            <Text color={cliTheme.ink.warning}>{taskTopBorder}</Text>
             {wrappedLines.map((line, idx) => (
                 <Box key={idx} flexDirection="row">
-                    <Text color="yellow">│ </Text>
+                    <Text color={cliTheme.ink.warning}>│ </Text>
                     <Text bold>{line}</Text>
-                    <Text color="yellow">{' '.repeat(Math.max(0, taskContentWidth - getVisualLength(line)))} │</Text>
+                    <Text color={cliTheme.ink.warning}>{' '.repeat(Math.max(0, taskContentWidth - getVisualLength(line)))} │</Text>
                 </Box>
             ))}
-            <Text color="yellow">{taskBottomBorder}</Text>
+            <Text color={cliTheme.ink.warning}>{taskBottomBorder}</Text>
         </Box>
     );
 }
@@ -278,13 +317,13 @@ export function CheckpointResumePanel({ taskNum, totalTasks, id, leftMargin, ava
     
     return (
         <Box key={id} marginLeft={leftMargin} paddingX={1} flexDirection="column" marginTop={1}>
-            <Text color="yellow">{resumeTopBorder}</Text>
+            <Text color={cliTheme.ink.warning}>{resumeTopBorder}</Text>
             <Text>
-                <Text color="yellow">│ </Text>
-                <Text color="yellowBright" bold>⟳ {resumeText}</Text>
-                <Text color="yellow">{' '.repeat(resumePadding)} │</Text>
+                <Text color={cliTheme.ink.warning}>│ </Text>
+                <Text color={cliTheme.ink.warning} bold>{cliTheme.glyph.retry} {resumeText}</Text>
+                <Text color={cliTheme.ink.warning}>{' '.repeat(resumePadding)} │</Text>
             </Text>
-            <Text color="yellow">{resumeBottomBorder}</Text>
+            <Text color={cliTheme.ink.warning}>{resumeBottomBorder}</Text>
         </Box>
     );
 }
@@ -391,8 +430,8 @@ export function CodeResultPanel({ output, filePath, isError, id, leftMargin, ter
     const codeResultParentOffset = OFFSET_PLAN + 3;
     const codeResultPanelWidth = Math.max(30, availableWidth - codeResultParentOffset);
     const codeResultContentWidth = Math.max(20, codeResultPanelWidth - 4);
-    const borderColor = isError ? 'red' : 'cyan';
-    const headerText = isError ? 'Execution Error' : 'Execution Output';
+    const borderColor = isError ? cliTheme.ink.danger : cliTheme.ink.blue;
+    const headerText = isError ? `${cliTheme.glyph.error} Execution Error` : `${cliTheme.glyph.info} Execution Output`;
     
     const codeBlocks = extractCodeBlocks(output);
     const fileSystemChanges = extractFileSystemChanges(output);
@@ -487,7 +526,7 @@ export function CodeResultPanel({ output, filePath, isError, id, leftMargin, ter
             {displayLines.length === 0 ? (
                 <Text>
                     <Text color={borderColor}>│ </Text>
-                    <Text color="gray">(No output)</Text>
+                    <Text color={cliTheme.ink.muted}>(No output)</Text>
                     <Text color={borderColor}>{' '.repeat(Math.max(0, codeResultContentWidth - 11))} │</Text>
                 </Text>
             ) : (

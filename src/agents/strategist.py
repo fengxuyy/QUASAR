@@ -5,15 +5,26 @@ Strategist agent node implementation.
 import os
 import re
 import time
+from typing import TYPE_CHECKING, Any
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage, ToolMessage
 
-from langchain_openai import ChatOpenAI
+if TYPE_CHECKING:
+    from langchain_openai import ChatOpenAI
+else:
+    ChatOpenAI = Any
 
 from ..state import State, create_initial_state
 from langchain_core.tools import tool
 from ..tools import WORKSPACE_DIR, LOGS_DIR, read_file, list_directory, analyze_image, execute_temporary_python, search_web, fetch_web_page, grep_search
 from ..tools.base import get_all_files
+from ..artifacts import (
+    display_archive_run_id,
+    find_run_log_file,
+    has_archive_runs,
+    iter_archive_run_dirs,
+)
 from .utils import (
+    _get_gpu_info,
     _write_input_messages,
     _write_to_log,
     execute_with_timeout,
@@ -35,6 +46,15 @@ from .utils import (
     MAX_REPEATED_TOOL_CALLS,
     stream_with_token_tracking,
 )
+from ..prompting import (
+    build_strategist_review_prompt,
+    build_strategist_messages,
+    build_strategist_repeated_tool_warning_injection,
+    prompt_identity_from_state,
+    prompt_metadata_update,
+)
+from ..prompting.builders import build_strategist_common_prompt_section
+from ..prompting.debug import log_prompt_assembly, log_prompt_injection
 from ..usage_tracker import record_api_call
 from ..debug_logger import (
     log_strategist_start,
@@ -47,7 +67,7 @@ from ..debug_logger import (
 
 
 VALID_GRANULARITY_LEVELS = {"low", "medium", "high", "adaptive"}
-DEFAULT_GRANULARITY_LEVEL = "medium"
+DEFAULT_GRANULARITY_LEVEL = "adaptive"
 
 VALID_ACCURACY_MODES = {"eco", "standard", "pro", "adaptive"}
 
@@ -66,35 +86,21 @@ TASK_PATTERNS = [
 
 def _get_archived_context():
     """Get context from archived runs."""
-    archive_dir = WORKSPACE_DIR / "archive"
-    if not archive_dir.exists():
+    runs = iter_archive_run_dirs(WORKSPACE_DIR)
+    if not runs:
         return None
     
     context = []
-    runs = []
     
-    try:
-        for item in archive_dir.iterdir():
-            if item.is_dir() and item.name.startswith("run_"):
-                try:
-                    run_num = int(item.name.split("_", 1)[1])
-                    runs.append((run_num, item))
-                except (ValueError, IndexError):
-                    continue
-    except (OSError, PermissionError):
-        return None
-    
-    runs.sort()
-    
-    for run_num, run_path in runs:
+    for run_path in runs:
         final_results_path = run_path / "final_results"
-        log_path = run_path / "logs" / "execution_overview.md"
+        log_path = find_run_log_file(run_path, "execution_overview.md")
         summary_path = final_results_path / "summary.md"
         
         run_content = ""
         
         # Read Log
-        if log_path.exists():
+        if log_path and log_path.exists():
             try:
                 log_content = log_path.read_text(encoding='utf-8')
                 run_content += f"{log_content}\n\n"
@@ -110,7 +116,7 @@ def _get_archived_context():
                 pass
         
         if run_content:
-            context.append(f"### Archived Run {run_num}:\n\n{run_content}")
+            context.append(f"### {display_archive_run_id(run_path.name)}:\n\n{run_content}")
     
     return "\n".join(context) if context else None
 
@@ -360,97 +366,12 @@ def _extract_plan_from_content(content):
 
 def _get_common_prompt_sections(granularity_level, accuracy_mode):
     """Get common prompt sections shared between standard and replanning modes."""
-    # Import GPU info function
-    from .utils import _get_gpu_info
     gpu_info = _get_gpu_info()
-    
-    return f"""## The "Senior Scientist" Mindset:
-Before generating the plan, you must apply your deep domain knowledge to foresee and mitigate failure.
-
-## Your Operator's Profile:
-You are directing an automated Operator agent capable of running complex computational workflows. It has access to:
-
-* **Simulation Engines:** `mace` (MLFF), `quantum-espresso` (DFT), `lammps` (MD), `raspa3` (GCMC/MD).
-
-* **Python Stack:** `pymatgen`, `ase`, `matplotlib`/`seaborn`, `pandas`, `scikit-learn`, `pytorch`.
-
-* **GPU Availability:** {gpu_info}
-
-## Planning Protocol:
-
-### **STEP 1: Adhere to Accuracy Mode**
-
-You must strictly follow the **accuracy mode** which determines the computational methods and level of theory used. This controls the **quality** of calculations.
-
-* **pro (High Accuracy):** "Publication-Grade Precision"
-    * **Strategy:** Prioritizes physical rigor and strict numerical convergence. This mode aims to minimize approximations, ensuring results meet the standards required for peer-reviewed research and formal documentation.
-
-* **standard (Standard Accuracy):** "Research-Grade Reliability"
-    * **Strategy:** Employs well-established computational methods with standard convergence criteria. Provides reliable, quantitatively accurate results suitable for research and internal reporting, while avoiding the most expensive refinements reserved for publication.
-
-* **eco (Balanced Speed/Accuracy):** "Efficient Discovery"
-    * **Strategy:** Optimizes the balance between predictive accuracy and resource consumption. Utilizes validated approximations to maintain qualitative trends and reliable quantitative estimates without redundant overhead.
-
-* **adaptive (Dynamic Theory Calibration):** "Intelligent Multi-Level Scaling"
-    * **Strategy:** Dynamically balances speed and rigor. Start with efficient, lower-theory methods for initial screening or exploration (e.g., MLFF or coarse DFT). If results warrant higher precision, automatically plan "upgrade" steps to publication-grade methods for final validation.
-    
-**Assigned Accuracy Mode:** {accuracy_mode}
-
-### **STEP 2: Adhere to Granularity Level**
-
-You must strictly scale the **granularity** of the workflow. Note: "low" granularity implies **broader tasks** where the Operator handles multiple logical steps in one go, NOT lower accuracy.
-
-* **low (1-3 tasks):** "Coarse-Grained / Streamlined"
-    * **Strategy:** Consolidate related operations into single, autonomous tasks. Trust the Operator to handle dependencies (e.g., `Relax` -> `SCF` -> `Bands`) within one Python script.
-    * **Goal:** Maximize wall-time efficiency and minimize interruptions.
-    * *Example:* "Task 1: Perform full structural relaxation and calculate electronic band structure."
-
-* **medium (4-6 tasks):** "Standard Breakdown"
-    * **Strategy:** Separate major scientific phases. Checkpoint after significant state changes (e.g., after structure change, before property calculation).
-    * **Goal:** Balanced observability.
-    * *Example:* "Task 1: Relax structure." -> "Task 2: SCF Calculation." -> "Task 3: Band Structure."
-
-* **high (7-10 tasks):** "Fine-Grained"
-    * **Strategy:** Explicitly isolate every substep, validation check, and post-processing action.
-    * **Goal:** Maximum control and step-by-step validation.
-    * *Example:* "Task 1: Convergence test." -> "Task 2: Volume relaxation." -> "Task 3: Ion relaxation." -> "Task 4: Static run." -> "Task 5: DOS."
-
-* **adaptive (Context-Aware Decomposition):** "Scientific Complexity Scaling"
-    * **Strategy:** Automatically scales the workflow breakdown based on the perceived risk and complexity of the task. Consolidate routine operations for throughput; expand novel or high-stakes steps into fine-grained checkpoints for rigorous validation.
-
-**Assigned Granularity Level:** {granularity_level}
-
-### **STEP 3: Workflow Plan Rules**
-
-Create a concise list of high-level scientific tasks that captures the essential research workflow. 
-
-**Instructions:**
-
-1. **Output Format**
-   - You must wrap the final plan in:
-   ```
-   <PLAN>
-   </PLAN>
-   ```
-   - And state each task strictly as:
-   ### **Task [X]:** [Primary Scientific Objective]
-   * **Guidance:** [Expert-level methodology, expected convergence parameters, proactive risk mitigation, and specific instructions for the Operator.]
-   * **Requires:** [Specify required inputs from prior tasks at a conceptual level (e.g., "relaxed structure from Task 2....").]
-
-2. **End-of-Workflow Requirement:**  
-   - The final task should aggregate results, create plots if necessary, and write a summary analysis (`summary.md`).
-   - All final outputs, including the `summary.md` file and any generated plots, must be saved in a directory named `final_results` located in the root directory.
-
-3. **Computational Efficiency:** 
-    - Prioritize reduced computational cost (e.g., minimal unit cells, lower cutoffs for initial screening) when they do not compromise result accuracy.
-    - You MUST not plan the use of ML potentials if GPU resources are unavailable.
-
-4. **Software Constraints:**
-    - Do not directly propose the use of another software that is not already installed (refer to the Operator's Profile).
-    - If you must use a software that is not listed, explicitly ask the Operator to install it from the web.
-    - For file inspection, you may use `execute_temporary_python` only to parse existing files and summarise their contents. Never use it to run simulations, launch subprocesses, modify files, or change system state.
-    - Wherever possible, you should initiate multiple parallel tool calls when listing directories, grepping, and reading files.
-"""
+    return build_strategist_common_prompt_section(
+        granularity_level=granularity_level,
+        accuracy_mode=accuracy_mode,
+        gpu_info=gpu_info,
+    ).content
 
 
 def _self_review_plan(initial_plan_content, messages, llm, is_replanning):
@@ -465,11 +386,7 @@ def _self_review_plan(initial_plan_content, messages, llm, is_replanning):
     Returns:
         Tuple of (improved_plan_content, response_message)
     """
-    # Create a concise self-review prompt as a normal user message
-    review_prompt = (
-        "Please review your plan above and provide an improved version with the same format."
-        "Does the plan address all aspects of the original task? Are there any scientific errors or missing critical steps?"
-    )
+    review_prompt = build_strategist_review_prompt().messages[0].content
     return _revise_plan(
         messages=messages,
         llm=llm,
@@ -491,11 +408,7 @@ def _latest_ai_message_content(messages):
 
 def _build_plan_revision_prompt(feedback: str) -> str:
     """Build a follow-up prompt that revises the latest reviewed plan from user feedback."""
-    return (
-        "Please revise your latest reviewed plan above based on the user's feedback below."
-        " Keep the same format, preserve scientific rigor, and return the full updated plan.\n\n"
-        f"User feedback:\n{feedback.strip()}"
-    )
+    return build_strategist_review_prompt(feedback=feedback).messages[0].content
 
 
 def _revise_plan(messages, llm, review_prompt, status_text, is_replanning):
@@ -574,9 +487,8 @@ def strategist_initial_node(
             'is_replanning': False,
         }
     
-    # Check if we're in replanning mode (archive exists)
-    archive_dir = WORKSPACE_DIR / "archive"
-    is_replanning = archive_dir.exists() and archive_dir.is_dir()
+    # Check if we're in replanning mode (archived runs exist)
+    is_replanning = has_archive_runs(WORKSPACE_DIR)
     
     # Select appropriate LLM and tools based on mode
     llm_with_tools = llm_with_tools_replanning if is_replanning else llm_with_tools_normal
@@ -586,65 +498,23 @@ def strategist_initial_node(
     granularity_level = _get_granularity_level()
     accuracy_mode = _get_accuracy_mode()
     archived_context = _get_archived_context()
-    
-    if archived_context and is_replanning:
-        common_sections = _get_common_prompt_sections(granularity_level, accuracy_mode)
-        strategist_prompt = f"""# Research Strategist — Replanning Mode
-
-You are the lead computational senior chemist refining a research strategy based on previous computational runs.
-
-## Context from Previous Runs
-{archived_context}
-
-## Key Directories for Previous Runs
-- `./archive/run_N/`: Full file outputs from run N.
-- `./archive/run_N/final_results/`: Results and analysis files from run N.
-
-## Responsibilities
-
-### Step 1 — Assess the Previous Run
-- Review the provided context and text descriptions to understand the previous run.
-- If the provided information is insufficient to diagnose the problem, you may directly inspect the most diagnostic files, but avoid reading files speculatively.
-- After your assessment, determine the outcome: **Succeeded** / **Partially Succeeded or Failed**.
-
-### Step 2 — Diagnose and Plan
-
-**If the run failed or partially succeeded**, diagnose the root cause following this **strict sequential gate**. You must fully resolve each level before proceeding to the next — do not evaluate later levels until the earlier ones are ruled out:
-
-1. **Wrong or inadequate method** *(primary concern — always check this first)*: Is the chosen method fundamentally incapable of capturing the relevant physics? If yes, the fix is to switch to a more appropriate method (e.g., force-field → DFT, GGA → hybrid functional, adding dispersion corrections). **Do not proceed to step 2 or 3 until you have confirmed the method is appropriate.**
-2. **Flawed workflow logic** *(only if the method is sound)*: Were steps sequenced incorrectly? Are required prior outputs missing or used incorrectly? If yes, fix the workflow ordering or dependencies. **Do not proceed to step 3 until workflow logic is confirmed correct.**
-3. **Parameter misconfiguration** *(only if both method and workflow are sound)*: Do parameter settings deviate from best practices for this method and system? Address these last.
-
-**If the run succeeded**, advance the science rather than just refining what exists. Follow the same **strict sequential gate**:
-
-1. **Method appropriateness** *(check first, even on success)*: Could a more rigorous or appropriate method now be warranted given the results (e.g., upgrading from MLFF to DFT for confirmation, from GGA to hybrid for accuracy)? If yes, plan the upgrade before anything else. **Do not proceed to step 2 or 3 until you have confirmed no method upgrade is needed.**
-2. **Deeper scientific question** *(only if the method is already appropriate)*: What physical insight is still missing, and what calculation would most directly address it?
-3. **Parameter refinement** *(only if method and science goals are already well-served)*: Consider tightening convergence or adjusting settings.
-
-{common_sections}
-"""
-    else:
-        common_sections = _get_common_prompt_sections(granularity_level, accuracy_mode)
-        
-        # Check if user has uploaded files to the workspace (excluding docs folder)
-        workspace_files = get_all_files()
-        # Filter out files in the docs folder
-        user_files = {f for f in workspace_files if not f.startswith('docs/')}
-        files_note = ""
-        if user_files:
-            files_note = "The user has uploaded several files to the workspace. Use file inspection tools to examine them as needed."
-        
-        strategist_prompt = f"""# Role: Research Strategist
-
-You are the lead computational senior chemist designing a computational research strategy. Your goal is to design a robust, scientifically defensible workflow that yields publication-quality insights. {files_note}
-{common_sections}
-"""
-    
-    # Build messages with correct order: SystemMessage first, then HumanMessage
-    messages = [
-        SystemMessage(content=strategist_prompt),
-        HumanMessage(content=user_input)
-    ]
+    workspace_files = get_all_files()
+    user_files = {f for f in workspace_files if not f.startswith('docs/')}
+    prompt_profile, prompt_version = prompt_identity_from_state(state)
+    prompt_assembly = build_strategist_messages(
+        user_input=user_input,
+        granularity_level=granularity_level,
+        accuracy_mode=accuracy_mode,
+        gpu_info=_get_gpu_info(),
+        archived_context=archived_context,
+        is_replanning=is_replanning,
+        has_user_files=bool(user_files),
+        profile=prompt_profile,
+        version=prompt_version,
+    )
+    log_prompt_assembly(prompt_assembly, context="initial")
+    messages = prompt_assembly.messages
+    prompt_metadata = prompt_metadata_update(state, prompt_assembly)
     
     # Write input messages to file for debugging
     _write_input_messages(messages, "STRATEGIST")
@@ -705,24 +575,16 @@ You are the lead computational senior chemist designing a computational research
                         repeated_tool = detect_repeated_tool_calls(messages)
                         if repeated_tool:
                             tool_name, count = repeated_tool
-                            loop_warning = f"""SYSTEM WARNING: Potentially infinite loop detected.
-You have called the tool `{tool_name}` {count} times consecutively with the EXACT SAME arguments.
-This suggests your current approach is not working.
-
-You MUST stop this immediately and:
-1. Analyze why the previous tool calls didn't produce the expected result
-2. Change your approach or conclusion
-3. If you have enough information, generate the final plan
-
-Do NOT call `{tool_name}` with the same arguments again.
-"""
+                            warning_injection = build_strategist_repeated_tool_warning_injection(tool_name, count)
+                            loop_warning = warning_injection.content
                             already_has_loop_warning = any(
                                 isinstance(m, HumanMessage) and getattr(m, "content", "") == loop_warning
                                 for m in messages
                             )
                             if not already_has_loop_warning:
                                 log_custom("STRATEGIST", f"Detected {count} repeated calls to {tool_name}, injecting warning")
-                                messages.append(HumanMessage(content=loop_warning))
+                                log_prompt_injection(warning_injection, context="repeated_tool")
+                                messages.append(warning_injection.to_human_message())
                     
                     # Extract final plan from last AI response
                     response = next((msg for msg in reversed(messages) if isinstance(msg, AIMessage)), None)
@@ -767,6 +629,7 @@ Do NOT call `{tool_name}` with the same arguments again.
                             'step_results': {},
                             'initial_plan_content': content,  # Store for review phase
                             'is_replanning': True,
+                            **prompt_metadata,
                         }
                         log_strategist_return(return_state)
                         return return_state
@@ -792,6 +655,7 @@ Do NOT call `{tool_name}` with the same arguments again.
                             'step_results': {},
                             'initial_plan_content': content,  # Store for review phase
                             'is_replanning': False,
+                            **prompt_metadata,
                         }
                         log_strategist_return(return_state)
                         return return_state
@@ -831,6 +695,7 @@ Do NOT call `{tool_name}` with the same arguments again.
                             'step_results': {},
                             'initial_plan_content': '',
                             'is_replanning': False,
+                            **prompt_metadata,
                         }
                     
                     initial_response = AIMessage(content=content)
@@ -867,6 +732,7 @@ Do NOT call `{tool_name}` with the same arguments again.
                         'step_results': {},
                         'initial_plan_content': content,  # Store for review phase
                         'is_replanning': False,
+                        **prompt_metadata,
                     }
                     
                     log_strategist_return(return_state)
@@ -887,6 +753,7 @@ Do NOT call `{tool_name}` with the same arguments again.
                         'step_results': {},
                         'initial_plan_content': '',
                         'is_replanning': is_replanning,
+                        **prompt_metadata,
                     }
                     log_strategist_return(error_state)
                     return error_state
@@ -898,6 +765,7 @@ Do NOT call `{tool_name}` with the same arguments again.
                         'step_results': {},
                         'initial_plan_content': '',
                         'is_replanning': is_replanning,
+                        **prompt_metadata,
                     }
                     log_strategist_return(error_state)
                     return error_state
@@ -909,6 +777,7 @@ Do NOT call `{tool_name}` with the same arguments again.
             'step_results': {},
             'initial_plan_content': '',
             'is_replanning': is_replanning,
+            **prompt_metadata,
         }
         log_strategist_return(final_error_state)
         return final_error_state
@@ -961,14 +830,15 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
     # Use messages from state - they are now in correct order:
     # [SystemMessage, HumanMessage, AIMessage]
     is_user_revision = bool(plan_review_feedback)
-    review_prompt = (
-        _build_plan_revision_prompt(plan_review_feedback)
-        if is_user_revision else
-        (
-            "Please review your plan above and provide an improved version with the same format."
-            "Does the plan address all aspects of the original task? Are there any scientific errors or missing critical steps?"
-        )
+    prompt_profile, prompt_version = prompt_identity_from_state(state)
+    review_assembly = build_strategist_review_prompt(
+        feedback=plan_review_feedback if is_user_revision else "",
+        profile=prompt_profile,
+        version=prompt_version,
     )
+    log_prompt_assembly(review_assembly, context="plan_review")
+    review_prompt = review_assembly.messages[0].content
+    review_metadata = prompt_metadata_update(state, review_assembly)
     status_text = "Revising plan from user feedback" if is_user_revision else "Self-reviewing plan"
 
     log_custom(
@@ -1039,6 +909,7 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
             'initial_plan_content': '',  # Clear, no longer needed
             'is_replanning': is_replanning,
             'plan_review_feedback': '',
+            **review_metadata,
         }
         
         log_strategist_return(return_state)
@@ -1062,6 +933,7 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
             'initial_plan_content': '',
             'is_replanning': is_replanning,
             'plan_review_feedback': '',
+            **review_metadata,
         }
         log_strategist_return(return_state)
         return return_state

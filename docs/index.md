@@ -7,9 +7,9 @@ show_title: false
 <div class="hero">
   <div>
     <span class="pill">Quantum Universal Autonomous System for Atomistic Research</span>
-    <h1>Documentation for QUASAR</h1>
+    <h1>QUASAR</h1>
     <p>
-      QUASAR is an autonomous system for end-to-end scientific discovery, integrating LLMs with simulation tools to automate workflows across quantum chemistry, materials science, and molecular simulation.
+      Documentation for the CLI, containers, settings, workspaces, and extension paths used by QUASAR's autonomous atomistic research workflows.
     </p>
     <div class="hero-actions">
       <a class="button-link" href="{{ '/installation/' | relative_url }}">Get Started</a>
@@ -22,30 +22,30 @@ show_title: false
 
 <div class="metric-grid">
   <div class="metric-card">
-    <p class="mini-label">Scope</p>
-    <h3>Complete Chemistry Landscape</h3>
-    <p>QUASAR is designed for the full range of atomistic research, from DFT and machine-learning potentials to molecular dynamics and adsorption simulations.</p>
+    <p class="mini-label">Interface</p>
+    <h3>CLI</h3>
+    <p>Run from the terminal, with shared settings, checkpoint resume, workspace browsing, and archive history.</p>
   </div>
   <div class="metric-card">
-    <p class="mini-label">Automation</p>
-    <h3>Autonomous Complex Simulation</h3>
-    <p>Go beyond simple chat. QUASAR plans multi-step scientific workflows, executes calculations, and validates intermediate results automatically.</p>
+    <p class="mini-label">Scientific Stack</p>
+    <h3>Atomistic Runtime</h3>
+    <p>Container images include the core simulation and analysis stack for DFT, molecular dynamics, adsorption, xTB, ORCA, ML potentials, and cheminformatics.</p>
   </div>
   <div class="metric-card">
-    <p class="mini-label">Adaptability</p>
-    <h3>Modular Flexibility</h3>
-    <p>Easily extend capabilities through your own models, custom tools, or prompt-time software installation to match your specific research needs.</p>
+    <p class="mini-label">Models</p>
+    <h3>Flexible Routing</h3>
+    <p>Use one global model or configure Strategist, Operator, and Evaluator models independently, including OpenAI-compatible endpoints.</p>
   </div>
   <div class="metric-card">
-    <p class="mini-label">Integrity</p>
-    <h3>Traceable & Reproducible</h3>
-    <p>Comprehensive context management ensures every run stays traceable through checkpoints, archives, and detailed execution logs.</p>
+    <p class="mini-label">Traceability</p>
+    <h3>Archived Runs</h3>
+    <p>Completed work is preserved under `quasar_archive/`, while active logs, summaries, and checkpoints remain inspectable during execution.</p>
   </div>
 </div>
 
-## Platform capabilities
+## Current Capabilities
 
-Recent and ongoing capabilities include **OpenAI-compatible HTTP endpoints** (global and per-agent base URLs), **interactive plan confirmation** before the Operator runs, **experimental adaptive** `ACCURACY` and `GRANULARITY` modes, **refined agent system prompts** for scientific workflows, and use of **scikit-learn** and **PyTorch** where the environment provides them. See [Configuration]({{ '/configuration/' | relative_url }}) for environment variables and routing details.
+QUASAR v0.4.0 includes the interactive CLI, OpenAI-compatible HTTP endpoints, per-agent model overrides, plan confirmation before execution, checkpoint resume and task revert, adaptive `ACCURACY` and `GRANULARITY` modes, context compression controls, local documentation retrieval, and optimized Docker runtimes for CPU and GPU images. See [Configuration]({{ '/configuration/' | relative_url }}) for environment variables and routing details.
 
 ## Start Here
 
@@ -63,7 +63,7 @@ Recent and ongoing capabilities include **OpenAI-compatible HTTP endpoints** (gl
   <a class="feature-card" href="{{ '/cli/' | relative_url }}">
     <p class="mini-label">Interface</p>
     <h3>CLI</h3>
-    <p>Learn the interactive CLI, headless runs, resume behavior, cleanup commands, history browsing, and runtime checks.</p>
+    <p>Learn the interactive CLI, headless runs, resume behavior, cleanup and revert commands, history browsing, and runtime checks.</p>
   </a>
   <a class="feature-card" href="{{ '/configuration/' | relative_url }}">
     <p class="mini-label">Tuning</p>

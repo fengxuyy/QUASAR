@@ -1,276 +1,225 @@
 <p align="center">
-  <img src="logos/logo_text_fancy.png" alt="QUASAR logo" width="420" />
+    <img src="logos/logo_text_fancy.png" alt="MOF-ChemUnity Logo" width="400"/>
 </p>
 
-<p align="center">
-  <strong>Quantum Universal Autonomous System for Atomistic Research</strong>
-</p>
+<h1 align="center">Universal Autonomous System for Atomistic Research</h1>
 
-<p align="center">
-  Autonomous computational chemistry for end-to-end atomistic workflows.
-</p>
+A research-ready autonomous computational chemistry agentic system. QUASAR covers the full atomistic simulation pipeline with integrated tools including Quantum ESPRESSO, ASE, MACE, pymatgen, LAMMPS, RASPA3, ORCA, xTB, and RDKit. Currently optimised for Gemini models; other providers may not be fully functional. Broader compatibility coming in future releases.
 
-<p align="center">
-  <a href="https://pypi.org/project/quasar-core/">
-    <img src="https://img.shields.io/pypi/v/quasar-core?style=for-the-badge&logo=pypi&logoColor=white" alt="PyPI version" />
-  </a>
-  <img src="https://img.shields.io/pypi/pyversions/quasar-core?style=for-the-badge&logo=python&logoColor=white" alt="Supported Python versions" />
-  <a href="https://fengxuyy.github.io/QUASAR/">
-    <img src="https://img.shields.io/badge/docs-online-0A7C86?style=for-the-badge" alt="Documentation" />
-  </a>
-  <a href="https://arxiv.org/abs/2602.00185">
-    <img src="https://img.shields.io/badge/paper-arXiv-B31B1B?style=for-the-badge&logo=arxiv&logoColor=white" alt="Paper" />
-  </a>
-  <a href="https://hub.docker.com/r/fengxuyang/quasar">
-    <img src="https://img.shields.io/badge/docker-images-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker images" />
-  </a>
-</p>
+## Documentation
 
-QUASAR is a research-focused autonomous system for atomistic simulation and materials modeling. It combines LLM planning, scientific software execution, and reproducible workspace management in a single workflow so researchers can move from prompt to structured results with less manual orchestration.
+- **GitHub Pages:** `https://fengxuyy.github.io/QUASAR-CHEM/`
+- **Docs source:** [`docs/`](docs/)
+- **Recommended entrypoint:** [`docs/index.md`](docs/index.md)
 
-The platform is designed for computational chemistry and materials science tasks spanning density functional theory (DFT), machine-learning potentials (MLPs), molecular dynamics (MD), and adsorption or Monte Carlo studies. QUASAR can plan multi-step work, execute tools, retrieve documentation, checkpoint progress, and archive outputs for later inspection.
+<details>
+<summary><strong>Quick Start</strong></summary>
 
-Documentation: [QUASAR Docs](https://fengxuyy.github.io/QUASAR/)  
-PyPI: [quasar-core](https://pypi.org/project/quasar-core/)  
-Paper: [arXiv:2602.00185](https://arxiv.org/abs/2602.00185)
+### 1. Install Docker or Singularity
+- **Docker:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Mac/Windows) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux).
+- **HPC:** [Singularity](https://sylabs.io/singularity/) for cluster environments.
 
-## Why QUASAR
-
-- **End-to-end automation**: turn a scientific request into a planned workflow, executed tasks, validated intermediate results, and a final summary.
-- **Research-oriented tooling**: support workflows that involve DFT, machine-learning potentials, molecular dynamics, and adsorption simulations.
-- **Traceable runs**: keep checkpoints, logs, run summaries, archived workspaces, and per-task history for reproducibility and review.
-- **Practical interfaces**: use the interactive CLI for guided work or run prompts headlessly for batch and HPC use cases.
-- **Flexible deployment**: run QUASAR with Docker, Singularity, or a local Python installation.
-- **Configurable execution**: tune rigor, task granularity, context compression, retrieval, and even per-agent model selection.
-- **OpenAI-compatible APIs**: use `OPENAI_API_BASE` or `API_BASE_URL`, or per-agent base URLs, to point models at OpenAI-compatible gateways and third-party hosts.
-- **Human-in-the-loop planning**: after the Strategist drafts a plan, the interactive CLI can confirm it, request a revision with feedback, or stop before execution.
-- **Adaptive modes (experimental)**: `ACCURACY=adaptive` and `GRANULARITY=adaptive` let agents scale numerical rigor and task breakdown with workflow complexity.
-- **ML-ready stack**: workflows can use scikit-learn and PyTorch for model training and analysis.
-
-## Architecture at a Glance
-
-| Component | Role |
-| --- | --- |
-| `Strategist` | Breaks the user request into a structured execution plan. |
-| `Operator` | Executes tools, reads and writes files, and runs the scientific workflow. |
-| `Evaluator` | Reviews task outcomes and decides whether work is ready to proceed. |
-| Workspace layer | Stores checkpoints, logs, summaries, archives, and generated artifacts. |
-| Retrieval layer | Optionally indexes documentation and serves grounded context during runs. |
-
-## Documentation Map
-
-- [Get Started](https://fengxuyy.github.io/QUASAR/installation/) for Docker, Singularity, and local installation.
-- [Quick Tutorial](https://fengxuyy.github.io/QUASAR/quick-tutorial/) for a first end-to-end run.
-- [CLI Reference](https://fengxuyy.github.io/QUASAR/cli/) for interactive, headless, resume, and cleanup commands.
-- [Configuration](https://fengxuyy.github.io/QUASAR/configuration/) for environment variables and execution profiles.
-- [Workspace & History](https://fengxuyy.github.io/QUASAR/workspace-history/) for logs, archives, and checkpoint behavior.
-- [Extending QUASAR](https://fengxuyy.github.io/QUASAR/extending-quasar/) for adding dependencies or adapting the environment.
-- [Contact](https://fengxuyy.github.io/QUASAR/contact/) for issues, collaboration, and support.
-
-## Quick Start
-
-QUASAR supports three deployment paths:
-
-- **Docker** is the recommended default for laptops and workstations.
-- **Singularity** is the best fit for HPC and shared cluster environments.
-- **Local deployment** is useful when you need a custom native environment, but it is typically less isolated.
-
-### Docker
-
-Pull the image:
-
+### 2. Pull the Image
+Get the latest version from [Docker Hub](https://hub.docker.com/r/fengxuyang/quasar):
 ```bash
 docker pull fengxuyang/quasar:<tag>
 ```
 
-Launch the interactive CLI:
+### 3. Launch
+- **CLI** — Terminal-based interactive or batch runs; see [CLI](#cli) below.
 
+</details>
+
+<br>
+
+
+
+<details>
+<summary><strong>CLI</strong></summary>
+
+Run QUASAR from the terminal: interactive conversation, one-off batch jobs, or inspection of run history.
+
+#### Docker — Interactive
 ```bash
 docker run -it --rm \
+  -e MODEL_API_KEY=<api_key> \
+  -e MODEL=<model_name> \
   -v "<workspace_path>:/workspace" \
   fengxuyang/quasar:<tag> \
   quasar
 ```
 
-Run a headless prompt:
-
+#### Docker — Batch (headless)
+Pass a prompt as an argument for automated jobs:
 ```bash
 docker run --rm \
-  -e MODEL=<model_name> \
   -e MODEL_API_KEY=<api_key> \
+  -e MODEL=<model_name> \
   -v "<workspace_path>:/workspace" \
   fengxuyang/quasar:<tag> \
   quasar "Calculate the band gap of silicon"
 ```
 
-### Singularity
-
-Build the `.sif` image from Docker Hub:
-
-```bash
-singularity build quasar.sif docker://fengxuyang/quasar:<tag>
-```
-
-Run QUASAR:
-
+#### Singularity (HPC) — Interactive
 ```bash
 singularity exec --cleanenv \
   -B "<workspace_path>:/workspace" \
   --home "<workspace_path>:/workspace" \
-  quasar.sif quasar
-```
-
-Run a headless prompt:
-
-```bash
-singularity exec --cleanenv \
-  -B "<workspace_path>:/workspace" \
-  --home "<workspace_path>:/workspace" \
-  --env MODEL=<model_name> \
   --env MODEL_API_KEY=<api_key> \
-  quasar.sif quasar "Your research prompt here"
+  --env MODEL=<model_name> \
+  <tag>.sif quasar
 ```
 
-### Local Installation
-
-Prerequisites:
-
-- Python 3.10 or newer
-- Node.js 20 or newer for the local interactive CLI
-- Scientific software installed separately as needed for your workflows
-
-Example setup:
-
+#### Singularity (HPC) — Batch (headless)
 ```bash
-conda create -n quasar python=3.11 -y
-conda activate quasar
-conda install -c conda-forge qe lammps raspa3 raspalib -y
-pip install --upgrade pip
-pip install quasar-core
+singularity exec --cleanenv \
+  -B "<workspace_path>:/workspace" \
+  --home "<workspace_path>:/workspace" \
+  --env MODEL_API_KEY=<api_key> \
+  --env MODEL=<model_name> \
+  <tag>.sif quasar "Your research prompt here"
 ```
 
-Launch QUASAR:
+#### `quasar history`
+After a run (or when resuming from a checkpoint), the CLI can show **per-task run history** from the current workspace checkpoint. This is useful to review what the operator and evaluator did for each task without re-running.
 
-```bash
-export WORKSPACE_DIR=<workspace_directory>
-quasar
-```
+- **Command:** `quasar history`
+- **Requires:** A workspace with an existing checkpoint (from a current or past run).
+- **Behavior:** Starts an interactive view that lists all tasks (e.g. `task_1`, `task_2`, …). Use ↑/↓ to select a task and Enter to open it. For the selected task you see the full step-by-step history: task description, operator tool calls (e.g. code snippets, file reads, searches), code outputs, and the evaluator’s summary for that task. Use ESC to go back to the task list; Ctrl+C or Ctrl+D to exit.
 
-Run a headless prompt:
+If no checkpoint exists, `quasar history` reports that you need to run `quasar` first or resume an interrupted session.
 
-```bash
-export MODEL=<model_name>
-export MODEL_API_KEY=<api_key>
-export WORKSPACE_DIR=<workspace_directory>
-quasar "Your research prompt here"
-```
+#### Interactive backslash commands
+While using the interactive CLI, type `\` at the start of the input box to open the command picker. QUASAR CLI commands use the backslash prefix only:
 
-> Interactive sessions can fill missing `MODEL` and `MODEL_API_KEY` values through the built-in `\settings` panel. Headless runs should still provide required variables before launch.
+| Command | Description |
+| :--- | :--- |
+| `\settings` | Open the system settings panel. |
+| `\refresh` | Clear and redraw the CLI, then reload checkpoint state. |
+| `\execution-overview` | Display the current or latest archived `execution_overview.md`. |
+| `\usage-report` | Display the current or latest archived `usage_report.md`. |
+| `\revert <task>` | Confirm and revert the active checkpoint/workspace to the start of a task, for example `\revert 2`. |
 
-> The first run in a new workspace can be slower because QUASAR may prepare documentation assets, retrieval indexes, and embedding resources.
+</details>
 
-## CLI Reference
+<br>
 
-| Command | What it does |
-| --- | --- |
-| `quasar` | Starts the interactive terminal UI. |
-| `quasar "..."` | Runs a direct prompt in headless mode. |
-| `quasar --resume` | Resumes the active checkpoint. |
-| `quasar --clear` | Clears the active checkpoint and current workspace state while preserving archives and docs. |
-| `quasar --fresh` | Clears current workspace state and archived runs while preserving docs and hidden cache directories. |
-| `quasar --history` | Opens the interactive per-task checkpoint history browser. |
-| `quasar --config` | Prints the current configuration values. |
-| `quasar --config validate` | Verifies required configuration such as `MODEL_API_KEY`. |
-| `quasar --info` | Prints system and workspace information. |
-| `quasar --no-rag "..."` | Runs a prompt without documentation retrieval for that session. |
+<details>
+<summary><strong>Configuration</strong></summary>
 
-## Configuration Snapshot
+Configure the system via environment variables:
 
-| Variable | Purpose | Default |
-| --- | --- | --- |
-| `MODEL` | Required model name. | None |
-| `MODEL_API_KEY` | Required provider API key. | None |
-| `OPENAI_API_BASE` | Optional base URL for OpenAI-compatible endpoints (same as `API_BASE_URL`). | None |
-| `API_BASE_URL` | Optional global base URL for OpenAI-compatible HTTP APIs. | None |
-| `ACCURACY` | Planning and execution rigor: `eco`, `standard`, `pro`, `adaptive` (experimental). | `standard` |
-| `GRANULARITY` | Task decomposition depth: `low`, `medium`, `high`, `adaptive` (experimental). | `medium` |
-| `CONTEXT_THRESHOLD` | Context-compression trigger level. | `medium` |
-| `ENABLE_RAG` | Enable documentation retrieval. | `true` |
-| `CHECK_INTERVAL` | Minutes between long-run check-ins. Leave unset or use `0` to disable. | Disabled |
-| `AUTO_IMPROVE_CYCLES` | Automatic follow-up refinement cycles after a successful run. | `0` |
-| `NUM_CORES` | Override detected physical core count. | `Auto` |
-| `PMG_MAPI_KEY` | Materials Project API key for `pymatgen`. | None |
-| `HF_TOKEN` | Optional Hugging Face token for authenticated retrieval access. | None |
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `MODEL` | **Required.** Model name. | - |
+| `MODEL_API_KEY` | **Required.** Your API key (Gemini, Claude, OpenAI, etc.). | - |
+| `OPENAI_API_BASE` | Base URL for OpenAI-compatible global endpoints. | - |
+| `API_BASE_URL` | Alias for `OPENAI_API_BASE`. | - |
+| `ACCURACY` | `eco` (fast), `standard` (research-grade), `pro` (maximum rigor), or `adaptive` (dynamic scaling). | `standard` |
+| `GRANULARITY` | Workflow task breakdown level (`low`, `medium`, `high`, `adaptive`). | `adaptive` |
+| `AUTO_IMPROVE_CYCLES` | Number of automatic auto-improve follow-up runs after a successful user-started run. | `0` |
+| `CONTEXT_THRESHOLD` | Context compression trigger level: `low` = 20%, `medium` = 40%, `hard` = 60% of model context. | `medium` |
+| `ENABLE_RAG` | Enable/disable documentation search. | `true` |
 | `IF_RESTART` | Resume from the last checkpoint. | `false` |
-| `AUTO_CONFIRM_PLAN` | Skip interactive plan confirmation when `true`/`1`/`yes`/`on` (e.g. headless automation). | unset |
+| `PMG_MAPI_KEY` | Materials Project API key for `pymatgen`. | - |
+| `NUM_CORES` | Override number of physical CPU cores for execution. | `Auto` |
+| `AUTO_CONFIRM_PLAN` | Skip interactive plan confirmation for headless or batch runs. | unset |
 
-Per-agent overrides are also available:
+Long-running Python check-ins are scheduled by the operator agent per tool call via
+`execute_python(check_in_after=...)` and rescheduled after each check-in via
+`continue_execution(next_check_in_after=...)`.
 
-| Agent | Model | API key | Base URL |
-| --- | --- | --- | --- |
-| Strategist | `STRATEGIST_MODEL` | `STRATEGIST_MODEL_API_KEY` | `STRATEGIST_API_BASE_URL` |
-| Operator | `OPERATOR_MODEL` | `OPERATOR_MODEL_API_KEY` | `OPERATOR_API_BASE_URL` |
-| Evaluator | `EVALUATOR_MODEL` | `EVALUATOR_MODEL_API_KEY` | `EVALUATOR_API_BASE_URL` |
+</details>
 
-> QUASAR is optimized for Gemini-oriented setups first, but OpenAI-compatible base URLs are supported for the primary model and per-agent overrides. Anthropic, xAI, and other providers use their respective integrations when selected by model name.
+<br>
 
-## Workspace Outputs
+<details>
+<summary><strong>Workspace Structure</strong></summary>
 
-QUASAR writes all outputs into the mounted workspace directory:
+All outputs are saved within the mounted workspace directory:
 
-```text
+```
 workspace/
-├── final_results/              # Final outputs and analysis from the current run
-│   └── summary.md              # Main written summary
-├── logs/                       # Execution logs and run reports
-│   ├── usage_report.md
-│   ├── execution_overview.md
-│   ├── input_messages.md
-│   └── conversation/
-├── archive/                    # Historical runs preserved across normal cleanup
-│   ├── run_1/
-│   └── run_N/
-├── docs/                       # Downloaded documentation
-├── .rag_index/                 # Cached retrieval index and embeddings
-├── checkpoints.sqlite          # Checkpoint database
-├── checkpoint_settings.json    # Run settings and token statistics
-└── ...
+├── final_results/      # Final outputs and analysis from the current run
+│   └── summary.md      # Results summary
+├── quasar_logs/        # Execution logs, checkpoints, and usage reports
+│   ├── usage_report.md # Token usage and cost breakdown
+│   ├── execution_overview.md # High-level run summary
+│   ├── input_messages.md # Input prompts sent to the agent
+│   ├── conversation.md # Conversation history
+│   ├── checkpoints.sqlite # Checkpoint database for resumption
+│   ├── checkpoint_settings.json # Run settings and token stats
+│   └── pending_execution.json # Interrupted execution recovery state
+├── quasar_archive/     # Historical runs (preserved across runs)
+│   ├── quasar_run_YYYYMMDD_HHMMSS_<id>/ # Completed run
+│   │   ├── final_results/
+│   │   ├── quasar_logs/
+│   │   └── ...         # All workspace files from that run
+│   └── quasar_run_.../ # Subsequent runs
+└── docs/               # Downloaded documentation (preserved)
 ```
 
-When a run completes, QUASAR archives the workspace state, removes active checkpoint files, and keeps reusable assets such as `archive/`, `docs/`, and hidden cache directories available for future runs.
+When a run completes:
+1. All workspace files are copied to `quasar_archive/quasar_run_YYYYMMDD_HHMMSS_<id>/`
+2. Checkpoint files are removed from the workspace
+3. The `quasar_archive/` and `docs/` directories are preserved for future runs
 
-## Resume and Cleanup
+</details>
 
-- Use `quasar --resume` to continue an interrupted run.
-- Use `quasar --clear` to remove the active checkpoint and current workspace state while keeping archived runs and docs.
-- Use `quasar --fresh` to remove current workspace state and archived runs while preserving docs and hidden cache directories.
+<br>
 
-Checkpoint metadata restores non-secret settings such as model choice, accuracy, granularity, and retrieval options. API keys should still be supplied through environment variables or the interactive `\settings` panel before resuming.
+<details>
+<summary><strong>Restart Mechanism</strong></summary>
 
-## Acknowledgements
+QUASAR automatically checkpoints progress during execution. To resume from the last checkpoint:
 
-QUASAR builds on a strong open-source scientific software ecosystem. In particular, the project draws on tools and libraries including Quantum ESPRESSO, ASE, MACE, pymatgen, LAMMPS, and RASPA3.
-
-## Citation
-
-If QUASAR is useful in your research, please cite:
-
-> Yang, Fengxu, and Jack D. Evans. "QUASAR: A Universal Autonomous System for Atomistic Simulation and a Benchmark of Its Capabilities." *Journal of Chemical Information and Modeling*, [https://doi.org/10.1021/acs.jcim.6c00295](https://doi.org/10.1021/acs.jcim.6c00295)
-
-```bibtex
-@article{yang2026quasar,
-  title={QUASAR: A Universal Autonomous System for Atomistic Simulation and a Benchmark of Its Capabilities},
-  author={Yang, Fengxu and Evans, Jack D.},
-  journal={Journal of Chemical Information and Modeling},
-  year={2026},
-  month=may,
-  pages={acs.jcim.6c00295},
-  doi={10.1021/acs.jcim.6c00295},
-  url={https://doi.org/10.1021/acs.jcim.6c00295}
-}
+**Docker:**
+```bash
+docker run --rm -e IF_RESTART=true \
+  -v "<workspace_path>:/workspace" \
+  fengxuyang/quasar:<tag> quasar
 ```
 
-## Contact
+**Singularity:**
+```bash
+singularity exec --cleanenv \
+  --env IF_RESTART=true \
+  -B "<workspace_path>:/workspace" \
+  --home "<workspace_path>:/workspace" \
+  <tag>.sif quasar
+```
 
-- Technical issues and feature requests: [GitHub Issues](https://github.com/fengxuyy/QUASAR/issues)
-- Collaboration, advanced features, beta access, or partnership inquiries: [j.evans@adelaide.edu.au](mailto:j.evans@adelaide.edu.au)
+**When changing hardware** (e.g., moving to a different node or GPU):
+1. Ensure the same workspace path is mounted
+2. Set `IF_RESTART=true` to resume from the checkpoint
+3. The system will continue from exactly where it left off
+
+> **Note:** Checkpoints are stored in `quasar_logs/checkpoints.sqlite` within the workspace. Completed runs are archived to `quasar_archive/quasar_run_YYYYMMDD_HHMMSS_<id>/` with their checkpoint data preserved.
+
+</details>
+
+<br>
+
+<details>
+<summary><strong>Advanced Setup: Per-Agent Model Configuration</strong></summary>
+
+By default, all agents (Strategist, Operator, Evaluator) use the same model set via `MODEL`. You can optionally assign a **different model, API key, and endpoint** to each agent.
+
+#### Environment Variables
+
+| Variable | Description |
+| :--- | :--- |
+| `STRATEGIST_MODEL` | Override model for the planning agent |
+| `STRATEGIST_MODEL_API_KEY` | API key for the strategist model |
+| `STRATEGIST_API_BASE_URL` | Custom API endpoint for the strategist |
+| `OPERATOR_MODEL` | Override model for the execution agent |
+| `OPERATOR_MODEL_API_KEY` | API key for the operator model |
+| `OPERATOR_API_BASE_URL` | Custom API endpoint for the operator |
+| `EVALUATOR_MODEL` | Override model for the evaluation agent |
+| `EVALUATOR_MODEL_API_KEY` | API key for the evaluator model |
+| `EVALUATOR_API_BASE_URL` | Custom API endpoint for the evaluator |
+| `NUM_CORES` | Override the number of physical CPU cores |
+
+All are **optional** — when unset, each agent falls back to the primary `MODEL`, `MODEL_API_KEY`, and `OPENAI_API_BASE` / `API_BASE_URL`.
+
+</details>

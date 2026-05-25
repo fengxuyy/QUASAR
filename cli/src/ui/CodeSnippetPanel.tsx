@@ -1,9 +1,9 @@
 import React from 'react';
 import { Box, Text, useStdout } from 'ink';
-import chalk from 'chalk';
 
 import { highlightPython } from '../utils/pythonHighlighter.js';
 import { getVisualLength } from '../utils/helpers.js';
+import { cliChalk, cliTheme } from './theme.js';
 
 interface CodeSnippetPanelProps {
     name: string;
@@ -78,22 +78,22 @@ const CodeSnippetPanel: React.FC<CodeSnippetPanelProps> = ({
         }
     }
 
-    const topBorder = chalk.cyan(`╭─ ${name} ` + '─'.repeat(Math.max(0, panelWidth - 5 - getVisualLength(name))) + '╮');
-    const bottomBorder = chalk.cyan('╰' + '─'.repeat(Math.max(0, panelWidth - 2)) + '╯');
+    const topBorder = `╭─ ${name} ` + '─'.repeat(Math.max(0, panelWidth - 5 - getVisualLength(name))) + '╮';
+    const bottomBorder = '╰' + '─'.repeat(Math.max(0, panelWidth - 2)) + '╯';
 
     return (
         <Box flexDirection="column" marginTop={isContinuation ? 0 : 1} marginBottom={0} paddingBottom={0}>
-            {!isContinuation && <Text>{topBorder}</Text>}
+            {!isContinuation && <Text color={cliTheme.ink.blue}>{topBorder}</Text>}
             {processedLines.map((line, idx) => {
                 const padding = ' '.repeat(Math.max(0, contentWidth - getVisualLength(line)));
                 // Highlight the line
                 const highlighted = highlightPython(line);
-                const lineContent = chalk.cyan('│ ') + highlighted + padding + chalk.cyan(' │');
+                const lineContent = cliChalk.blue('│ ') + highlighted + padding + cliChalk.blue(' │');
                 return (
                     <Text key={idx}>{lineContent}</Text>
                 );
             })}
-            {isComplete && <Text>{bottomBorder}</Text>}
+            {isComplete && <Text color={cliTheme.ink.blue}>{bottomBorder}</Text>}
         </Box>
     );
 };

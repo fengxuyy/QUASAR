@@ -21,6 +21,7 @@ from src.context_budget import (
     build_context_usage_snapshot,
     get_context_threshold_ratio,
 )
+from src.prompting import build_resume_steering_injection, upsert_prompt_runtime_event
 
 
 class TestIsGeminiModel:
@@ -31,6 +32,9 @@ class TestIsGeminiModel:
     
     def test_gemini_flash(self):
         assert is_gemini_model("gemini-2.5-flash") is True
+
+    def test_gemini_35_flash(self):
+        assert is_gemini_model("gemini-3.5-flash") is True
     
     def test_gemini_preview(self):
         assert is_gemini_model("gemini-3.1-pro-preview") is True
@@ -57,14 +61,16 @@ class TestShouldSummarizeContext:
     def test_constants(self):
         """Verify threshold dict and ratio are correctly set."""
         assert "gemini-2.5-pro" in MODEL_MAX_CONTEXT
+        assert "gemini-3.5-flash" in MODEL_MAX_CONTEXT
         assert MODEL_MAX_CONTEXT["gemini-2.5-pro"] == 1_048_576
+        assert MODEL_MAX_CONTEXT["gemini-3.5-flash"] == 1_048_576
         assert DEFAULT_CONTEXT_THRESHOLD_LEVEL == "medium"
-        assert CONTEXT_THRESHOLD_RATIOS == {"low": 0.40, "medium": 0.60, "high": 0.80}
-        assert CONTEXT_THRESHOLD_RATIO == 0.60
+        assert CONTEXT_THRESHOLD_RATIOS == {"low": 0.20, "medium": 0.40, "hard": 0.60}
+        assert CONTEXT_THRESHOLD_RATIO == 0.40
     
     def test_get_model_max_context_gemini(self):
         """Gemini model should resolve to 1,048,576."""
-        assert _get_model_max_context("gemini-2.5-pro") == 1_048_576
+        assert _get_model_max_context("gemini-3.5-flash") == 1_048_576
     
     def test_get_model_max_context_unknown(self):
         """Unknown models should return None."""
@@ -251,7 +257,8 @@ class TestSummarizeMessages:
             mock_record.assert_called_once_with(
                 input_tokens=5000,
                 output_tokens=500,
-                agent_name="operator"
+                agent_name="operator",
+                cache_read_tokens=0,
             )
     
     def test_multiple_system_messages_preserved(self):
@@ -391,6 +398,39 @@ class TestMaybeSummarizeMessages:
             )
         )
 
+    def test_rehydrates_active_prompt_events_after_summary(self):
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = "Condensed context"
+        mock_response.usage_metadata = None
+        mock_llm.invoke.return_value = mock_response
+
+        messages = [
+            SystemMessage(content="System"),
+            HumanMessage(content="Hello"),
+        ]
+        threshold = int(MODEL_MAX_CONTEXT["gemini-2.5-pro"] * get_context_threshold_ratio())
+        events = upsert_prompt_runtime_event(
+            [],
+            build_resume_steering_injection("Use smaller batches."),
+            task_index=0,
+        )
+
+        with patch.dict(os.environ, {"MODEL": "gemini-2.5-pro"}, clear=False):
+            result, did_summarize, _, _ = maybe_summarize_messages(
+                messages,
+                mock_llm,
+                agent_name="operator",
+                input_tokens=threshold,
+                runtime_events=events,
+                task_index=0,
+            )
+
+        assert did_summarize is True
+        assert "[CONTEXT SUMMARY" in result[1].content
+        assert "Use smaller batches" in result[-1].content
+        assert result[-1].additional_kwargs["quasar_prompt_event"]["id"] == "operator.resume_steering"
+
 
 class TestStreamingTokenTracking:
     """Test the last-seen input token tracking in streaming.py."""
@@ -432,11 +472,21 @@ class TestStreamingTokenTracking:
             def stream(self, messages):
                 yield AIMessageChunk(
                     content="Hel",
-                    usage_metadata={"input_tokens": 17, "output_tokens": 1, "total_tokens": 18},
+                    usage_metadata={
+                        "input_tokens": 17,
+                        "output_tokens": 1,
+                        "total_tokens": 18,
+                        "input_token_details": {"cache_read": 2},
+                    },
                 )
                 yield AIMessageChunk(
                     content="lo",
-                    usage_metadata={"input_tokens": 17, "output_tokens": 5, "total_tokens": 22},
+                    usage_metadata={
+                        "input_tokens": 17,
+                        "output_tokens": 5,
+                        "total_tokens": 22,
+                        "input_token_details": {"cache_read": 6},
+                    },
                 )
 
         reset_last_input_tokens("operator")
@@ -453,7 +503,13 @@ class TestStreamingTokenTracking:
         assert was_stopped is False
         assert full_response.usage_metadata["input_tokens"] == 17
         assert full_response.usage_metadata["output_tokens"] == 5
-        mock_record.assert_called_once_with(input_tokens=17, output_tokens=5, agent_name="operator")
+        assert full_response.usage_metadata["input_token_details"]["cache_read"] == 6
+        mock_record.assert_called_once_with(
+            input_tokens=17,
+            output_tokens=5,
+            agent_name="operator",
+            cache_read_tokens=6,
+        )
         assert get_last_input_tokens("operator") == 17
         mock_send_context_usage.assert_called_once_with(
             build_context_usage_snapshot(
@@ -491,4 +547,9 @@ class TestStreamingTokenTracking:
         assert was_stopped is False
         assert full_response.usage_metadata["input_tokens"] == 10
         assert full_response.usage_metadata["output_tokens"] == 3
-        mock_record.assert_called_once_with(input_tokens=10, output_tokens=3, agent_name="operator")
+        mock_record.assert_called_once_with(
+            input_tokens=10,
+            output_tokens=3,
+            agent_name="operator",
+            cache_read_tokens=0,
+        )

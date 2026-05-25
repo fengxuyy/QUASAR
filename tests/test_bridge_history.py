@@ -34,7 +34,7 @@ def test_extract_checkpoint_history_skips_transient_checkin_session_messages():
             content="Launching the simulation now.",
             tool_calls=[{
                 "name": "execute_python",
-                "args": {"file_path": "task_1/run.py", "timeout": 600},
+                "args": {"file_path": "task_1/run.py", "check_in_after": 30},
                 "id": "exec-1",
             }],
         ),
@@ -81,7 +81,7 @@ def test_extract_checkpoint_history_skips_transient_checkin_session_messages():
     code_results = [item for item in current_task_items if item["type"] == "code-result"]
     assert len(code_results) == 1
     cr = code_results[0]["content"]
-    assert cr.get("status", "").startswith("Executed ") and "600 min" in cr["status"]
+    assert cr.get("status") == "Executed run.py"
     assert "Execution completed successfully" in cr["output"]
     assert not any("Read qe.out" in str(item.get("content", "")) for item in current_task_items)
     assert not any("converging" in str(item.get("content", "")).lower() for item in current_task_items)
@@ -104,7 +104,7 @@ def test_extract_checkpoint_history_merges_execute_python_validation_without_too
             }],
         ),
         AIMessage(
-            content="Validation error (1 issue): Field 'timeout': Field required",
+            content="Validation error (1 issue): Field 'code': Field required",
         ),
     ]
     history = extract_checkpoint_history(state_values, messages)
@@ -115,6 +115,120 @@ def test_extract_checkpoint_history_merges_execute_python_validation_without_too
     assert row["content"] == "Execute Python Failed"
     assert row.get("isError") is True
     assert row.get("output", "").startswith("Error: Validation error")
+
+
+def test_extract_checkpoint_history_merges_temp_python_validation_without_tool_message():
+    """execute_temporary_python validation failures should not recover as successful Executed rows."""
+    state_values = {
+        "plan": ["Task 1: Evaluate"],
+        "completed_steps": [],
+        "step_results": {},
+    }
+    messages = [
+        AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "execute_temporary_python",
+                "args": {},
+                "id": "call-temp-bad",
+            }],
+        ),
+        AIMessage(
+            content="Validation error (1 issue): Field 'code': Field required",
+        ),
+    ]
+    history = extract_checkpoint_history(state_values, messages)
+    current = history["ordered_items_by_task"]["0"]
+    assert len(current) == 1
+    row = current[0]
+    assert row["type"] == "tool"
+    assert row["content"] == "Temporary Python Parse Failed"
+    assert row.get("isError") is True
+    assert row.get("output", "").startswith("Error: Validation error")
+
+
+def test_extract_checkpoint_history_skips_removed_file_tools():
+    state_values = {
+        "plan": ["Task 1: Update files"],
+        "completed_steps": [],
+        "step_results": {},
+    }
+    messages = [
+        AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "write_file",
+                    "args": {"file_path": "out.py", "content": "print(1)"},
+                    "id": "write-1",
+                },
+                {
+                    "name": "move_file",
+                    "args": {"source_path": "out.py", "destination_path": "archive/out.py"},
+                    "id": "move-1",
+                },
+                {
+                    "name": "rename_file",
+                    "args": {"file_path": "old.py", "new_name": "new.py"},
+                    "id": "rename-1",
+                },
+                {
+                    "name": "delete_file",
+                    "args": {"file_path": "old.tmp"},
+                    "id": "delete-1",
+                },
+                {
+                    "name": "execute_python",
+                    "args": {"file_path": "run.py"},
+                    "id": "exec-1",
+                },
+            ],
+        ),
+        ToolMessage(content="ok", tool_call_id="write-1"),
+        ToolMessage(content="ok", tool_call_id="move-1"),
+        ToolMessage(content="ok", tool_call_id="rename-1"),
+        ToolMessage(content="ok", tool_call_id="delete-1"),
+        ToolMessage(content="**Execution Result:**\n\nok", tool_call_id="exec-1"),
+    ]
+
+    history = extract_checkpoint_history(state_values, messages)
+    current = history["ordered_items_by_task"]["0"]
+
+    assert not any(
+        item.get("name") in {"write_file", "move_file", "rename_file", "delete_file"}
+        for item in current
+    )
+    assert any(
+        item["type"] == "tool" and item["content"] == "Executed run.py"
+        for item in current
+    )
+
+
+def test_extract_checkpoint_history_preserves_resume_steering_item():
+    steering = "Let it run for another 30 minutes before interrupting."
+    state_values = {
+        "plan": ["Task 1: Run the simulation"],
+        "completed_steps": [],
+        "step_results": {},
+        "current_task_messages": [
+            HumanMessage(content=(
+                "[USER STEERING WHILE RESUMING]\n"
+                "The user sent this message while the interrupted run was paused:\n\n"
+                f"{steering}\n\n"
+                "Use this to steer the remaining work from the current checkpoint."
+            )),
+        ],
+    }
+
+    history = extract_checkpoint_history(state_values, [])
+    current = history["ordered_items_by_task"]["0"]
+
+    assert any(
+        item["type"] == "tool"
+        and item["content"] == "User Steering Received"
+        and item.get("output") == steering
+        for item in current
+    )
 
 
 def test_extract_checkpoint_history_keeps_edit_file_status_on_not_found_error():
@@ -411,14 +525,3 @@ def test_extract_checkpoint_history_recovers_full_task_timelines_from_state_hist
         item["type"] == "tool" and item["content"] == "Read task_6.txt"
         for item in history["ordered_items_by_task"]["5"]
     )
-
-
-def test_format_tool_display_move_and_rename_include_paths():
-    assert format_tool_display(
-        "move_file",
-        {"source_path": "tasks/out.txt", "destination_path": "archive/out.txt"},
-    ) == "Moved out.txt to archive/out.txt"
-    assert format_tool_display(
-        "rename_file",
-        {"file_path": "data/old.txt", "new_name": "new.txt"},
-    ) == "Renamed old.txt to new.txt"

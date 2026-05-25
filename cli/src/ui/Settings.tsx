@@ -5,9 +5,9 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useStdout, useInput } from 'ink';
 import fs from 'fs';
-import path from 'path';
 
-import { ENV_VAR_DEFS, EnvVarDef } from '../utils/envDefaults.js';
+import { checkpointDbPath, checkpointSettingsPath, ENV_VAR_DEFS, EnvVarDef } from '../utils/envDefaults.js';
+import { cliTheme } from './theme.js';
 
 // Initialize state from process.env, falling back to defaults and checking checkpoint
 function initValues(): { vals: Record<string, string>, hasCheckpoint: boolean } {
@@ -17,11 +17,10 @@ function initValues(): { vals: Record<string, string>, hasCheckpoint: boolean } 
 
     try {
         const workspaceDir = process.env.HOME || '/workspace';
-        const checkpointDbPath = path.join(workspaceDir, 'checkpoints.sqlite');
-        const settingsPath = path.join(workspaceDir, 'checkpoint_settings.json');
+        const settingsPath = checkpointSettingsPath(workspaceDir);
         
         // Only load if both the checkpoint DB and settings file exist
-        if (fs.existsSync(checkpointDbPath) && fs.existsSync(settingsPath)) {
+        if (fs.existsSync(checkpointDbPath(workspaceDir)) && fs.existsSync(settingsPath)) {
             hasCheckpoint = true;
             const content = fs.readFileSync(settingsPath, 'utf-8');
             checkpointSettings = JSON.parse(content);
@@ -85,12 +84,12 @@ function renderEditCells(cells: EditCell[], valWidth: number): React.ReactNode {
                         {cell.ch}
                     </Text>
                 ) : (
-                    <Text key={`c-${idx}`} color="yellow">
+                    <Text key={`c-${idx}`} color={cliTheme.ink.warning}>
                         {cell.ch}
                     </Text>
                 ),
             )}
-            {pad > 0 ? <Text color="yellow">{' '.repeat(pad)}</Text> : null}
+            {pad > 0 ? <Text color={cliTheme.ink.warning}>{' '.repeat(pad)}</Text> : null}
         </>
     );
 }
@@ -264,21 +263,21 @@ const Settings: React.FC<SettingsProps> = ({ onExit, sendToBridge, highlightMiss
 
             return (
                 <Text key={def.key}>
-                    <Text color="cyan">│ </Text>
+                    <Text color={cliTheme.ink.primary}>│ </Text>
                     {isSelected ? <Text inverse bold>{keyPadded}</Text> : <Text bold>{keyPadded}</Text>}
                     <Text dimColor> : </Text>
                     {optParts.map((p, i) => (
                         <React.Fragment key={i}>
                             {i > 0 && <Text> </Text>}
                             {p.isActive ? (
-                                <Text color={isLocked ? "gray" : "magenta"} bold>{p.text}</Text>
+                                <Text color={isLocked ? cliTheme.ink.muted : cliTheme.ink.accent} bold>{p.text}</Text>
                             ) : (
                                 <Text dimColor>{p.text}</Text>
                             )}
                         </React.Fragment>
                     ))}
                     <Text>{' '.repeat(pad)}</Text>
-                    <Text color="cyan"> │</Text>
+                    <Text color={cliTheme.ink.primary}> │</Text>
                 </Text>
             );
         }
@@ -299,17 +298,17 @@ const Settings: React.FC<SettingsProps> = ({ onExit, sendToBridge, highlightMiss
         }
 
         // Determine color
-        const valColor = isEditing ? 'yellow' 
-            : isMissing ? 'red'
-            : (def.isSensitive && val) ? 'green'
-            : !val ? 'gray'
-            : 'cyan';
+        const valColor = isEditing ? cliTheme.ink.warning
+            : isMissing ? cliTheme.ink.danger
+            : (def.isSensitive && val) ? cliTheme.ink.success
+            : !val ? cliTheme.ink.muted
+            : cliTheme.ink.primary;
 
         return (
             <Text key={def.key}>
-                <Text color="cyan">│ </Text>
+                <Text color={cliTheme.ink.primary}>│ </Text>
                 {isMissing 
-                    ? (isSelected ? <Text inverse bold color="red">{keyPadded}</Text> : <Text bold color="red">{keyPadded}</Text>)
+                    ? (isSelected ? <Text inverse bold color={cliTheme.ink.danger}>{keyPadded}</Text> : <Text bold color={cliTheme.ink.danger}>{keyPadded}</Text>)
                     : (isSelected ? <Text inverse bold>{keyPadded}</Text> : <Text bold>{keyPadded}</Text>)}
                 <Text dimColor> : </Text>
                 {editCells ? (
@@ -317,7 +316,7 @@ const Settings: React.FC<SettingsProps> = ({ onExit, sendToBridge, highlightMiss
                 ) : (
                     <Text color={valColor as any}>{valStr}</Text>
                 )}
-                <Text color="cyan"> │</Text>
+                <Text color={cliTheme.ink.primary}> │</Text>
             </Text>
         );
     };
@@ -326,11 +325,11 @@ const Settings: React.FC<SettingsProps> = ({ onExit, sendToBridge, highlightMiss
 
     return (
         <Box flexDirection="column" marginLeft={leftMargin} paddingX={1} marginY={1}>
-            <Text color="cyan">{topBorder}</Text>
+            <Text color={cliTheme.ink.primary}>{topBorder}</Text>
             {isActive && (
                 <>
                     <Text>
-                        <Text color="cyan">│ </Text>
+                        <Text color={cliTheme.ink.primary}>│ </Text>
                         {startIndex > 0 ? (
                             <Text dimColor italic bold>
                                 {` ↑ ${startIndex} more above `.padStart(Math.floor(contentWidth / 2) + 6).padEnd(contentWidth)}
@@ -338,7 +337,7 @@ const Settings: React.FC<SettingsProps> = ({ onExit, sendToBridge, highlightMiss
                         ) : (
                             <Text>{' '.repeat(contentWidth)}</Text>
                         )}
-                        <Text color="cyan"> │</Text>
+                        <Text color={cliTheme.ink.primary}> │</Text>
                     </Text>
                 </>
             )}
@@ -348,7 +347,7 @@ const Settings: React.FC<SettingsProps> = ({ onExit, sendToBridge, highlightMiss
             {isActive && (
                 <>
                     <Text>
-                        <Text color="cyan">│ </Text>
+                        <Text color={cliTheme.ink.primary}>│ </Text>
                         {startIndex + MAX_VISIBLE < ENV_VAR_DEFS.length ? (
                             <Text dimColor italic bold>
                                 {` ↓ ${ENV_VAR_DEFS.length - (startIndex + MAX_VISIBLE)} more below `.padStart(Math.floor(contentWidth / 2) + 7).padEnd(contentWidth)}
@@ -356,33 +355,33 @@ const Settings: React.FC<SettingsProps> = ({ onExit, sendToBridge, highlightMiss
                         ) : (
                             <Text>{' '.repeat(contentWidth)}</Text>
                         )}
-                        <Text color="cyan"> │</Text>
+                        <Text color={cliTheme.ink.primary}> │</Text>
                     </Text>
-                    <Text color="cyan">{divider}</Text>
+                    <Text color={cliTheme.ink.primary}>{divider}</Text>
                     <Text>
-                        <Text color="cyan">│ </Text>
+                        <Text color={cliTheme.ink.primary}>│ </Text>
                         {editMode ? (
                             <Text dimColor>{'Type value · ←→ cursor · Enter confirm · ESC cancel'.padEnd(contentWidth)}</Text>
                         ) : (
                             <Text dimColor>{'↑↓ Navigate · Enter/←→ Edit · ESC back'.padEnd(contentWidth)}</Text>
                         )}
-                        <Text color="cyan"> │</Text>
+                        <Text color={cliTheme.ink.primary}> │</Text>
                     </Text>
                     <Text>
-                        <Text color="cyan">│ </Text>
+                        <Text color={cliTheme.ink.primary}>│ </Text>
                         <Text dimColor>{'Changes apply to current session'.padEnd(contentWidth)}</Text>
-                        <Text color="cyan"> │</Text>
+                        <Text color={cliTheme.ink.primary}> │</Text>
                     </Text>
                     {hasCheckpoint && (
                         <Text>
-                            <Text color="cyan">│ </Text>
-                            <Text color="red">{'ACCURACY/GRANULARITY locked during checkpoint resume'.padEnd(contentWidth)}</Text>
-                            <Text color="cyan"> │</Text>
+                            <Text color={cliTheme.ink.primary}>│ </Text>
+                            <Text color={cliTheme.ink.danger}>{'ACCURACY/GRANULARITY locked during checkpoint resume'.padEnd(contentWidth)}</Text>
+                            <Text color={cliTheme.ink.primary}> │</Text>
                         </Text>
                     )}
                 </>
             )}
-            <Text color="cyan">{bottomBorder}</Text>
+            <Text color={cliTheme.ink.primary}>{bottomBorder}</Text>
         </Box>
     );
 };

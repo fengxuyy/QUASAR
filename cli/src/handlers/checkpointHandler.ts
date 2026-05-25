@@ -13,6 +13,7 @@ export interface CheckpointHandlerContext {
     taskProgressRef: React.MutableRefObject<TaskProgress | null>;
     setCheckpointMode: (mode: CheckpointMode) => void;
     setPreviousInput: (input: string) => void;
+    setAllowCheckpointSteering: (allow: boolean) => void;
     setIsLoading: (loading: boolean) => void;
     bridgeRef: React.MutableRefObject<any>;
     /** Set to true when the evaluator was actively running at checkpoint time, so
@@ -363,6 +364,7 @@ export function hasStrategistContent(items: CommittedItem[]): boolean {
  */
 export function handleCheckpointInfo(ctx: CheckpointHandlerContext, payload: any): void {
     const restartFromEnv = ['true', '1', 'yes', 'on'].includes((process.env.IF_RESTART || '').toLowerCase());
+    ctx.setAllowCheckpointSteering(payload?.can_resume_steering === true);
     
     if (payload?.history) {
         const history = payload.history;
@@ -396,7 +398,7 @@ export function handleCheckpointInfo(ctx: CheckpointHandlerContext, payload: any
     if (restartFromEnv) {
         if (payload?.exists) {
             ctx.setCheckpointMode('auto-resume');
-            ctx.setPreviousInput(payload.previous_input || '');
+            ctx.setPreviousInput('');
             ctx.setIsLoading(true);
             setTimeout(() => {
                 if (ctx.bridgeRef.current) {
@@ -411,7 +413,7 @@ export function handleCheckpointInfo(ctx: CheckpointHandlerContext, payload: any
     } else {
         if (payload?.exists) {
             ctx.setCheckpointMode('prompt');
-            ctx.setPreviousInput(payload.previous_input || '');
+            ctx.setPreviousInput('');
         } else {
             ctx.setCheckpointMode('normal');
         }

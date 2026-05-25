@@ -10,6 +10,7 @@ This module provides centralized tracking of:
 import json
 import os
 import time
+import copy
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -29,10 +30,12 @@ class UsageStats:
     active_excluded_interval_count: int = 0  # Nested excluded intervals pause elapsed-time accumulation once
     api_request_count: int = 0
     input_tokens: int = 0
+    cache_read_tokens: int = 0
     output_tokens: int = 0
     
     # Cost rates per 1M tokens (None = unknown model, display as N/A)
     input_cost_per_million: Optional[float] = None
+    cache_read_cost_per_million: Optional[float] = None
     output_cost_per_million: Optional[float] = None
     
     # Run configuration settings (saved to ensure accurate historical reports)
@@ -45,7 +48,7 @@ class UsageStats:
     # Hardware signature for detecting environment changes
     hardware_signature: Optional[dict] = None
     
-    # Per-agent token tracking: {agent_name: {api_request_count, input_tokens, output_tokens, model_name}}
+    # Per-agent token tracking: {agent_name: {api_request_count, input_tokens, cache_read_tokens, output_tokens, model_name}}
     per_agent_stats: dict = field(default_factory=dict)
 
 
@@ -125,7 +128,7 @@ def start_run(model_name: str = "", preserve_start_time: bool = False) -> None:
         
         # Capture current settings from environment
         _tracker.accuracy = os.getenv('ACCURACY', '')
-        _tracker.granularity = os.getenv('GRANULARITY', '')
+        _tracker.granularity = os.getenv('GRANULARITY', 'adaptive')
         
         enable_rag_env = os.getenv('ENABLE_RAG', '').lower()
         if enable_rag_env in ['true', '1', 'yes']:
@@ -141,30 +144,32 @@ def start_run(model_name: str = "", preserve_start_time: bool = False) -> None:
         _tracker.hardware_signature = hw_sig
 
 
-# Gemini model pricing ($ per 1M tokens, ≤200k context)
+# Gemini model pricing ($ per 1M tokens, standard tier, ≤200k context where context-dependent).
+# Tuple format: (input, output, cache_read).
 _GEMINI_PRICING = {
-    "gemini-2.5-pro": (1.25, 10.00),
-    "gemini-3-flash-preview": (0.50, 3.00),
-    "gemini-3.1-pro-preview": (1.25, 10.00),
-    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-2.5-pro": (1.25, 10.00, 0.125),
+    "gemini-2.5-flash": (0.30, 2.50, 0.03),
+    "gemini-3.5-flash": (1.50, 9.00, 0.15),
+    "gemini-3-flash-preview": (0.50, 3.00, 0.05),
+    "gemini-3.1-pro-preview": (2.00, 12.00, 0.20),
 }
 
 
 def _get_cost_rates_for_model(model_name: str) -> tuple:
-    """Return (input_cost_per_million, output_cost_per_million) for a model name.
+    """Return (input, output, cache_read) cost rates per million tokens.
     
-    Uses exact then partial matching against known pricing. Returns (None, None)
+    Uses exact then partial matching against known pricing. Returns (None, None, None)
     for unknown models.
     """
     model_lower = model_name.lower() if model_name else ""
     if not model_lower:
-        return (None, None)
+        return (None, None, None)
     if model_lower in _GEMINI_PRICING:
         return _GEMINI_PRICING[model_lower]
     for model_key, rates in _GEMINI_PRICING.items():
         if model_key in model_lower or model_lower in model_key:
             return rates
-    return (None, None)
+    return (None, None, None)
 
 
 def _set_cost_rates(model_name: str) -> None:
@@ -174,9 +179,73 @@ def _set_cost_rates(model_name: str) -> None:
     Pricing uses ≤200k context rates for context-dependent models.
     """
     global _tracker
-    in_rate, out_rate = _get_cost_rates_for_model(model_name)
+    in_rate, out_rate, cache_read_rate = _get_cost_rates_for_model(model_name)
     _tracker.input_cost_per_million = in_rate
     _tracker.output_cost_per_million = out_rate
+    _tracker.cache_read_cost_per_million = cache_read_rate
+
+
+def _coerce_token_count(value) -> int:
+    """Convert provider token counters to a non-negative int."""
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _metadata_value(metadata, key: str, default=None):
+    """Read a key from either dict-style or attribute-style usage metadata."""
+    if isinstance(metadata, dict):
+        return metadata.get(key, default)
+    return getattr(metadata, key, default)
+
+
+def extract_cache_read_tokens(usage_metadata) -> int:
+    """Extract LangChain/Gemini cache-read input tokens from usage metadata."""
+    input_token_details = _metadata_value(usage_metadata, "input_token_details", {}) or {}
+    return _coerce_token_count(_metadata_value(input_token_details, "cache_read", 0))
+
+
+def _split_input_tokens_for_cost(input_tokens: int, cache_read_tokens: int) -> tuple[int, int]:
+    """Return (uncached_input_tokens, billable_cache_read_tokens)."""
+    total_input = _coerce_token_count(input_tokens)
+    cache_read = min(_coerce_token_count(cache_read_tokens), total_input)
+    return total_input - cache_read, cache_read
+
+
+def _calculate_cost_components(
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int,
+    input_rate: Optional[float],
+    output_rate: Optional[float],
+    cache_read_rate: Optional[float],
+) -> Optional[dict]:
+    """Calculate token cost components, discounting cache reads when priced."""
+    if input_rate is None or output_rate is None:
+        return None
+
+    uncached_input_tokens, billed_cache_read_tokens = _split_input_tokens_for_cost(
+        input_tokens,
+        cache_read_tokens,
+    )
+    effective_cache_read_rate = cache_read_rate if cache_read_rate is not None else input_rate
+    input_cost = (uncached_input_tokens / 1_000_000) * input_rate
+    cache_read_cost = (billed_cache_read_tokens / 1_000_000) * effective_cache_read_rate
+    output_cost = (_coerce_token_count(output_tokens) / 1_000_000) * output_rate
+
+    return {
+        "uncached_input_tokens": uncached_input_tokens,
+        "cache_read_tokens": billed_cache_read_tokens,
+        "output_tokens": _coerce_token_count(output_tokens),
+        "input_rate": input_rate,
+        "cache_read_rate": effective_cache_read_rate,
+        "output_rate": output_rate,
+        "input_cost": input_cost,
+        "cache_read_cost": cache_read_cost,
+        "output_cost": output_cost,
+        "total_cost": input_cost + cache_read_cost + output_cost,
+    }
 
 
 def end_run() -> None:
@@ -207,7 +276,12 @@ def set_run_status(status: str) -> None:
         _tracker.run_status = status
 
 
-def record_api_call(input_tokens: int = 0, output_tokens: int = 0, agent_name: str = "") -> None:
+def record_api_call(
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    agent_name: str = "",
+    cache_read_tokens: int = 0,
+) -> None:
     """Record an API call with token counts.
     
     Automatically persists stats to checkpoint after recording to ensure
@@ -217,11 +291,17 @@ def record_api_call(input_tokens: int = 0, output_tokens: int = 0, agent_name: s
         input_tokens: Number of input/prompt tokens
         output_tokens: Number of output/completion tokens
         agent_name: Optional agent name for per-agent tracking (e.g., 'strategist', 'operator', 'evaluator')
+        cache_read_tokens: Number of input tokens served from provider context cache
     """
     global _tracker
+    input_tokens = _coerce_token_count(input_tokens)
+    output_tokens = _coerce_token_count(output_tokens)
+    cache_read_tokens = _coerce_token_count(cache_read_tokens)
+
     with _lock:
         _tracker.api_request_count += 1
         _tracker.input_tokens += input_tokens
+        _tracker.cache_read_tokens += cache_read_tokens
         _tracker.output_tokens += output_tokens
         
         # Track per-agent stats if agent_name is provided
@@ -230,12 +310,14 @@ def record_api_call(input_tokens: int = 0, output_tokens: int = 0, agent_name: s
                 _tracker.per_agent_stats[agent_name] = {
                     'api_request_count': 0,
                     'input_tokens': 0,
+                    'cache_read_tokens': 0,
                     'output_tokens': 0,
                     'model_name': '',
                 }
             agent_stats = _tracker.per_agent_stats[agent_name]
             agent_stats['api_request_count'] += 1
             agent_stats['input_tokens'] += input_tokens
+            agent_stats['cache_read_tokens'] = agent_stats.get('cache_read_tokens', 0) + cache_read_tokens
             agent_stats['output_tokens'] += output_tokens
             
             # Set model name from env var if not already set
@@ -293,12 +375,14 @@ def get_stats() -> UsageStats:
             last_session_start=_tracker.last_session_start,
             api_request_count=_tracker.api_request_count,
             input_tokens=_tracker.input_tokens,
+            cache_read_tokens=_tracker.cache_read_tokens,
             output_tokens=_tracker.output_tokens,
             input_cost_per_million=_tracker.input_cost_per_million,
+            cache_read_cost_per_million=_tracker.cache_read_cost_per_million,
             output_cost_per_million=_tracker.output_cost_per_million,
             model_name=_tracker.model_name,
             run_status=_tracker.run_status,
-            per_agent_stats=dict(_tracker.per_agent_stats),
+            per_agent_stats=copy.deepcopy(_tracker.per_agent_stats),
         )
 
 
@@ -357,8 +441,10 @@ def save_stats_to_checkpoint() -> None:
     """
     global _tracker
     from .tools.base import WORKSPACE_DIR
+    from .artifacts import get_checkpoint_settings_path, migrate_legacy_runtime_artifacts
     
-    checkpoint_settings_path = WORKSPACE_DIR / "checkpoint_settings.json"
+    migrate_legacy_runtime_artifacts(WORKSPACE_DIR)
+    checkpoint_settings_path = get_checkpoint_settings_path(WORKSPACE_DIR)
     
     with _lock:
         # Don't call get_stats() here - it would deadlock since it also acquires _lock
@@ -389,12 +475,14 @@ def save_stats_to_checkpoint() -> None:
         settings['_usage_stats'] = {
             'api_request_count': _tracker.api_request_count,
             'input_tokens': _tracker.input_tokens,
+            'cache_read_tokens': _tracker.cache_read_tokens,
             'output_tokens': _tracker.output_tokens,
             'model_name': _tracker.model_name,
             'accuracy': _tracker.accuracy,
             'granularity': _tracker.granularity,
             'enable_rag': _tracker.enable_rag,
             'input_cost_per_million': _tracker.input_cost_per_million,
+            'cache_read_cost_per_million': _tracker.cache_read_cost_per_million,
             'output_cost_per_million': _tracker.output_cost_per_million,
             'start_time': _tracker.start_time,
             'cumulative_elapsed_time': _tracker.cumulative_elapsed_time + current_session_elapsed,
@@ -407,6 +495,7 @@ def save_stats_to_checkpoint() -> None:
         
         # Write back to file
         try:
+            checkpoint_settings_path.parent.mkdir(parents=True, exist_ok=True)
             with open(checkpoint_settings_path, 'w', encoding='utf-8') as f:
                 json.dump(settings, f, indent=2)
         except Exception:
@@ -425,8 +514,10 @@ def load_stats_from_checkpoint() -> bool:
     """
     global _tracker, _hardware_changed_on_resume, _previous_hardware_signature
     from .tools.base import WORKSPACE_DIR
+    from .artifacts import get_checkpoint_settings_path, migrate_legacy_runtime_artifacts
     
-    checkpoint_settings_path = WORKSPACE_DIR / "checkpoint_settings.json"
+    migrate_legacy_runtime_artifacts(WORKSPACE_DIR)
+    checkpoint_settings_path = get_checkpoint_settings_path(WORKSPACE_DIR)
 
     # Reset resume-delta state before each load attempt so notices are emitted
     # only for the current checkpoint comparison.
@@ -494,6 +585,7 @@ def load_stats_from_checkpoint() -> bool:
         with _lock:
             _tracker.api_request_count += saved_stats.get('api_request_count', 0)
             _tracker.input_tokens += saved_stats.get('input_tokens', 0)
+            _tracker.cache_read_tokens += saved_stats.get('cache_read_tokens', 0)
             _tracker.output_tokens += saved_stats.get('output_tokens', 0)
             
             # Restore cumulative elapsed time (this includes all previous sessions)
@@ -509,6 +601,8 @@ def load_stats_from_checkpoint() -> bool:
                 _tracker.model_name = saved_stats['model_name']
             if _tracker.input_cost_per_million is None and saved_stats.get('input_cost_per_million') is not None:
                 _tracker.input_cost_per_million = saved_stats['input_cost_per_million']
+            if _tracker.cache_read_cost_per_million is None and saved_stats.get('cache_read_cost_per_million') is not None:
+                _tracker.cache_read_cost_per_million = saved_stats['cache_read_cost_per_million']
             if _tracker.output_cost_per_million is None and saved_stats.get('output_cost_per_million') is not None:
                 _tracker.output_cost_per_million = saved_stats['output_cost_per_million']
             
@@ -537,12 +631,14 @@ def load_stats_from_checkpoint() -> bool:
                     _tracker.per_agent_stats[agent_name] = {
                         'api_request_count': 0,
                         'input_tokens': 0,
+                        'cache_read_tokens': 0,
                         'output_tokens': 0,
                         'model_name': agent_data.get('model_name', ''),
                     }
                 existing = _tracker.per_agent_stats[agent_name]
                 existing['api_request_count'] += agent_data.get('api_request_count', 0)
                 existing['input_tokens'] += agent_data.get('input_tokens', 0)
+                existing['cache_read_tokens'] = existing.get('cache_read_tokens', 0) + agent_data.get('cache_read_tokens', 0)
                 existing['output_tokens'] += agent_data.get('output_tokens', 0)
                 if not existing.get('model_name'):
                     existing['model_name'] = agent_data.get('model_name', '')
@@ -568,8 +664,10 @@ def _generate_report_for_saved_stats(saved_stats: dict) -> None:
         cumulative_elapsed_time=saved_stats.get('cumulative_elapsed_time', 0),
         api_request_count=saved_stats.get('api_request_count', 0),
         input_tokens=saved_stats.get('input_tokens', 0),
+        cache_read_tokens=saved_stats.get('cache_read_tokens', 0),
         output_tokens=saved_stats.get('output_tokens', 0),
         input_cost_per_million=saved_stats.get('input_cost_per_million'),
+        cache_read_cost_per_million=saved_stats.get('cache_read_cost_per_million'),
         output_cost_per_million=saved_stats.get('output_cost_per_million'),
         model_name=saved_stats.get('model_name', ''),
         accuracy=saved_stats.get('accuracy', ''),
@@ -601,8 +699,10 @@ def generate_interrupted_report_if_needed() -> bool:
         True if a report was generated, False otherwise
     """
     from .tools.base import WORKSPACE_DIR, LOGS_DIR
+    from .artifacts import get_checkpoint_settings_path, migrate_legacy_runtime_artifacts
     
-    checkpoint_settings_path = WORKSPACE_DIR / "checkpoint_settings.json"
+    migrate_legacy_runtime_artifacts(WORKSPACE_DIR)
+    checkpoint_settings_path = get_checkpoint_settings_path(WORKSPACE_DIR)
     report_path = LOGS_DIR / "usage_report.md"
     
     # Check if we have stats but no report (indicates interrupted run)
@@ -647,6 +747,16 @@ def _format_duration(seconds: float) -> str:
         return f"{hours}h {minutes}m {secs}s"
 
 
+def _format_rate(rate: float) -> str:
+    """Format a per-million token rate with cents or finer precision."""
+    text = f"{rate:.3f}".rstrip("0").rstrip(".")
+    if "." not in text:
+        return f"{text}.00"
+    if len(text.rsplit(".", 1)[1]) == 1:
+        return f"{text}0"
+    return text
+
+
 def _generate_report_from_stats(stats: UsageStats, completed_steps_count: Optional[int] = None) -> str:
     """Generate markdown report from a UsageStats object.
     
@@ -665,7 +775,7 @@ def _generate_report_from_stats(stats: UsageStats, completed_steps_count: Option
         duration_secs = stats.cumulative_elapsed_time
         duration_str = _format_duration(duration_secs)
     elif stats.start_time > 0:
-        # Fallback to start_time calculation for legacy compatibility
+        # Fallback for stats captured before cumulative elapsed time is available.
         end = stats.end_time if stats.end_time > 0 else time.time()
         duration_secs = end - stats.start_time
         duration_str = _format_duration(duration_secs)
@@ -680,13 +790,17 @@ def _generate_report_from_stats(stats: UsageStats, completed_steps_count: Option
     elif stats.run_status == "fail":
         status = "fail"
     elif stats.end_time > 0:
-        # If end_time is set but no status, assume interrupted (legacy behavior)
+        # If end_time is set but no explicit status, report interruption.
         status = "interrupted"
     else:
         # Still running
         status = "In Progress"
     
     total_tokens = stats.input_tokens + stats.output_tokens
+    uncached_input_tokens, billable_cache_read_tokens = _split_input_tokens_for_cost(
+        stats.input_tokens,
+        stats.cache_read_tokens,
+    )
     
     # Calculate average tokens per step if we have step count
     avg_input_tokens = None
@@ -744,7 +858,6 @@ def _generate_report_from_stats(stats: UsageStats, completed_steps_count: Option
 | Accuracy Mode | {settings.get('ACCURACY', 'N/A')} |
 | Granularity | {settings.get('GRANULARITY', 'N/A')} |
 | Context Threshold | {settings.get('CONTEXT_THRESHOLD', 'N/A')} |
-| Check-in Interval | {f"{settings.get('CHECK_INTERVAL')} minutes" if settings.get('CHECK_INTERVAL') not in ('Disabled', '') else 'Disabled'} |
 | Auto-Improve Cycles | {settings.get('AUTO_IMPROVE_CYCLES', '0')} |
 | RAG Enabled | {settings.get('ENABLE_RAG', 'N/A')} |
 | Materials Project API | {mp_api_available} |
@@ -759,6 +872,7 @@ def _generate_report_from_stats(stats: UsageStats, completed_steps_count: Option
 |--------|-------|
 | Total API Requests | {stats.api_request_count:,} |
 | Input Tokens | {stats.input_tokens:,} |
+| Cache Read Tokens | {stats.cache_read_tokens:,} |
 | Output Tokens | {stats.output_tokens:,} |
 | **Total Tokens** | **{total_tokens:,}** |
 """
@@ -770,14 +884,25 @@ def _generate_report_from_stats(stats: UsageStats, completed_steps_count: Option
     ) if stats.per_agent_stats else False
 
     # Add per-agent breakdown only when agents actually use different models
+    any_agent_cache_reads = any(
+        a.get('cache_read_tokens', 0) > 0
+        for a in stats.per_agent_stats.values()
+    ) if stats.per_agent_stats else False
+
     if stats.per_agent_stats and agents_use_different_models:
-        report += """\n### Per-Agent Breakdown\n\n| Agent | Model | API Calls | Input Tokens | Output Tokens | Total Tokens |\n|-------|-------|-----------|-------------|--------------|--------------|\n"""
+        if any_agent_cache_reads:
+            report += """\n### Per-Agent Breakdown\n\n| Agent | Model | API Calls | Input Tokens | Cache Read Tokens | Output Tokens | Total Tokens |\n|-------|-------|-----------|-------------|-------------------|--------------|--------------|\n"""
+        else:
+            report += """\n### Per-Agent Breakdown\n\n| Agent | Model | API Calls | Input Tokens | Output Tokens | Total Tokens |\n|-------|-------|-----------|-------------|--------------|--------------|\n"""
         for agent_name in ['strategist', 'operator', 'evaluator']:
             if agent_name in stats.per_agent_stats:
                 a = stats.per_agent_stats[agent_name]
                 a_model = a.get('model_name', '') or stats.model_name
                 a_total = a.get('input_tokens', 0) + a.get('output_tokens', 0)
-                report += f"| {agent_name.capitalize()} | {a_model} | {a.get('api_request_count', 0):,} | {a.get('input_tokens', 0):,} | {a.get('output_tokens', 0):,} | {a_total:,} |\n"
+                if any_agent_cache_reads:
+                    report += f"| {agent_name.capitalize()} | {a_model} | {a.get('api_request_count', 0):,} | {a.get('input_tokens', 0):,} | {a.get('cache_read_tokens', 0):,} | {a.get('output_tokens', 0):,} | {a_total:,} |\n"
+                else:
+                    report += f"| {agent_name.capitalize()} | {a_model} | {a.get('api_request_count', 0):,} | {a.get('input_tokens', 0):,} | {a.get('output_tokens', 0):,} | {a_total:,} |\n"
         report += "\n"
 
     # Add average tokens per step if available
@@ -803,37 +928,68 @@ def _generate_report_from_stats(stats: UsageStats, completed_steps_count: Option
             a_model = a.get('model_name', '') or stats.model_name
             a_in = a.get('input_tokens', 0)
             a_out = a.get('output_tokens', 0)
-            a_in_rate, a_out_rate = _get_cost_rates_for_model(a_model)
-            if a_in_rate is not None and a_out_rate is not None:
-                a_in_cost = (a_in / 1_000_000) * a_in_rate
-                a_out_cost = (a_out / 1_000_000) * a_out_rate
-                total_cost += a_in_cost + a_out_cost
+            a_cache_read = a.get('cache_read_tokens', 0)
+            a_in_rate, a_out_rate, a_cache_rate = _get_cost_rates_for_model(a_model)
+            cost = _calculate_cost_components(
+                a_in,
+                a_out,
+                a_cache_read,
+                a_in_rate,
+                a_out_rate,
+                a_cache_rate,
+            )
+            if cost is not None:
+                total_cost += cost["total_cost"]
                 any_rates_known = True
-                agent_cost_rows.append(
-                    f"| {agent_name.capitalize()} ({a_model}) – Input | {a_in:,} | ${a_in_rate:.2f} | ${a_in_cost:.4f} |\n"
-                    f"| {agent_name.capitalize()} ({a_model}) – Output | {a_out:,} | ${a_out_rate:.2f} | ${a_out_cost:.4f} |\n"
-                )
+                label = f"{agent_name.capitalize()} ({a_model})"
+                if cost["cache_read_tokens"] > 0:
+                    agent_cost_rows.append(
+                        f"| {label} - Input (uncached) | {cost['uncached_input_tokens']:,} | ${_format_rate(cost['input_rate'])} | ${cost['input_cost']:.4f} |\n"
+                        f"| {label} - Cache read | {cost['cache_read_tokens']:,} | ${_format_rate(cost['cache_read_rate'])} | ${cost['cache_read_cost']:.4f} |\n"
+                        f"| {label} - Output | {cost['output_tokens']:,} | ${_format_rate(cost['output_rate'])} | ${cost['output_cost']:.4f} |\n"
+                    )
+                else:
+                    agent_cost_rows.append(
+                        f"| {label} - Input | {a_in:,} | ${_format_rate(a_in_rate)} | ${cost['input_cost']:.4f} |\n"
+                        f"| {label} - Output | {a_out:,} | ${_format_rate(a_out_rate)} | ${cost['output_cost']:.4f} |\n"
+                    )
         if any_rates_known:
             report += "## Cost Estimate\n\n| Type | Tokens | Rate ($/1M) | Cost |\n|------|--------|-------------|------|\n"
             for row in agent_cost_rows:
                 report += row
             report += f"| **Total** | {total_tokens:,} | | **${total_cost:.4f}** |\n"
-            report += "\n*Note: Cost estimates based on ≤200k context pricing.*\n"
+            report += "\n*Note: Cost estimates use standard-tier Gemini pricing and ≤200k context rates where context-dependent. Cache-read tokens are billed separately from uncached input tokens.*\n"
     elif has_costs:
         # All agents share the same model — use primary cost rates
-        input_cost = (stats.input_tokens / 1_000_000) * stats.input_cost_per_million
-        output_cost = (stats.output_tokens / 1_000_000) * stats.output_cost_per_million
-        total_cost = input_cost + output_cost
+        cost = _calculate_cost_components(
+            stats.input_tokens,
+            stats.output_tokens,
+            stats.cache_read_tokens,
+            stats.input_cost_per_million,
+            stats.output_cost_per_million,
+            stats.cache_read_cost_per_million,
+        )
+        if cost is None:
+            return report
+
+        total_cost = cost["total_cost"]
 
         report += f"""## Cost Estimate
 
 | Type | Tokens | Rate ($/1M) | Cost |
 |------|--------|-------------|------|
-| Input | {stats.input_tokens:,} | ${stats.input_cost_per_million:.2f} | ${input_cost:.4f} |
-| Output | {stats.output_tokens:,} | ${stats.output_cost_per_million:.2f} | ${output_cost:.4f} |
+"""
+        if billable_cache_read_tokens > 0:
+            report += (
+                f"| Input (uncached) | {uncached_input_tokens:,} | ${_format_rate(cost['input_rate'])} | ${cost['input_cost']:.4f} |\n"
+                f"| Cache read | {billable_cache_read_tokens:,} | ${_format_rate(cost['cache_read_rate'])} | ${cost['cache_read_cost']:.4f} |\n"
+            )
+        else:
+            report += f"| Input | {stats.input_tokens:,} | ${_format_rate(cost['input_rate'])} | ${cost['input_cost']:.4f} |\n"
+        report += f"""| Output | {stats.output_tokens:,} | ${_format_rate(cost['output_rate'])} | ${cost['output_cost']:.4f} |
 | **Total** | {total_tokens:,} | | **${total_cost:.4f}** |
 
-*Note: Cost estimates based on ≤200k context pricing.*
+*Note: Cost estimates use standard-tier Gemini pricing and ≤200k context rates where context-dependent. Cache-read tokens are billed separately from uncached input tokens.*
 """
     
     return report
@@ -856,14 +1012,17 @@ def _load_run_settings() -> dict:
             return '0'
     
     # Try to load from checkpoint_settings.json first
-    checkpoint_settings_path = WORKSPACE_DIR / "checkpoint_settings.json"
+    from .artifacts import get_checkpoint_settings_path, migrate_legacy_runtime_artifacts
+
+    migrate_legacy_runtime_artifacts(WORKSPACE_DIR)
+    checkpoint_settings_path = get_checkpoint_settings_path(WORKSPACE_DIR)
     if checkpoint_settings_path.exists():
         try:
             with open(checkpoint_settings_path, 'r', encoding='utf-8') as f:
                 checkpoint_settings = json.load(f)
                 
                 # Check top level first
-                for key in ['MODEL', 'ACCURACY', 'GRANULARITY', 'CONTEXT_THRESHOLD', 'ENABLE_RAG', 'CHECK_INTERVAL', 'AUTO_IMPROVE_CYCLES']:
+                for key in ['MODEL', 'ACCURACY', 'GRANULARITY', 'CONTEXT_THRESHOLD', 'ENABLE_RAG', 'AUTO_IMPROVE_CYCLES']:
                     if key in checkpoint_settings:
                         settings[key] = checkpoint_settings[key]
                 
@@ -886,10 +1045,7 @@ def _load_run_settings() -> dict:
     if 'ACCURACY' not in settings:
         settings['ACCURACY'] = os.getenv('ACCURACY', 'N/A')
     if 'GRANULARITY' not in settings:
-        settings['GRANULARITY'] = os.getenv('GRANULARITY', 'N/A')
-    if 'CHECK_INTERVAL' not in settings:
-        interval = os.getenv('CHECK_INTERVAL', '')
-        settings['CHECK_INTERVAL'] = interval if interval else 'Disabled'
+        settings['GRANULARITY'] = os.getenv('GRANULARITY', 'adaptive')
     if 'CONTEXT_THRESHOLD' not in settings:
         settings['CONTEXT_THRESHOLD'] = os.getenv('CONTEXT_THRESHOLD', 'medium')
     if 'AUTO_IMPROVE_CYCLES' not in settings:
@@ -936,7 +1092,10 @@ def generate_report(completed_steps_count: Optional[int] = None) -> str:
     
     # Load history from checkpoint_settings.json
     from .tools.base import WORKSPACE_DIR
-    checkpoint_settings_path = WORKSPACE_DIR / "checkpoint_settings.json"
+    from .artifacts import get_checkpoint_settings_path, migrate_legacy_runtime_artifacts
+
+    migrate_legacy_runtime_artifacts(WORKSPACE_DIR)
+    checkpoint_settings_path = get_checkpoint_settings_path(WORKSPACE_DIR)
     
     historical_reports = []
     if checkpoint_settings_path.exists():
@@ -954,8 +1113,10 @@ def generate_report(completed_steps_count: Optional[int] = None) -> str:
                     cumulative_elapsed_time=hist_entry.get('cumulative_elapsed_time', 0),
                     api_request_count=hist_entry.get('api_request_count', 0),
                     input_tokens=hist_entry.get('input_tokens', 0),
+                    cache_read_tokens=hist_entry.get('cache_read_tokens', 0),
                     output_tokens=hist_entry.get('output_tokens', 0),
                     input_cost_per_million=hist_entry.get('input_cost_per_million'),
+                    cache_read_cost_per_million=hist_entry.get('cache_read_cost_per_million'),
                     output_cost_per_million=hist_entry.get('output_cost_per_million'),
                     model_name=hist_entry.get('model_name', ''),
                     accuracy=hist_entry.get('accuracy', ''),
@@ -963,6 +1124,7 @@ def generate_report(completed_steps_count: Optional[int] = None) -> str:
                     enable_rag=hist_entry.get('enable_rag'),
                     run_status='interrupted', # Past entries were interrupted
                     hardware_signature=hist_entry.get('hardware_signature'),
+                    per_agent_stats=hist_entry.get('per_agent_stats', {}),
                 )
                 hist_report = _generate_report_from_stats(hist_stats)
                 historical_reports.append(hist_report)

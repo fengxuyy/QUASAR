@@ -48,6 +48,16 @@ from .utils import (
     update_agent_status,
 )
 from ..context_summarizer import maybe_summarize_messages
+from ..prompting import (
+    build_evaluation_feedback_injection,
+    build_evaluator_messages,
+    build_evaluator_repeated_tool_warning_injection,
+    clear_prompt_runtime_events_for_task,
+    prompt_identity_from_state,
+    prompt_metadata_update,
+    upsert_prompt_runtime_event,
+)
+from ..prompting.debug import log_prompt_assembly, log_prompt_injection
 
 EVALUATOR_TOOL_TIMEOUT = 60
 MAX_TOOL_ITERATIONS = 50
@@ -211,6 +221,10 @@ def evaluator_setup_node(state: State, llm_with_tools=None) -> State:
             "messages": [AIMessage(content=f"Task {current_task_index + 1} Summary: {summary}")],
             "evaluation_attempts": 0,
             "evaluation_messages": [],
+            "prompt_runtime_events": clear_prompt_runtime_events_for_task(
+                state.get("prompt_runtime_events", []),
+                task_index=current_task_index,
+            ),
         }
 
 
@@ -222,42 +236,21 @@ def evaluator_setup_node(state: State, llm_with_tools=None) -> State:
     ]
     operator_history = _build_chat_history(operator_messages_only)
     
-    evaluator_system_prompt = """### Role: Scientific Research Evaluator
-
-You must verify whether the operator's latest output fully satisfies the current task requirements. Do not assume success—inspect outputs, calculations, and files described in the history.
-
-### Decision Protocol
-1) Analyse the Operator's execution history to determine whether the current task is **fully** satisfied. Do not assume correctness and completion. 
-2) You should NEVER trust the operator's self-assessment on whether the task is completed or not. You MUST verify that all intended outputs, calculations, and files are present and meaningfully meet the task requirements. 
-3) If additional evidence or inspection is needed, you may use the following tools: `read_file`, `list_directory`, `analyze_image`, `execute_temporary_python`, `search_web`, `fetch_web_page`
-   - `execute_temporary_python` is for temporary parsing of existing files only. Use it to inspect and summarise results, not to run simulations, launch subprocesses, or modify files/system state.
-4) Once your evaluation is complete, you MUST call the `submit_evaluation` function to deliver your decision:
-    a) If all task requirements are satisfied and the outputs appear scientifically valid, call `submit_evaluation` with status="pass" and include a concise paragraph summarizing the work performed and the information needed for the next task.
-    b) If any requirement is missing, incorrect, or scientifically invalid, call `submit_evaluation` with status="fail" and include one concise paragraph explaining which requirements were not met and specifying the fixes the Operator must perform next.
-
-### Evaluation Rules
-1) You can invoke multiple tools in a single response. For independent information requests likely to succeed, execute in parallel to maximize efficiency and performance.
-2) When reading, listing, or deleting multiple files or directories, batch them into a single read_file, list_directory, or delete_file call where supported. Otherwise, initiate multiple parallel tool calls to minimize overhead and boost efficiency.
-"""
-
-    evaluator_context = f"""### Project Context
-{get_project_context(project_request, formatted_plan, formatted_history)}
-### Current Task (Task {current_task_index + 1} of {len(plan)})
-{current_task}
-
-### Operator Execution History
-<operator_history>
-{operator_history}
-</operator_history>
-"""
+    prompt_profile, prompt_version = prompt_identity_from_state(state)
+    prompt_assembly = build_evaluator_messages(
+        project_context=get_project_context(project_request, formatted_plan, formatted_history),
+        current_task=current_task,
+        current_task_index=current_task_index,
+        total_tasks=len(plan),
+        operator_history=operator_history,
+        profile=prompt_profile,
+        version=prompt_version,
+    )
+    log_prompt_assembly(prompt_assembly, task_index=current_task_index, context="setup")
     
     log_agent_header("Evaluator", current_task_index, "Evaluating Task Completion")
     
-    # Initialize evaluation messages
-    evaluation_messages = [
-        SystemMessage(content=evaluator_system_prompt),
-        HumanMessage(content=evaluator_context)
-    ]
+    evaluation_messages = prompt_assembly.messages
     _write_input_messages(evaluation_messages, "EVALUATOR")
     
     log_custom("EVALUATOR_SETUP", "Prepared evaluation context", {
@@ -267,6 +260,7 @@ You must verify whether the operator's latest output fully satisfies the current
     # Return state with evaluation_messages for loop node
     return {
         "evaluation_messages": evaluation_messages,
+        **prompt_metadata_update(state, prompt_assembly),
     }
 
 
@@ -296,24 +290,16 @@ def evaluator_loop_node(state: State, llm_with_tools=None) -> State:
     repeated_tool = detect_repeated_tool_calls(evaluation_messages)
     if repeated_tool:
         tool_name, count = repeated_tool
-        loop_warning = f"""SYSTEM WARNING: Potentially infinite loop detected.
-You have called the tool `{tool_name}` {count} times consecutively with the EXACT SAME arguments.
-This suggests your current approach is not working.
-
-You MUST stops this immediately and:
-1. Analyze why the previous tool calls didn't produce the expected result
-2. Change your approach or conclusion
-3. If you have enough information, submit your evaluation decision
-
-Do NOT call `{tool_name}` with the same arguments again.
-"""
+        warning_injection = build_evaluator_repeated_tool_warning_injection(tool_name, count)
+        loop_warning = warning_injection.content
         already_has_loop_warning = any(
             isinstance(m, HumanMessage) and getattr(m, "content", "") == loop_warning
             for m in evaluation_messages
         )
         if not already_has_loop_warning:
             log_custom("EVALUATOR_LOOP", f"Detected {count} repeated calls to {tool_name}, injecting warning")
-            evaluation_messages.append(HumanMessage(content=loop_warning))
+            log_prompt_injection(warning_injection, context="repeated_tool")
+            evaluation_messages.append(warning_injection.to_human_message())
             return {"evaluation_messages": evaluation_messages}
     
     plan = state.get('plan', [])
@@ -321,6 +307,7 @@ Do NOT call `{tool_name}` with the same arguments again.
     step_results = state.get('step_results', {})
     current_task_messages = state.get('current_task_messages', [])
     evaluation_attempts = state.get('evaluation_attempts', 0)
+    prompt_runtime_events = list(state.get("prompt_runtime_events", []) or [])
     
     current_task_index = len(completed_steps)
     if current_task_index >= len(plan):
@@ -490,6 +477,10 @@ Do NOT call `{tool_name}` with the same arguments again.
                     "messages": evaluator_history_messages + [HumanMessage(content=f"Task {current_task_index + 1} completed successfully. Please proceed to the next task.")],
                     "evaluation_attempts": 0,
                     "evaluation_messages": [],  # Clear for next task
+                    "prompt_runtime_events": clear_prompt_runtime_events_for_task(
+                        prompt_runtime_events,
+                        task_index=current_task_index,
+                    ),
                 }
             
             elif status == "fail":
@@ -498,13 +489,19 @@ Do NOT call `{tool_name}` with the same arguments again.
                     send_agent_event("evaluator", "complete", f"Evaluation Failed - Retry {retry_num}/{MAX_RETRIES}", output=summary)
                     log_result("FAIL", summary)
                     
-                    feedback = (
-                        "EVALUATION_FEEDBACK:\n"
-                        f"Task {current_task_index + 1} requirements are NOT satisfied (attempt {retry_num}/{MAX_RETRIES + 1}).\n"
-                        f"{summary}\n\n"
-                        "Please resolve the issues listed above, make the necessary corrections, and reply with DONE only once all requirements have been satisfied."
+                    feedback_injection = build_evaluation_feedback_injection(
+                        current_task_index=current_task_index,
+                        retry_num=retry_num,
+                        max_retries=MAX_RETRIES,
+                        summary=summary,
                     )
-                    feedback_msg = HumanMessage(content=feedback)
+                    log_prompt_injection(feedback_injection, task_index=current_task_index, context="evaluation_feedback")
+                    feedback_msg = feedback_injection.to_human_message()
+                    prompt_runtime_events = upsert_prompt_runtime_event(
+                        prompt_runtime_events,
+                        feedback_injection,
+                        task_index=current_task_index,
+                    )
                     
                     # Persist evaluator's AIMessages and ToolMessages for checkpoint history
                     evaluator_history_messages = [
@@ -517,6 +514,7 @@ Do NOT call `{tool_name}` with the same arguments again.
                         "current_task_messages": current_task_messages + [feedback_msg],
                         "evaluation_attempts": evaluation_attempts + 1,
                         "evaluation_messages": [],  # Clear for retry
+                        "prompt_runtime_events": prompt_runtime_events,
                     }
                 
                 else:
@@ -535,6 +533,10 @@ Do NOT call `{tool_name}` with the same arguments again.
                         "step_results": new_results,
                         "evaluation_attempts": 0,
                         "evaluation_messages": [],
+                        "prompt_runtime_events": clear_prompt_runtime_events_for_task(
+                            prompt_runtime_events,
+                            task_index=current_task_index,
+                        ),
                     }
 
         # No final decision yet, return for next iteration with updated messages
@@ -548,6 +550,8 @@ Do NOT call `{tool_name}` with the same arguments again.
             evaluation_messages,
             llm_with_tools,
             agent_name='evaluator',
+            runtime_events=prompt_runtime_events,
+            task_index=current_task_index,
         )
         if did_summarize_context:
             from ..debug_logger import log_custom as _log

@@ -3,6 +3,8 @@ import { Box, Text, useStdout, useInput } from 'ink';
 import { truncateText } from '../utils/helpers.js';
 import { registerAnimationSubscriber } from './animationTick.js';
 import type { ContextUsage } from '../hooks/types.js';
+import { cliTheme } from './theme.js';
+import { matchingBackslashCommands } from '../utils/commandRegistry.js';
 
 // Star spinner frames (from cli-spinners)
 const STAR_SPINNER = {
@@ -27,7 +29,7 @@ const StarSpinner: React.FC<{ isLoading: boolean }> = ({ isLoading }) => {
     }, [isLoading]);
 
     const icon = isLoading ? STAR_SPINNER.frames[frame] : '✴';
-    return <Text color="cyan" bold>{icon} </Text>;
+    return <Text color={cliTheme.ink.primary} bold>{icon} </Text>;
 };
 
 interface PromptInputProps {
@@ -36,8 +38,11 @@ interface PromptInputProps {
     taskProgress?: { current: number; total: number } | null;
     contextUsage?: ContextUsage | null;
     checkpointPrompt?: boolean;
+    allowCheckpointSteering?: boolean;
     completedRunPrompt?: boolean;
     confirmDeleteArchive?: boolean;
+    revertConfirm?: boolean;
+    revertTargetTask?: number | null;
     startRequestConfirm?: boolean;
     pendingSubmitPreview?: string;
     planAwaitingConfirm?: boolean;
@@ -48,10 +53,11 @@ interface PromptInputProps {
     showExitWarning?: boolean;
 }
 
-const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProgress, contextUsage, checkpointPrompt, completedRunPrompt, confirmDeleteArchive, startRequestConfirm, pendingSubmitPreview, planAwaitingConfirm, prefillRevision, prefillText, previousInput, showInterruptWarning, showExitWarning }) => {
+const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProgress, contextUsage, checkpointPrompt, allowCheckpointSteering, completedRunPrompt, confirmDeleteArchive, revertConfirm, revertTargetTask, startRequestConfirm, pendingSubmitPreview, planAwaitingConfirm, prefillRevision, prefillText, previousInput, showInterruptWarning, showExitWarning }) => {
     const [query, setQuery] = useState('');
     const [lastQuery, setLastQuery] = useState('');
     const [cursorPosition, setCursorPosition] = useState(0);
+    const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
     // Ref so that useInput callbacks always read the latest cursor position
     // (avoids stale closure that scrambles pasted text)
     const cursorPositionRef = useRef(0);
@@ -67,9 +73,6 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
     // Left margin to center-align with banner's left border
     const leftMargin = Math.max(0, Math.floor((terminalWidth - bannerBoxWidth) / 2));
     
-    // Generate separator line to match full banner box width
-    const separatorLine = '─'.repeat(bannerBoxWidth);
-
     const tokenUsageLabel = contextUsage?.is_supported_model
         ? `Ctx ${Math.round(contextUsage.usage_percent ?? 0)}%`
         : 'Ctx --';
@@ -80,17 +83,44 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
         (hasTaskProgress ? taskProgressLabel.length + 2 : 0);
     const inputTextMaxWidth = Math.max(10, bannerBoxWidth - 4 - rightStatusWidth); // -4 for star icon and spacing
     const tokenUsageColor = !contextUsage?.is_supported_model
-        ? 'gray'
+        ? cliTheme.ink.muted
         : (contextUsage.usage_percent ?? 0) >= 100
-            ? 'red'
+            ? cliTheme.ink.danger
             : (contextUsage.usage_percent ?? 0) >= 75
-                ? 'yellow'
-                : 'green';
+                ? cliTheme.ink.warning
+                : cliTheme.ink.success;
+
+    const promptBorderColor = confirmDeleteArchive || revertConfirm
+        ? cliTheme.ink.danger
+        : planAwaitingConfirm || startRequestConfirm
+            ? cliTheme.ink.warning
+            : checkpointPrompt || completedRunPrompt
+                ? cliTheme.ink.accent
+                : isLoading
+                    ? cliTheme.ink.primary
+                    : cliTheme.ink.blue;
+
+    const commandHasArgs = /^\\\S+\s+/.test(query);
+    const showCommandSuggestions = !isLoading && query.startsWith('\\') && !commandHasArgs;
+    const commandSuggestions = showCommandSuggestions ? matchingBackslashCommands(query) : [];
+    const activeCommandIndex = Math.min(selectedCommandIndex, Math.max(0, commandSuggestions.length - 1));
+    const selectedCommand = commandSuggestions[activeCommandIndex];
+    const completeSelectedCommand = () => {
+        if (!selectedCommand) return;
+        setQuery(selectedCommand.command);
+        const len = selectedCommand.command.length;
+        cursorPositionRef.current = len;
+        setCursorPosition(len);
+    };
 
     // Keep cursorPositionRef in sync so useInput callbacks always see the latest value
     useEffect(() => {
         cursorPositionRef.current = cursorPosition;
     }, [cursorPosition]);
+
+    useEffect(() => {
+        setSelectedCommandIndex(0);
+    }, [query]);
 
     // Prefill input (e.g. after user declines reviewed plan and returns to compose)
     useEffect(() => {
@@ -103,6 +133,17 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
         }
     }, [prefillRevision, prefillText]);
 
+    // A checkpoint resume starts as an empty steering box, never prefilled with
+    // the original run request.
+    useEffect(() => {
+        if (checkpointPrompt) {
+            setQuery('');
+            setLastQuery('');
+            setCursorPosition(0);
+            cursorPositionRef.current = 0;
+        }
+    }, [checkpointPrompt]);
+
     // Handle paste events using useInput
     // Note: This will intercept ALL input, so we need to handle both paste and typing
     useInput((input, key) => {
@@ -113,7 +154,17 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
 
         // Handle Enter key - submit
         if (key.return) {
-            if (query.trim() || completedRunPrompt) {
+            if (showCommandSuggestions && !selectedCommand) {
+                return;
+            }
+            if (showCommandSuggestions && selectedCommand) {
+                const exactCommand = selectedCommand.command === query.trim().toLowerCase();
+                if (!exactCommand) {
+                    completeSelectedCommand();
+                    return;
+                }
+            }
+            if (query.trim() || completedRunPrompt || checkpointPrompt) {
                 setLastQuery(query);
                 const submitValue = query;
                 setQuery('');
@@ -121,6 +172,21 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
                 setCursorPosition(0);
                 onSubmit(submitValue);
             }
+            return;
+        }
+
+        if (showCommandSuggestions && selectedCommand && key.tab) {
+            completeSelectedCommand();
+            return;
+        }
+
+        if (showCommandSuggestions && commandSuggestions.length > 0 && (key.upArrow || key.downArrow)) {
+            setSelectedCommandIndex(prev => {
+                if (key.upArrow) {
+                    return prev <= 0 ? commandSuggestions.length - 1 : prev - 1;
+                }
+                return prev >= commandSuggestions.length - 1 ? 0 : prev + 1;
+            });
             return;
         }
         
@@ -196,14 +262,18 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
     // Determine placeholder text based on mode
     const placeholderText = confirmDeleteArchive
         ? "⚠ This will DELETE all archives! Type 'yes' to confirm or 'no' to cancel"
-        : completedRunPrompt
+        : revertConfirm
+            ? `Revert to Task ${revertTargetTask ?? '?'}? Type 'yes' to confirm or 'no' to cancel`
+            : completedRunPrompt
             ? "Previous results found. Enter to auto-improve (or 'no' to start fresh)"
             : startRequestConfirm
                 ? "Submit this request? (yes/no)"
                 : planAwaitingConfirm
                     ? "Proceed with this plan? (yes/no, or describe changes)"
-                    : checkpointPrompt 
-                        ? "Resume from checkpoint? (yes/no)"
+                    : checkpointPrompt
+                        ? allowCheckpointSteering
+                            ? "Resume: Enter to continue, type instructions to steer, or 'no' to start fresh"
+                            : "Resume: Enter to continue, or type 'no' to start fresh"
                         : "Type your request here...";
     
     // Truncate placeholder if needed
@@ -217,8 +287,13 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
 
     return (
         <Box flexDirection="column" marginLeft={leftMargin} marginY={2}>
-            <Text dimColor>{separatorLine}</Text>
-            <Box width={bannerBoxWidth} paddingX={1} justifyContent="space-between">
+            <Box
+                width={bannerBoxWidth}
+                borderStyle="round"
+                borderColor={promptBorderColor}
+                paddingX={1}
+                justifyContent="space-between"
+            >
                 <Box>
                     <Text>
                         <StarSpinner isLoading={isLoading} />
@@ -228,7 +303,7 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
                             <>
                                 {query === '' ? (
                                     <>
-                                        <Text inverse>{firstChar}</Text>
+                                        <Text inverse>{firstChar || ' '}</Text>
                                         <Text dimColor>{restPlaceholder}</Text>
                                     </>
                                 ) : (
@@ -253,28 +328,58 @@ const PromptInput: React.FC<PromptInputProps> = ({ onSubmit, isLoading, taskProg
                         {tokenUsageLabel}
                     </Text>
                     {hasTaskProgress ? (
-                        <Text dimColor>{`  ${taskProgressLabel}`}</Text>
+                        <>
+                            <Text dimColor>  │  </Text>
+                            <Text color={cliTheme.ink.accent}>{taskProgressLabel}</Text>
+                        </>
                     ) : null}
                 </Box>
             </Box>
-            <Text dimColor>{separatorLine}</Text>
-            {startRequestConfirm && pendingSubmitPreview ? (
-                <Box paddingX={1}>
+            {revertConfirm ? (
+                <Box paddingX={1} marginTop={1}>
+                    <Text color={cliTheme.ink.warning}>This deletes checkpoints and task folders after Task {revertTargetTask ?? '?'}</Text>
+                </Box>
+            ) : startRequestConfirm && pendingSubmitPreview ? (
+                <Box paddingX={1} marginTop={1}>
                     <Text dimColor>Request to send: </Text>
-                    <Text color="yellow">{truncateText(pendingSubmitPreview, inputTextMaxWidth - 18)}</Text>
+                    <Text color={cliTheme.ink.warning}>{truncateText(pendingSubmitPreview, inputTextMaxWidth - 18)}</Text>
                 </Box>
             ) : null}
             {showInterruptWarning ? (
-                <Box paddingX={1}>
-                    <Text color="yellow">⚠ Press ESC again to interrupt</Text>
+                <Box paddingX={1} marginTop={1}>
+                    <Text color={cliTheme.ink.warning}>⚠ Press ESC again to interrupt</Text>
                 </Box>
             ) : showExitWarning ? (
-                <Box paddingX={1}>
-                    <Text color="yellow">⚠ Press Ctrl+C again to exit</Text>
+                <Box paddingX={1} marginTop={1}>
+                    <Text color={cliTheme.ink.warning}>⚠ Press Ctrl+C again to exit</Text>
+                </Box>
+            ) : showCommandSuggestions ? (
+                <Box paddingX={1} marginTop={1} flexDirection="column">
+                    <Text color={cliTheme.ink.accent} bold>Commands</Text>
+                    {commandSuggestions.length > 0 ? (
+                        commandSuggestions.map((command, index) => {
+                            const isSelected = index === activeCommandIndex;
+                            const availableDescriptionWidth = Math.max(16, bannerBoxWidth - command.command.length - 10);
+                            return (
+                                <Text key={command.id}>
+                                    <Text color={isSelected ? cliTheme.ink.primary : cliTheme.ink.muted}>
+                                        {isSelected ? '› ' : '  '}
+                                    </Text>
+                                    <Text color={isSelected ? cliTheme.ink.text : cliTheme.ink.muted} bold={isSelected}>
+                                        {command.command}
+                                    </Text>
+                                    <Text dimColor>  {truncateText(command.description, availableDescriptionWidth)}</Text>
+                                </Text>
+                            );
+                        })
+                    ) : (
+                        <Text color={cliTheme.ink.warning}>No matching commands</Text>
+                    )}
+                    <Text dimColor>Up/Down select · Tab complete · Enter run</Text>
                 </Box>
             ) : (
-                <Box paddingX={1}>
-                    <Text dimColor>Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit</Text>
+                <Box paddingX={1} marginTop={1}>
+                    <Text dimColor>ESC interrupt · Ctrl+D/Ctrl+C exit</Text>
                 </Box>
             )}
         </Box>

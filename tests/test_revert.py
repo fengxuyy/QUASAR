@@ -6,7 +6,8 @@ from src.revert import delete_checkpoints_after, find_checkpoint_for_task, delet
 def test_delete_checkpoints_after(mock_workspace):
     """Test SQL operations for deleting checkpoints using real SQLite DB."""
     # Setup real DB in the mock workspace
-    db_path = mock_workspace / "checkpoints.sqlite"
+    db_path = mock_workspace / "quasar_logs" / "checkpoints.sqlite"
+    db_path.parent.mkdir(exist_ok=True)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
@@ -218,4 +219,3 @@ def test_find_checkpoint_edge_case_first_task():
     
     # Should find the checkpoint at the start
     assert cp_id == 'cp_start' or error is None  # Either finds it or no error
-

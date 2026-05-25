@@ -31,13 +31,11 @@ def _normalize_plan_confirmation_result(
     *,
     feedback: str = "",
 ) -> dict[str, str]:
-    """Normalize legacy and structured confirmation payloads."""
+    """Normalize structured confirmation payloads."""
     action: PlanConfirmationAction = "confirm"
     normalized_feedback = ""
 
-    if isinstance(result, bool):
-        action = "confirm" if result else "decline"
-    elif isinstance(result, str):
+    if isinstance(result, str):
         candidate = result.strip().lower()
         if candidate in {"confirm", "decline", "revise"}:
             action = candidate  # type: ignore[assignment]
@@ -64,9 +62,9 @@ def begin_plan_confirmation_wait() -> dict[str, str]:
     """Block the graph runner until the CLI sends plan_confirm (or headless auto-confirms)."""
     # Auto-confirm when AUTO_CONFIRM_PLAN env var is enabled (bypasses user review)
     if os.getenv("AUTO_CONFIRM_PLAN", "").lower() in ("true", "1", "yes", "on"):
-        return _normalize_plan_confirmation_result(True)
+        return _normalize_plan_confirmation_result("confirm")
     if _get_auto_improve_state().get("current_run_is_automatic"):
-        return _normalize_plan_confirmation_result(True)
+        return _normalize_plan_confirmation_result("confirm")
     global _plan_confirm_result
     with _plan_confirm_lock:
         _plan_confirm_event.clear()
@@ -75,19 +73,19 @@ def begin_plan_confirmation_wait() -> dict[str, str]:
     _plan_confirm_event.wait()
     with _plan_confirm_lock:
         if _plan_confirm_result is None:
-            return _normalize_plan_confirmation_result(True)
+            return _normalize_plan_confirmation_result("confirm")
         return dict(_plan_confirm_result)
 
 
 def set_plan_confirmation(
-    proceed: bool | str | dict[str, object],
+    result: str | dict[str, object],
     *,
     feedback: str = "",
 ) -> None:
     """Resume the graph after plan_review_confirm_node."""
     global _plan_confirm_result
     with _plan_confirm_lock:
-        _plan_confirm_result = _normalize_plan_confirmation_result(proceed, feedback=feedback)
+        _plan_confirm_result = _normalize_plan_confirmation_result(result, feedback=feedback)
     _plan_confirm_event.set()
 
 
@@ -123,7 +121,10 @@ def _parse_auto_improve_cycles(value) -> int:
 
 def _get_checkpoint_settings_path():
     from src.tools.base import WORKSPACE_DIR
-    return WORKSPACE_DIR / "checkpoint_settings.json"
+    from src.artifacts import get_checkpoint_settings_path, migrate_legacy_runtime_artifacts
+
+    migrate_legacy_runtime_artifacts(WORKSPACE_DIR)
+    return get_checkpoint_settings_path(WORKSPACE_DIR)
 
 
 def _load_checkpoint_settings() -> dict:
@@ -139,6 +140,7 @@ def _load_checkpoint_settings() -> dict:
 def _write_checkpoint_settings(settings: dict) -> None:
     settings_path = _get_checkpoint_settings_path()
     try:
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
         settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     except Exception:
         pass
@@ -465,7 +467,8 @@ os.environ["TERM"] = "xterm-256color"
 from src import runner
 from src.llm_config import initialize_llm, initialize_llm_for_agent
 from src.usage_tracker import generate_report, reset as reset_usage_tracker
-from src.tools.base import LOGS_DIR
+from src.tools.base import LOGS_DIR, WORKSPACE_DIR
+from src.artifacts import latest_archive_run_dir
 
 # Mutable LLM handles (rebuilt after CLI `update_env` for model-related keys).
 _bridge_llm_state = {"llm": None, "agent_llms": None}
@@ -538,7 +541,6 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_bufferin
 
 def _read_previous_input_from_conversation():
     """Read previous input from conversation.md file."""
-    from src.tools.base import LOGS_DIR
     conv_file = LOGS_DIR / "conversation.md"
     if conv_file.exists():
         try:
@@ -569,14 +571,6 @@ def _read_previous_input_from_conversation():
                 
                 return result
             
-            # Fallback: try old formats for backward compatibility
-            for line in lines:
-                if line.startswith("You: "):
-                    result = line[5:].strip()
-                    from src.runner import AUTO_IMPROVE_MESSAGE
-                    if result == AUTO_IMPROVE_MESSAGE:
-                        return "Auto-improve"
-                    return result
         except Exception:
             pass
     return ""
@@ -676,6 +670,8 @@ def _execute_prompt_sequence(prompt: str, restart: bool) -> None:
 
 
 def main():
+    global _graph_cache_stale
+
     send_json("ready", {})
     
     try:
@@ -769,6 +765,8 @@ def main():
                             log_custom("BRIDGE", f"Failed to generate interrupted report: {e}")
                 previous_input = ""
                 history = None
+                checkpoint_next = []
+                can_resume_steering = False
                 
                 if exists:
                     previous_input = _read_previous_input_from_conversation()
@@ -782,6 +780,12 @@ def main():
                             config = get_thread_config()
                             state = graph.get_state(config)
                             state_history = list(graph.get_state_history(config))
+                            checkpoint_next = list(getattr(state, "next", ()) or []) if state else []
+                            from src.resume_steering import checkpoint_allows_resume_steering
+                            can_resume_steering = checkpoint_allows_resume_steering(
+                                checkpoint_next,
+                                state.values if state else {},
+                            )
                             
                             if state and state.values:
                                 # Use is_replanning from state (most reliable)
@@ -798,12 +802,14 @@ def main():
                 send_json("checkpoint_info", {
                     "exists": exists,
                     "previous_input": previous_input,
-                    "history": history
+                    "history": history,
+                    "checkpoint_next": checkpoint_next,
+                    "can_resume_steering": can_resume_steering
                 })
                 
                 # Check for completed run state (no checkpoint but archive with runs exists)
                 # Note: Use archive_exists_without_checkpoint() instead of final_results_exists_and_not_empty()
-                # because after a run completes, final_results is moved to archive/run_N/
+                # because after a run completes, final_results is moved into an archive run folder
                 if not exists and (archive_exists_without_checkpoint() or final_results_exists_and_not_empty()):
                     summary_content = ""
                     summary_path = WORKSPACE_DIR / "final_results" / "summary.md"
@@ -811,25 +817,11 @@ def main():
                     # If local summary doesn't exist, check the latest archive
                     if not summary_path.exists():
                         try:
-                            archive_dir = WORKSPACE_DIR / "archive"
-                            if archive_dir.exists():
-                                max_run_num = 0
-                                latest_run_dir = None
-                                
-                                for item in archive_dir.iterdir():
-                                    if item.is_dir() and item.name.startswith("run_"):
-                                        try:
-                                            run_num = int(item.name.split("_", 1)[1])
-                                            if run_num > max_run_num:
-                                                max_run_num = run_num
-                                                latest_run_dir = item
-                                        except (ValueError, IndexError):
-                                            continue
-                                
-                                if latest_run_dir:
-                                    archive_summary = latest_run_dir / "final_results" / "summary.md"
-                                    if archive_summary.exists():
-                                        summary_path = archive_summary
+                            latest_run_dir = latest_archive_run_dir(WORKSPACE_DIR)
+                            if latest_run_dir:
+                                archive_summary = latest_run_dir / "final_results" / "summary.md"
+                                if archive_summary.exists():
+                                    summary_path = archive_summary
                         except Exception:
                             pass
 
@@ -861,14 +853,17 @@ def main():
                     send_json("fresh_start_complete", {"success": False, "error": str(e)})
                 
             elif command == "clear_checkpoint":
-                # Clear checkpoint and workspace but keep archives
+                # Clear checkpoint and workspace but keep archives.
+                # Strategist-only checkpoints have not touched workspace files yet, so preserve them.
                 from src.results import cleanup_workspace_keep_archive, archive_exists_without_checkpoint
-                from src.checkpoint import delete_checkpoint
+                from src.checkpoint import delete_checkpoint, checkpoint_is_strategist_stage
                 from src.tools.base import WORKSPACE_DIR
                 
                 try:
                     _clear_auto_improve_state(persist=False)
-                    cleanup_workspace_keep_archive()
+                    strategist_stage = checkpoint_is_strategist_stage()
+                    if not strategist_stage:
+                        cleanup_workspace_keep_archive()
                     delete_checkpoint()
                     
                     # Check if archives exist - if so, show completed_run_info prompt
@@ -876,25 +871,11 @@ def main():
                         # Get summary from latest archive
                         summary_content = ""
                         try:
-                            archive_dir = WORKSPACE_DIR / "archive"
-                            if archive_dir.exists():
-                                max_run_num = 0
-                                latest_run_dir = None
-                                
-                                for item in archive_dir.iterdir():
-                                    if item.is_dir() and item.name.startswith("run_"):
-                                        try:
-                                            run_num = int(item.name.split("_", 1)[1])
-                                            if run_num > max_run_num:
-                                                max_run_num = run_num
-                                                latest_run_dir = item
-                                        except (ValueError, IndexError):
-                                            continue
-                                
-                                if latest_run_dir:
-                                    archive_summary = latest_run_dir / "final_results" / "summary.md"
-                                    if archive_summary.exists():
-                                        summary_content = archive_summary.read_text(encoding='utf-8')
+                            latest_run_dir = latest_archive_run_dir(WORKSPACE_DIR)
+                            if latest_run_dir:
+                                archive_summary = latest_run_dir / "final_results" / "summary.md"
+                                if archive_summary.exists():
+                                    summary_content = archive_summary.read_text(encoding='utf-8')
                         except Exception:
                             pass
                         
@@ -905,12 +886,63 @@ def main():
                         })
                     else:
                         # No archives - just confirm checkpoint cleared
-                        send_json("clear_checkpoint_complete", {"success": True})
+                        send_json("clear_checkpoint_complete", {
+                            "success": True,
+                            "workspace_reset": not strategist_stage,
+                        })
                 except Exception as e:
                     send_json("clear_checkpoint_complete", {"success": False, "error": str(e)})
+
+            elif command == "revert":
+                try:
+                    target_task = int(data.get("target_task", 0))
+                except (TypeError, ValueError):
+                    target_task = 0
+
+                if target_task < 1:
+                    send_json("revert_complete", {
+                        "success": False,
+                        "error": "Invalid target task. Use a positive task number."
+                    })
+                    continue
+
+                if exec_thread is not None and exec_thread.is_alive():
+                    send_json("revert_complete", {
+                        "success": False,
+                        "error": "Cannot revert while execution is running"
+                    })
+                    continue
+
+                try:
+                    from src.checkpoint import checkpoint_file_exists
+
+                    if not checkpoint_file_exists():
+                        send_json("revert_complete", {
+                            "success": False,
+                            "error": "No checkpoint exists to revert"
+                        })
+                        continue
+
+                    send_json("status", {
+                        "text": f"Reverting to Task {target_task}...",
+                        "loading": True,
+                    })
+
+                    from src.revert import revert_to_task
+
+                    result = revert_to_task(target_task)
+                    if result.get("success"):
+                        _graph_cache_stale = True
+                    send_json("revert_complete", result)
+                except Exception as e:
+                    send_json("revert_complete", {
+                        "success": False,
+                        "error": str(e),
+                        "traceback": traceback.format_exc(),
+                    })
                 
             elif command == "archive_and_continue":
-                # Archive current workspace (move to archive/run_N) and prepare for improvement
+                # Archive current workspace and prepare for improvement
                 from src.results import setup_final_results_folder
                 
                 try:
@@ -921,16 +953,12 @@ def main():
                     send_json("archive_complete", {"success": False, "error": str(e)})
                 
             elif command == "plan_confirm":
-                if "action" in data or "feedback" in data:
-                    set_plan_confirmation(
-                        {
-                            "action": data.get("action", "confirm"),
-                            "feedback": data.get("feedback", ""),
-                        }
-                    )
-                else:
-                    proceed = data.get("proceed", True)
-                    set_plan_confirmation(bool(proceed))
+                set_plan_confirmation(
+                    {
+                        "action": data.get("action", "confirm"),
+                        "feedback": data.get("feedback", ""),
+                    }
+                )
 
             elif command == "interrupt":
                 interrupt_event.set()

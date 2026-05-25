@@ -11,14 +11,35 @@ from collections import defaultdict
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from src.agents.utils.tool_helpers import _get_execute_python_status_pair
+from src.resume_steering import RESUME_STEERING_MARKER
 
 
 CHECKIN_DECISION_TOOLS = {"continue_execution", "interrupt_execution"}
+REMOVED_FILE_TOOLS = {"write_file", "move_file", "rename_file", "delete_file"}
 CHECKIN_CONTROL_PHRASES = (
     "Continue this execution check-in and finish with either",
     "Please call either `continue_execution(summary='...')` or",
     'Please call either `continue_execution(summary="...")` or',
+    "Please call either `continue_execution(summary='...', next_check_in_after=<minutes>)`",
+    'Please call either `continue_execution(summary="...", next_check_in_after=<minutes>)`',
 )
+HISTORY_MODEL_TEXT_MAX_CHARS = 20000
+HISTORY_PLAN_MAX_CHARS = 60000
+HISTORY_STEP_RESULT_MAX_CHARS = 30000
+
+
+def _truncate_history_text(
+    content: str,
+    max_length: int = HISTORY_MODEL_TEXT_MAX_CHARS,
+    label: str = "content",
+) -> str:
+    """Bound checkpoint payload text so large restores stay responsive in the UI."""
+    if not isinstance(content, str) or len(content) <= max_length:
+        return content
+    return (
+        content[:max_length]
+        + f"\n\n... [{label} truncated for responsive checkpoint display]"
+    )
 
 # Strategist planning / revision prompts (also used to pick the richest transcript for metadata)
 REVISION_PROMPT_MARKER = (
@@ -79,8 +100,7 @@ def _filter_checkin_session_messages(messages: list) -> list:
 
         if msg_type == "AIMessage":
             starts_checkin_without_prompt = (
-                "execute_temporary_python" in tool_names
-                or bool(tool_names & CHECKIN_DECISION_TOOLS)
+                bool(tool_names & CHECKIN_DECISION_TOOLS)
             )
             if starts_checkin_without_prompt:
                 in_checkin_session = True
@@ -200,6 +220,27 @@ def _extract_evaluation_failed_item(content: str) -> dict | None:
     }
 
 
+def _extract_resume_steering_item(content: str) -> dict | None:
+    """Build a runtime-style history item for user steering supplied on resume."""
+    if not content.startswith(RESUME_STEERING_MARKER):
+        return None
+
+    steering = content
+    marker = "The user sent this message while the interrupted run was paused:\n\n"
+    if marker in steering:
+        steering = steering.split(marker, 1)[1]
+    if "\n\nUse this to steer" in steering:
+        steering = steering.split("\n\nUse this to steer", 1)[0]
+    steering = steering.strip()
+
+    return {
+        "type": "tool",
+        "content": "User Steering Received",
+        "output": steering,
+        "agent": "operator",
+    }
+
+
 def _extract_target_name(val) -> str:
     """Convert a path value to string, handling list-typed values from tool args.
     Formats multiple paths as 'path1, path2' or 'N items' for display."""
@@ -262,14 +303,11 @@ def _extract_text(content_obj) -> str:
 TOOL_DISPLAY_MESSAGES = {
     'query_rag': 'Queried RAG',
     'read_file': 'Read',
-    'write_file': 'Wrote',
     'edit_file': 'Edited',
-    'delete_file': 'Deleted',
     'list_directory': 'Listed',
-    'move_file': 'Moved',
-    'rename_file': 'Renamed',
     'execute_code': 'Executed',
     'execute_python': 'Executed',  # Legacy alias
+    'execute_temporary_python': 'Executed',
     'analyze_image': 'Analyzed image',
     'search_web': 'Searched web',
     'fetch_web_page': 'Fetched web page',
@@ -279,7 +317,7 @@ TOOL_DISPLAY_MESSAGES = {
 
 
 def _execute_python_panel_output(tool_args: dict, content_str: str) -> str:
-    """Build execute_python/execute_code panel text to match runtime (_handle_execute_python_status)."""
+    """Build execute-style Python panel text to match runtime (_handle_execute_python_status)."""
     if not isinstance(tool_args, dict):
         tool_args = {}
     file_path = tool_args.get("file_path") or ""
@@ -294,8 +332,8 @@ def _execute_python_panel_output(tool_args: dict, content_str: str) -> str:
 
 
 def _step_complete_status_execute_python(tool_name: str, tool_args: dict) -> str:
-    """Status line for execute_python/execute_code step_complete — matches live UI."""
-    if tool_name in ("execute_python", "execute_code") and isinstance(tool_args, dict):
+    """Status line for execute-style Python step_complete — matches live UI."""
+    if tool_name in ("execute_python", "execute_code", "execute_temporary_python") and isinstance(tool_args, dict):
         _, complete = _get_execute_python_status_pair(tool_args)
         return complete
     return format_tool_display(tool_name, tool_args or {})
@@ -350,30 +388,6 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
             return "Evaluation Failed"
         return "Submitted evaluation"
     
-    # Special handling for move_file — args use source_path/destination_path (match _handle_move_file_status)
-    if tool_name == 'move_file' and tool_args:
-        source_path = tool_args.get('source_path')
-        destination_path = tool_args.get('destination_path')
-        src_display = (
-            os.path.basename(str(source_path).strip().rstrip('/'))
-            if source_path
-            else 'file'
-        )
-        dst_display = str(destination_path).strip() if destination_path else 'destination'
-        return f"Moved {src_display} to {dst_display}"
-    
-    # Special handling for rename_file — match _handle_rename_file_status (not just file_path)
-    if tool_name == 'rename_file' and tool_args:
-        file_path = tool_args.get('file_path')
-        new_name = tool_args.get('new_name')
-        src_display = (
-            os.path.basename(str(file_path).strip().rstrip('/'))
-            if file_path
-            else 'file'
-        )
-        dst_display = str(new_name).strip() if new_name else 'new name'
-        return f"Renamed {src_display} to {dst_display}"
-    
     # Special handling for grep_search - show pattern
     if tool_name == 'grep_search' and tool_args:
         pattern = tool_args.get('pattern', '')
@@ -386,7 +400,7 @@ def format_tool_display(tool_name: str, tool_args: dict) -> str:
             return f"Grepped files {display_pattern}"
     
     # Special handling for execute_code - show file name or truncated code
-    if tool_name in ('execute_code', 'execute_python') and tool_args:
+    if tool_name in ('execute_code', 'execute_python', 'execute_temporary_python') and tool_args:
         is_trial = tool_args.get('is_trial_run', False)
         file_path = tool_args.get('file_path')
         code = tool_args.get('code')
@@ -465,21 +479,6 @@ def _get_content(msg) -> str:
     return _extract_text(getattr(msg, 'content', ''))
 
 
-def _create_code_snippet_item(tool_args: dict) -> dict:
-    """Create a code-snippet item for write_file tool calls."""
-    file_path = tool_args.get('file_path', 'file')
-    file_name = _extract_target_name(file_path) if file_path else 'file'
-    return {
-        "type": "code-snippet",
-        "content": {
-            "name": file_name,
-            "content": tool_args['content'],
-            "isComplete": True,
-            "isContinuation": False
-        }
-    }
-
-
 def _detect_error_in_content(content_str: str, status: str = '') -> bool:
     """Detect if a tool message content indicates an error."""
     content_lower = content_str.lower()
@@ -516,14 +515,11 @@ def _format_error_content(tool_name: str, tool_args: dict, content_str: str) -> 
         tool_error_names = {
             'query_rag': 'Query RAG Failed',
             'read_file': 'Read File Failed',
-            'write_file': 'Write File Failed',
             'edit_file': 'Edit File Failed',
-            'delete_file': 'Delete File Failed',
             'list_directory': 'List Directory Failed',
-            'move_file': 'Move File Failed',
-            'rename_file': 'Rename File Failed',
             'execute_python': 'Execute Python Failed',
             'execute_code': 'Execute Code Failed',
+            'execute_temporary_python': 'Temporary Python Parse Failed',
             'analyze_image': 'Analyze Image Failed',
             'search_web': 'Search Web Failed',
             'fetch_web_page': 'Fetch Web Page Failed',
@@ -582,7 +578,7 @@ def _format_error_content(tool_name: str, tool_args: dict, content_str: str) -> 
             return f"Failed to fetch {display_url}"
         return f"Error fetching {display_url}"
     
-    elif tool_name in ("execute_code", "execute_python"):
+    elif tool_name in ("execute_code", "execute_python", "execute_temporary_python"):
         file_path = tool_args.get("file_path", "script.py")
         file_name = _extract_target_name(file_path) if file_path else 'script'
         is_trial = tool_args.get('is_trial_run', False)
@@ -719,7 +715,7 @@ def _model_text_looks_like_tool_validation(text: str) -> bool:
 
 
 def _merge_orphan_execute_tool_validation_items(items: list) -> None:
-    """In-place: merge execute_python/execute_code tool row + following validation model-text.
+    """In-place: merge execute-style tool row + following validation model-text.
 
     When tool.invoke raises ValidationError there is no ToolMessage; the next AIMessage
     carries format_validation_error text. Without this merge the UI only shows a bare
@@ -732,7 +728,7 @@ def _merge_orphan_execute_tool_validation_items(items: list) -> None:
         if (
             isinstance(cur, dict)
             and cur.get("type") == "tool"
-            and cur.get("name") in ("execute_python", "execute_code")
+            and cur.get("name") in ("execute_python", "execute_code", "execute_temporary_python")
             and isinstance(nxt, dict)
             and nxt.get("type") == "model-text"
             and _model_text_looks_like_tool_validation((nxt.get("content") or "").strip())
@@ -795,7 +791,9 @@ def _count_relevant_task_messages(messages: list) -> int:
         if msg_type in {"AIMessage", "ToolMessage"}:
             count += 1
         elif msg_type == "HumanMessage" and (
-            "EVALUATION_FEEDBACK" in content or _parse_checkin_summary_message(content)
+            "EVALUATION_FEEDBACK" in content
+            or _parse_checkin_summary_message(content)
+            or content.startswith(RESUME_STEERING_MARKER)
         ):
             count += 1
     return count
@@ -880,7 +878,7 @@ def _apply_tool_message_to_task_history(
         if success_content:
             matching_tool["content"] = success_content
 
-    if tool_name in ("execute_code", "execute_python"):
+    if tool_name in ("execute_code", "execute_python", "execute_temporary_python"):
         code_result = {
             "type": "code-result",
             "content": {
@@ -960,6 +958,12 @@ def _reconstruct_task_history_from_state(
         content = _get_content(msg).strip()
 
         if msg_type == "HumanMessage":
+            steering_item = _extract_resume_steering_item(content)
+            if steering_item:
+                operator_items.append(steering_item)
+                ordered_items.append(steering_item)
+                continue
+
             failed_item = _extract_evaluation_failed_item(content)
             if failed_item:
                 evaluator_items.append(failed_item)
@@ -970,7 +974,11 @@ def _reconstruct_task_history_from_state(
             tool_calls = _get_tool_calls(msg)
             for tc in tool_calls:
                 tool_name, tool_args, tool_id = _extract_tool_info(tc)
-                if not tool_name or tool_name in {"complete_task", "submit_evaluation"}:
+                if (
+                    not tool_name
+                    or tool_name in {"complete_task", "submit_evaluation"}
+                    or tool_name in REMOVED_FILE_TOOLS
+                ):
                     continue
                 tool_item = {
                     "type": "tool",
@@ -986,7 +994,7 @@ def _reconstruct_task_history_from_state(
             if content and not _should_skip_task_ai_content(content):
                 item = {
                     "type": "model-text",
-                    "content": content,
+                    "content": _truncate_history_text(content, label="model text"),
                     "agent": "operator",
                 }
                 operator_items.append(item)
@@ -1016,7 +1024,11 @@ def _reconstruct_task_history_from_state(
         if msg_type == "AIMessage":
             for tc in _get_tool_calls(msg):
                 tool_name, tool_args, tool_id = _extract_tool_info(tc)
-                if not tool_name or tool_name == "submit_evaluation":
+                if (
+                    not tool_name
+                    or tool_name == "submit_evaluation"
+                    or tool_name in REMOVED_FILE_TOOLS
+                ):
                     continue
                 tool_item = {
                     "type": "tool",
@@ -1368,7 +1380,11 @@ def extract_checkpoint_history(
                 
                 # Skip complete_task and submit_evaluation with status='pass' (summary comes from step_results)
                 # But keep submit_evaluation with status='fail' to show failed evaluations
-                if not tool_name or tool_name == 'complete_task':
+                if (
+                    not tool_name
+                    or tool_name == 'complete_task'
+                    or tool_name in REMOVED_FILE_TOOLS
+                ):
                     continue
                 if tool_name == 'submit_evaluation' and tool_args.get('status', '').lower() == 'pass':
                     continue
@@ -1443,7 +1459,7 @@ def extract_checkpoint_history(
                     if not is_evaluator_msg:
                         item = {
                             "type": "model-text",
-                            "content": content,
+                            "content": _truncate_history_text(content, label="model text"),
                             "agent": agent_name
                         }
                         target_list.append(item)
@@ -1500,8 +1516,8 @@ def extract_checkpoint_history(
                     if success_content:
                         matching_tool["content"] = success_content
                 
-                # Add code-result for execute_code/execute_python
-                if tool_name in ("execute_code", "execute_python"):
+                # Add code-result for execute-style Python tools
+                if tool_name in ("execute_code", "execute_python", "execute_temporary_python"):
                     # Match runtime behavior: same status line as step_complete and panel
                     # (code preamble + truncated stdout), not only the raw ToolMessage body.
                     code_result = {
@@ -1635,7 +1651,7 @@ def extract_checkpoint_history(
             if not in_evaluator:
                 item = {
                     "type": "model-text",
-                    "content": content,
+                    "content": _truncate_history_text(content, label="model text"),
                     "agent": "operator"
                 }
                 operator_items_by_task[current_task_in_history].append(item)
@@ -1656,7 +1672,11 @@ def extract_checkpoint_history(
                 for tc in tool_calls:
                     tool_name, tool_args, tool_id = _extract_tool_info(tc)
                     
-                    if not tool_name or tool_name == 'submit_evaluation':
+                    if (
+                        not tool_name
+                        or tool_name == 'submit_evaluation'
+                        or tool_name in REMOVED_FILE_TOOLS
+                    ):
                         continue
                     
                     # Add tool item
@@ -1756,15 +1776,24 @@ def extract_checkpoint_history(
     
     return {
         "plan": plan,
-        "initial_plan_text": initial_plan_text,
-        "full_plan_text": full_plan_text,
-        "reviewed_plan_text": reviewed_plan_text,
-        "user_revised_plan_texts": user_revised_plan_texts,
-        "user_revised_plan_feedbacks": user_revised_plan_feedbacks,
+        "initial_plan_text": _truncate_history_text(initial_plan_text, HISTORY_PLAN_MAX_CHARS, "plan"),
+        "full_plan_text": _truncate_history_text(full_plan_text, HISTORY_PLAN_MAX_CHARS, "plan"),
+        "reviewed_plan_text": _truncate_history_text(reviewed_plan_text, HISTORY_PLAN_MAX_CHARS, "plan"),
+        "user_revised_plan_texts": [
+            _truncate_history_text(text, HISTORY_PLAN_MAX_CHARS, "plan")
+            for text in user_revised_plan_texts
+        ],
+        "user_revised_plan_feedbacks": [
+            _truncate_history_text(text, HISTORY_MODEL_TEXT_MAX_CHARS, "feedback")
+            for text in user_revised_plan_feedbacks
+        ],
         "final_plan_status": final_plan_status,
         "final_plan_update_status": final_plan_update_status,
         "completed_steps": completed_steps,
-        "step_results": {str(k): v for k, v in step_results.items()},
+        "step_results": {
+            str(k): _truncate_history_text(v, HISTORY_STEP_RESULT_MAX_CHARS, "task summary")
+            for k, v in step_results.items()
+        },
         "current_task": len(completed_steps) + 1,
         "total_tasks": len(plan),
         "operator_tools": operator_tools,

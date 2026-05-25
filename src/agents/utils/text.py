@@ -2,6 +2,7 @@
 Text extraction and formatting utilities.
 """
 
+import re
 from typing import Any, Dict, List
 from langchain_core.messages import HumanMessage
 
@@ -139,6 +140,18 @@ def format_plan(plan: List[str]) -> str:
     return "\n".join(plan)
 
 
+def _format_task_summary_title(task_num: int, step_desc: str) -> str:
+    """Format the task summary title as a markdown heading."""
+    title = (step_desc or "").strip()
+    title = re.sub(r"^#{1,6}\s*", "", title).strip()
+    title = title.replace("**", "").strip()
+    title = re.sub(r"^Task\s+\d+\s*[:：]\s*", "", title, flags=re.IGNORECASE).strip()
+
+    if title:
+        return f"### **Task {task_num}: {title}**"
+    return f"### **Task {task_num}**"
+
+
 def format_history(step_results: Dict[int, str], completed_steps: List[str]) -> str:
     """Format task history from step results with improved markdown.
     
@@ -158,8 +171,7 @@ def format_history(step_results: Dict[int, str], completed_steps: List[str]) -> 
         step_desc = completed_steps[i] if i < len(completed_steps) else "Unknown step"
         summary = step_results.get(i, "No summary recorded.")
         
-        # Create header with task number and step description
-        task_block = f"### Task {task_num}: {step_desc}\n\n"
+        task_block = f"{_format_task_summary_title(task_num, step_desc)}\n\n"
         
         # Format the summary - if multi-line, keep as-is; otherwise wrap nicely
         summary_clean = summary.strip()

@@ -1,4 +1,5 @@
 from src.agents.utils import tool_helpers
+from src.agents.utils.tool_helpers import _get_execute_python_status_pair, get_execute_python_status
 
 
 def test_update_agent_status_includes_query_rag_output_on_success(monkeypatch):
@@ -25,3 +26,22 @@ def test_update_agent_status_includes_query_rag_output_on_success(monkeypatch):
         ),
         (("operator", "update", "Analysing Task"), {}),
     ]
+
+
+def test_execute_python_status_includes_check_in_after():
+    status, complete = _get_execute_python_status_pair({
+        "file_path": "task_1/test.py",
+        "check_in_after": 5,
+    })
+
+    assert status == "Executing test.py (5 min check-in)"
+    assert complete == "Executed test.py"
+
+
+def test_execute_python_status_formats_fractional_check_in_after():
+    status = get_execute_python_status({
+        "code": "print('hello')",
+        "check_in_after": "2.5",
+    })
+
+    assert status == "Executing print('hello') (2.5 min check-in)"

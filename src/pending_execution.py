@@ -10,8 +10,9 @@ from typing import Optional, Dict, Any
 
 from .tools.base import WORKSPACE_DIR
 from .debug_logger import log_custom
+from .artifacts import get_pending_execution_path, migrate_legacy_runtime_artifacts
 
-PENDING_EXECUTION_FILE = WORKSPACE_DIR / "pending_execution.json"
+PENDING_EXECUTION_FILE = get_pending_execution_path(WORKSPACE_DIR)
 
 
 def save_pending_execution(ai_message_content: str, tool_call: Dict[str, Any], task_index: int):
@@ -25,6 +26,8 @@ def save_pending_execution(ai_message_content: str, tool_call: Dict[str, Any], t
         task_index: The current task index (0-based)
     """
     try:
+        migrate_legacy_runtime_artifacts(WORKSPACE_DIR)
+        PENDING_EXECUTION_FILE.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "ai_message_content": ai_message_content,
             "tool_call": tool_call,
@@ -42,6 +45,7 @@ def load_pending_execution() -> Optional[Dict[str, Any]]:
     Returns:
         Dict with pending execution data, or None if no pending execution.
     """
+    migrate_legacy_runtime_artifacts(WORKSPACE_DIR)
     if PENDING_EXECUTION_FILE.exists():
         try:
             data = json.loads(PENDING_EXECUTION_FILE.read_text())
@@ -55,6 +59,7 @@ def load_pending_execution() -> Optional[Dict[str, Any]]:
 
 def clear_pending_execution():
     """Clear pending execution state after successful completion."""
+    migrate_legacy_runtime_artifacts(WORKSPACE_DIR)
     if PENDING_EXECUTION_FILE.exists():
         try:
             PENDING_EXECUTION_FILE.unlink()

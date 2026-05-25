@@ -3,6 +3,10 @@ import sqlite3
 from unittest.mock import patch, MagicMock
 from src.checkpoint import create_checkpoint_infrastructure, delete_checkpoint, is_connection_valid, checkpoint_file_exists, DB_PATH
 
+
+def _logs_dir(workspace):
+    return workspace / "quasar_logs"
+
 def test_create_checkpoint_infrastructure_success(mock_workspace):
     """Test successful creation of checkpoint infra with real DB."""
     # We won't patch sqlite3.connect, so it connects to real DB file
@@ -21,7 +25,7 @@ def test_create_checkpoint_infrastructure_success(mock_workspace):
         src.checkpoint.create_checkpoint_infrastructure(mock_builder)
         
         # Verify DB file exists
-        assert (mock_workspace / "checkpoints.sqlite").exists()
+        assert (_logs_dir(mock_workspace) / "checkpoints.sqlite").exists()
         
         # Verify compilation with checkpointer
         mock_builder.compile.assert_called_once()
@@ -44,21 +48,25 @@ def test_create_checkpoint_infrastructure_fallback():
 def test_delete_checkpoint(mock_workspace):
     """Test deletion of checkpoint files with real files."""
     # Create dummy files
-    (mock_workspace / "checkpoints.sqlite").touch()
-    (mock_workspace / "checkpoints.sqlite-shm").touch()
-    (mock_workspace / "checkpoint_settings.json").touch()
+    logs_dir = _logs_dir(mock_workspace)
+    logs_dir.mkdir(exist_ok=True)
+    (logs_dir / "checkpoints.sqlite").touch()
+    (logs_dir / "checkpoints.sqlite-shm").touch()
+    (logs_dir / "checkpoint_settings.json").touch()
+    (logs_dir / "pending_execution.json").touch()
     
     # Establish a real connection to simulate active session
     import src.checkpoint
-    src.checkpoint._conn = sqlite3.connect(mock_workspace / "checkpoints.sqlite")
+    src.checkpoint._conn = sqlite3.connect(logs_dir / "checkpoints.sqlite")
     
     # Call
     src.checkpoint.delete_checkpoint()
     
     # Verify files are gone
-    assert not (mock_workspace / "checkpoints.sqlite").exists()
-    assert not (mock_workspace / "checkpoints.sqlite-shm").exists()
-    assert not (mock_workspace / "checkpoint_settings.json").exists()
+    assert not (logs_dir / "checkpoints.sqlite").exists()
+    assert not (logs_dir / "checkpoints.sqlite-shm").exists()
+    assert not (logs_dir / "checkpoint_settings.json").exists()
+    assert not (logs_dir / "pending_execution.json").exists()
     
     # Verify connection global is cleared
     assert src.checkpoint._conn is None
@@ -72,7 +80,7 @@ def test_is_connection_valid(mock_workspace):
     assert src.checkpoint.is_connection_valid() is False
         
     # Case 2: Valid
-    src.checkpoint._conn = sqlite3.connect(mock_workspace / "checkpoints.sqlite")
+    src.checkpoint._conn = sqlite3.connect(_logs_dir(mock_workspace) / "checkpoints.sqlite")
     assert src.checkpoint.is_connection_valid() is True
     
     # Case 3: Error (Closed connection)

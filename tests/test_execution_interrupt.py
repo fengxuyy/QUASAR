@@ -17,8 +17,6 @@ from collections import deque
 from unittest.mock import patch, MagicMock, call
 from pathlib import Path
 
-DEFAULT_TIMEOUT_MINUTES = 60.0
-
 
 class TestInterruptRunningExecution:
     """Tests for the interrupt_running_execution function in execution.py."""
@@ -124,13 +122,25 @@ class TestInterruptExecutionTool:
         assert "INTERRUPT_EXECUTION" in result
         assert reason in result
     
-    def test_continue_execution_tool_returns_correct_format(self):
+    def test_continue_execution_tool_requires_next_check_in_after(self):
         """Test that continue_execution tool returns correctly formatted response."""
         from src.tools.execution_check import continue_execution
-        
-        result = continue_execution.invoke({})
-        
-        assert result == "CONTINUE_EXECUTION"
+
+        schema = continue_execution.args_schema.model_json_schema()
+
+        assert "next_check_in_after" in schema.get("required", [])
+
+    def test_continue_execution_tool_accepts_next_check_in_after(self):
+        """The agent can schedule the next check-in when continuing."""
+        from src.tools.execution_check import continue_execution
+
+        result = continue_execution.invoke({
+            "summary": "Progressing normally",
+            "next_check_in_after": 12.5,
+        })
+
+        assert "CONTINUE_EXECUTION" in result
+        assert "NEXT_CHECK_IN_AFTER_MINUTES: 12.5" in result
 
     def test_execute_temporary_python_parses_existing_results(self, mock_workspace):
         """Check-in temporary Python should be able to parse current result files."""
@@ -333,27 +343,21 @@ class TestInterruptExecutionTool:
         assert "file_path" in result
         assert "not supported" in result
 
-    def test_execute_temporary_python_rejects_timeout_override(self):
-        """The temp parser should enforce its fixed timeout contract."""
+    def test_execute_temporary_python_schema_does_not_expose_timeout(self):
+        """The temp parser should not expose a user-controlled timeout."""
         from src.tools.execution_check import execute_temporary_python
 
-        result = execute_temporary_python.invoke({
-            "code": "print('parsed')",
-            "timeout": 0.1,
-        })
+        assert "timeout" not in execute_temporary_python.args
 
-        assert "timeout" in result
-        assert "fixed" in result
-
-    def test_execute_temporary_python_uses_fixed_timeout_wrapper(self):
-        """Temp check-in parsing should delegate to execute_python with a fixed timeout."""
+    def test_execute_temporary_python_uses_internal_runtime_guard(self):
+        """Temp check-in parsing should delegate with an internal runtime guard."""
         from src.tools.execution_check import execute_temporary_python
 
         with patch('src.tools.execution_check.execute_python_with_state_preserved', return_value="ok") as mock_exec:
             result = execute_temporary_python.invoke({"code": "print('parsed')"})
 
         assert result == "ok"
-        mock_exec.assert_called_once_with(timeout=5.0, code="print('parsed')")
+        mock_exec.assert_called_once_with(code="print('parsed')", max_runtime_minutes=5.0)
 
     def test_execute_temporary_python_cleans_up_temp_script(self, mock_workspace):
         """Temp parsing should not leak disposable execution scripts."""
@@ -412,11 +416,15 @@ class TestInterruptExecutionTool:
             execution_module._process_output_capture = None
 
     def test_execute_temporary_python_is_not_part_of_general_operator_tools(self):
-        """The temp parser should only be available in check-ins, not the main tool list."""
+        """Only supported general-purpose tools should be in the main tool list."""
         from src.tools import get_all_tools
 
         tool_names = {tool.name for tool in get_all_tools()}
         assert "execute_temporary_python" not in tool_names
+        assert "write_file" not in tool_names
+        assert "move_file" not in tool_names
+        assert "rename_file" not in tool_names
+        assert "delete_file" not in tool_names
 
 
 class TestProcessGroupTermination:
@@ -436,7 +444,7 @@ class TestProcessGroupTermination:
         
         with patch('os.getpgid', return_value=11111), \
              patch('src.tools.execution._find_processes_in_group', return_value=[]):
-            execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "code": "print('test')"})
+            execute_python.invoke({"code": "print('test')", "check_in_after": 5})
         
         # Verify Popen was called with start_new_session=True
         popen_call = mock_popen.call_args
@@ -458,7 +466,6 @@ class TestProcessGroupTermination:
         # Simulate long-running process that triggers check-in
         try:
             with patch('os.getpgid', return_value=22222) as mock_getpgid, \
-                 patch('src.tools.execution._get_check_interval', return_value=0.01), \
                  patch('src.tools.execution._find_processes_in_group', return_value=[]), \
                  patch('time.sleep'):  # Speed up the test
                 
@@ -466,7 +473,10 @@ class TestProcessGroupTermination:
                 mock_process.poll.return_value = None
                 mock_process.communicate.return_value = ("", "")
                 
-                result = execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "code": "import time; time.sleep(100)"})
+                result = execute_python.invoke({
+                    "check_in_after": 0.0001,
+                    "code": "import time; time.sleep(100)",
+                })
             
             # Verify getpgid was called to get the process group ID
             mock_getpgid.assert_called_with(22222)
@@ -528,10 +538,11 @@ class TestAgentInterruptExecution:
         """Test that continue_execution returns the correct marker for operator to resume."""
         from src.tools.execution_check import continue_execution
         
-        result = continue_execution.invoke({})
+        result = continue_execution.invoke({"next_check_in_after": 10})
         
         # The operator checks for this exact string to know to resume
-        assert result == "CONTINUE_EXECUTION"
+        assert "CONTINUE_EXECUTION" in result
+        assert "NEXT_CHECK_IN_AFTER_MINUTES: 10" in result
 
 
 class TestSigintHandlerKillsSubprocess:
@@ -599,9 +610,11 @@ proc.wait()
         script_path.write_text(script_content)
         
         # Start execution in a way that we can interrupt
-        # We use a very short check interval to quickly get control back
-        with patch('src.tools.execution._get_check_interval', return_value=0.5):
-            result = execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "file_path": str(script_path)})
+        # We use a very short agent-selected check-in delay to quickly get control back
+        result = execute_python.invoke({
+            "check_in_after": 0.01,
+            "file_path": str(script_path),
+        })
         
         # If we got a check-in request, we have a running process
         if isinstance(result, dict) and result.get('status') == 'check_in_required':
@@ -699,9 +712,11 @@ except Exception as e:
         user_script_path.write_text(user_script_content)
 
         # 3. Execute this script
-        # Use short check interval to ensure we can interrupt it
-        with patch('src.tools.execution._get_check_interval', return_value=0.5):
-             result = execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "file_path": str(user_script_path)})
+        # Use short agent-selected check-in delay to ensure we can interrupt it
+        result = execute_python.invoke({
+            "check_in_after": 0.01,
+            "file_path": str(user_script_path),
+        })
         
         # 4. Verify it's running (check-in required)
         assert isinstance(result, dict)
@@ -749,8 +764,10 @@ print("Process finished (unexpectedly)")
 ''')
 
         # 2. Start running
-        with patch('src.tools.execution._get_check_interval', return_value=0.5):
-             result = execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "file_path": str(user_script_path)})
+        result = execute_python.invoke({
+            "check_in_after": 0.01,
+            "file_path": str(user_script_path),
+        })
         
         assert isinstance(result, dict)
         assert result.get('status') == 'check_in_required'

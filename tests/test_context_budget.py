@@ -30,7 +30,8 @@ class TestContextThresholdParsing:
             ("low", "low"),
             ("LOW", "low"),
             (" medium ", "medium"),
-            ("high", "high"),
+            ("hard", "hard"),
+            ("high", "medium"),
             ("invalid", "medium"),
             ("", "medium"),
             (None, "medium"),
@@ -49,12 +50,12 @@ class TestContextThresholdParsing:
 class TestRestrictedContextLimit:
     @pytest.mark.parametrize(
         ("level", "expected_ratio"),
-        [("low", 0.40), ("medium", 0.60), ("high", 0.80)],
+        [("low", 0.20), ("medium", 0.40), ("hard", 0.60)],
     )
     def test_uses_expected_ratio_for_registered_model(self, level, expected_ratio):
-        max_context = get_model_max_context("gemini-2.5-pro")
+        max_context = get_model_max_context("gemini-3.5-flash")
         assert max_context == 1_048_576
-        assert get_restricted_context_limit("gemini-2.5-pro", level) == int(max_context * expected_ratio)
+        assert get_restricted_context_limit("gemini-3.5-flash", level) == int(max_context * expected_ratio)
 
     def test_unknown_models_have_no_limit(self):
         assert get_model_max_context("gpt-4o") is None
@@ -62,7 +63,7 @@ class TestRestrictedContextLimit:
 
     @pytest.mark.parametrize(
         ("level", "ratio"),
-        [("low", 0.40), ("medium", 0.60), ("high", 0.80)],
+        [("low", 0.20), ("medium", 0.40), ("hard", 0.60)],
     )
     def test_should_summarize_context_respects_context_threshold_env(self, level, ratio):
         threshold = int(1_048_576 * ratio)
@@ -84,14 +85,14 @@ class TestContextUsageSnapshot:
             "agent": "operator",
             "model": "gemini-2.5-pro",
             "threshold_level": "medium",
-            "threshold_ratio": 0.60,
-            "threshold_percent": 60,
+            "threshold_ratio": 0.40,
+            "threshold_percent": 40,
             "max_context_tokens": 1_048_576,
-            "threshold_tokens": 629_145,
+            "threshold_tokens": 419_430,
             "input_tokens": 300_000,
-            "usage_percent": 47.7,
+            "usage_percent": 71.5,
             "max_context_percent": 28.6,
-            "remaining_tokens": 329_145,
+            "remaining_tokens": 119_430,
             "is_supported_model": True,
             "is_over_limit": False,
         }
@@ -103,7 +104,7 @@ class TestContextUsageSnapshot:
             threshold_level="medium",
         )
 
-        assert snapshot["usage_percent"] == 111.3
+        assert snapshot["usage_percent"] == 166.9
         assert snapshot["remaining_tokens"] == 0
         assert snapshot["is_over_limit"] is True
 
@@ -112,7 +113,7 @@ class TestContextUsageSnapshot:
             input_tokens=123_456,
             model_name="gpt-4o",
             agent_name="operator",
-            threshold_level="high",
+            threshold_level="hard",
         )
 
         assert snapshot["is_supported_model"] is False
@@ -120,7 +121,7 @@ class TestContextUsageSnapshot:
         assert snapshot["usage_percent"] is None
         assert snapshot["remaining_tokens"] is None
         assert snapshot["max_context_percent"] is None
-        assert snapshot["threshold_percent"] == 80
+        assert snapshot["threshold_percent"] == 60
 
     def test_snapshot_reads_level_from_environment(self):
         with patch.dict(os.environ, {"CONTEXT_THRESHOLD": "low"}, clear=False):
@@ -130,4 +131,4 @@ class TestContextUsageSnapshot:
             )
 
         assert snapshot["threshold_level"] == "low"
-        assert snapshot["threshold_tokens"] == int(1_048_576 * 0.40)
+        assert snapshot["threshold_tokens"] == int(1_048_576 * 0.20)

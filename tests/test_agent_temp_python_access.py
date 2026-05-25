@@ -15,6 +15,7 @@ class _FakeLLM:
 def test_strategist_and_evaluator_tool_maps_include_temp_python_only():
     from src.agents.strategist import STRATEGIST_TOOL_MAP_NORMAL, STRATEGIST_TOOL_MAP_REPLANNING
     from src.agents.evaluator import EVALUATOR_TOOL_MAP
+    from src.agents.operator import TOOL_MAP as OPERATOR_TOOL_MAP
 
     assert "execute_temporary_python" in STRATEGIST_TOOL_MAP_NORMAL
     assert "execute_temporary_python" in STRATEGIST_TOOL_MAP_REPLANNING
@@ -23,6 +24,9 @@ def test_strategist_and_evaluator_tool_maps_include_temp_python_only():
     assert "execute_python" not in STRATEGIST_TOOL_MAP_NORMAL
     assert "execute_python" not in STRATEGIST_TOOL_MAP_REPLANNING
     assert "execute_python" not in EVALUATOR_TOOL_MAP
+
+    removed_file_tools = {"write_file", "move_file", "rename_file", "delete_file"}
+    assert removed_file_tools.isdisjoint(OPERATOR_TOOL_MAP)
 
 
 def test_graph_binds_temp_python_for_strategist_and_evaluator_only():
@@ -41,6 +45,9 @@ def test_graph_binds_temp_python_for_strategist_and_evaluator_only():
     assert "execute_python" not in strategist_replanning
     assert "execute_python" not in evaluator_tools
     assert "execute_python" in operator_tools
+
+    removed_file_tools = {"write_file", "move_file", "rename_file", "delete_file"}
+    assert removed_file_tools.isdisjoint(operator_tools)
 
 
 def test_evaluator_prompt_allows_temp_python_for_parse_only():
@@ -124,6 +131,40 @@ def test_temp_python_status_uses_execute_python_style_code_preview():
     assert complete_is_error is False
 
 
+def test_temp_python_validation_status_marks_failed_with_detail():
+    from src.agents.utils.tool_helpers import format_tool_status, update_agent_status
+
+    validation = "Validation error (1 issue): Field 'code': Field required"
+
+    status_msg, is_error = format_tool_status(
+        "execute_temporary_python",
+        {},
+        is_complete=True,
+        tool_result=validation,
+    )
+
+    assert status_msg == "Temporary Python Parse Failed: Field 'code': Field required"
+    assert is_error is True
+
+    with patch("src.agents.utils.tool_helpers.send_agent_event") as mock_send:
+        update_agent_status(
+            "evaluator",
+            "execute_temporary_python",
+            {},
+            is_complete=True,
+            tool_result=validation,
+        )
+
+    assert mock_send.call_args_list[0] == call(
+        "evaluator",
+        "step_complete",
+        "Temporary Python Parse Failed: Field 'code': Field required",
+        is_error=True,
+        output=f"Error: {validation}",
+        tool_name="execute_temporary_python",
+    )
+
+
 def test_operator_checkin_temp_python_uses_code_preview_status_events():
     from src.agents.operator import _send_checkin_tool_status
 
@@ -146,6 +187,134 @@ def test_operator_checkin_temp_python_uses_code_preview_status_events():
         call("operator", "step_complete", "Executed print('parsed')", is_error=False),
         call("operator", "update", "Awaiting decision after 12 minutes"),
     ]
+
+
+def test_operator_injects_resume_steering_into_llm_context(mock_workspace):
+    from src.agents.operator import RESUME_STEERING_MARKER, operator_node
+
+    steering = "Let the running job continue for 30 more minutes unless output stalls."
+    state = {
+        "plan": ["Task 1: Run the simulation"],
+        "completed_steps": [],
+        "step_results": {},
+        "current_task_messages": [
+            SystemMessage(content="System prompt"),
+            HumanMessage(content="Run the current simulation task."),
+        ],
+        "messages": [],
+        "user_input": "Run the simulation and monitor it.",
+        "resume_steering": steering,
+    }
+
+    response = AIMessage(content="I will account for that steering.", tool_calls=[])
+    stream_inputs = []
+
+    def fake_stream_with_token_tracking(_llm, messages, **_kwargs):
+        stream_inputs.append(messages)
+        return response.content, response.tool_calls, response, False
+
+    with patch("src.agents.operator.stream_with_token_tracking", side_effect=fake_stream_with_token_tracking), \
+         patch("src.agents.operator.maybe_summarize_messages", side_effect=lambda messages, *_args, **_kwargs: (messages, False, "gemini-2.5-pro", 200_000)), \
+         patch("src.agents.operator.load_pending_execution", return_value=None), \
+         patch("src.agents.operator.was_hardware_changed_on_resume", return_value=False), \
+         patch("src.agents.operator.detect_repeated_tool_calls", return_value=None), \
+         patch("src.agents.operator.send_agent_event") as mock_send_agent_event, \
+         patch("src.agents.operator.send_json"), \
+         patch("src.agents.operator.send_text_stream"), \
+         patch("src.agents.operator.send_thought_stream"), \
+         patch("src.agents.operator._write_input_messages"), \
+         patch("src.agents.operator._write_to_log"), \
+         patch("src.agents.operator.log_operator_start"), \
+         patch("src.agents.operator.write_execution_log"), \
+         patch("src.agents.operator.log_custom"), \
+         patch("src.agents.operator.update_operator_status"):
+        result = operator_node(state, MagicMock(), all_tools=[])
+
+    assert stream_inputs
+    assert any(
+        isinstance(message, HumanMessage)
+        and RESUME_STEERING_MARKER in message.content
+        and steering in message.content
+        for message in stream_inputs[0]
+    )
+    assert result["resume_steering"] == ""
+    assert call(
+        "operator",
+        "step_complete",
+        "User Steering Received",
+        output=steering,
+    ) in mock_send_agent_event.call_args_list
+
+
+def test_operator_validation_error_is_appended_as_tool_message(mock_workspace):
+    from src.agents.operator import operator_node
+
+    state = {
+        "plan": ["Task 1: Run the simulation"],
+        "completed_steps": [],
+        "step_results": {},
+        "current_task_messages": [
+            SystemMessage(content="System prompt"),
+            HumanMessage(content="Run the current simulation task."),
+        ],
+        "messages": [],
+        "user_input": "Run the simulation and monitor it.",
+    }
+
+    response = AIMessage(
+        content="I will run the script.",
+        tool_calls=[{
+            "name": "execute_python",
+            "args": {"code": "print('start')", "omp_num_threads": 1},
+            "id": "call-missing-checkin",
+        }],
+    )
+    written_messages = []
+
+    def fake_stream_with_token_tracking(_llm, messages, **_kwargs):
+        return response.content, response.tool_calls, response, False
+
+    def fake_write_input_messages(messages, *_args, **_kwargs):
+        written_messages.append(messages)
+
+    with patch("src.agents.operator.stream_with_token_tracking", side_effect=fake_stream_with_token_tracking), \
+         patch("src.agents.operator.load_pending_execution", return_value=None), \
+         patch("src.agents.operator.was_hardware_changed_on_resume", return_value=False), \
+         patch("src.agents.operator.detect_repeated_tool_calls", return_value=None), \
+         patch("src.agents.operator.save_pending_execution") as mock_save_pending, \
+         patch("src.agents.operator.clear_pending_execution") as mock_clear_pending, \
+         patch("src.agents.operator.send_agent_event") as mock_send_agent_event, \
+         patch("src.agents.operator.send_json"), \
+         patch("src.agents.operator.send_text_stream"), \
+         patch("src.agents.operator.send_thought_stream"), \
+         patch("src.agents.operator._write_input_messages", side_effect=fake_write_input_messages), \
+         patch("src.agents.operator._write_to_log"), \
+         patch("src.agents.operator.log_operator_start"), \
+         patch("src.agents.operator.write_execution_log"), \
+         patch("src.agents.operator.log_custom"), \
+         patch("src.agents.operator.update_operator_status"):
+        result = operator_node(state, MagicMock(), all_tools=[])
+
+    mock_save_pending.assert_called_once()
+    mock_clear_pending.assert_called_once()
+
+    messages_update = result["messages"]
+    assert messages_update[0] is response
+    assert isinstance(messages_update[1], ToolMessage)
+    assert messages_update[1].tool_call_id == "call-missing-checkin"
+    assert "Field 'check_in_after': Field required" in messages_update[1].content
+
+    task_messages = result["current_task_messages"]
+    assert task_messages[-2] is response
+    assert task_messages[-1] is messages_update[1]
+    assert written_messages[-1][-1] is messages_update[1]
+
+    assert call(
+        "operator",
+        "error",
+        "Error: Validation error (1 issue): Field 'check_in_after': Field required",
+        tool_name="execute_python",
+    ) in mock_send_agent_event.call_args_list
 
 
 def test_operator_checkin_compacts_history_and_summarizes_before_next_iteration(mock_workspace):
@@ -177,7 +346,7 @@ def test_operator_checkin_compacts_history_and_summarizes_before_next_iteration(
         content="Launching the simulation now.",
         tool_calls=[{
             "name": "execute_python",
-            "args": {"code": "print('start')", "timeout": 5},
+            "args": {"code": "print('start')", "check_in_after": 10},
             "id": "call-exec",
         }],
     )
@@ -189,7 +358,8 @@ def test_operator_checkin_compacts_history_and_summarizes_before_next_iteration(
                 "summary": (
                     "SCF iterations are still advancing, CPU utilization remains high, "
                     "and no convergence warnings were observed."
-                )
+                ),
+                "next_check_in_after": 20,
             },
             "id": "call-continue",
         }],
@@ -210,7 +380,15 @@ def test_operator_checkin_compacts_history_and_summarizes_before_next_iteration(
 
     summarize_inputs = []
 
-    def fake_maybe_summarize_messages(messages, _llm, agent_name="", model_name=None, input_tokens=None):
+    def fake_maybe_summarize_messages(
+        messages,
+        _llm,
+        agent_name="",
+        model_name=None,
+        input_tokens=None,
+        runtime_events=None,
+        task_index=None,
+    ):
         summarize_inputs.append({
             "messages": messages,
             "agent_name": agent_name,
@@ -243,7 +421,7 @@ def test_operator_checkin_compacts_history_and_summarizes_before_next_iteration(
          patch("src.agents.operator.load_pending_execution", return_value=None), \
          patch("src.agents.operator.was_hardware_changed_on_resume", return_value=False), \
          patch("src.agents.operator.detect_repeated_tool_calls", return_value=None), \
-         patch("src.agents.operator.send_agent_event"), \
+         patch("src.agents.operator.send_agent_event") as mock_send, \
          patch("src.agents.operator.send_json"), \
          patch("src.agents.operator.send_text_stream"), \
          patch("src.agents.operator.send_thought_stream"), \
@@ -257,7 +435,12 @@ def test_operator_checkin_compacts_history_and_summarizes_before_next_iteration(
          patch.dict("src.agents.operator.TOOL_MAP", {"execute_python": fake_execute_python_tool}, clear=False):
         result = operator_node(state, llm_with_tools, all_tools=[])
 
-    mock_resume.assert_called_once()
+    mock_resume.assert_called_once_with(check_in_after=20)
+    assert call(
+        "operator",
+        "update",
+        "Executing print('start') (20 min check-in)",
+    ) in mock_send.call_args_list
     assert len(stream_inputs) == 2
     assert len(summarize_inputs) == 2
     assert summarize_inputs[0]["agent_name"] == "operator"
@@ -270,6 +453,7 @@ def test_operator_checkin_compacts_history_and_summarizes_before_next_iteration(
     ]
     assert len(compact_history) == 1
     assert "Decision: continue_execution" in compact_history[0].content
+    assert "Next check-in: 20 minutes" in compact_history[0].content
     assert "SCF iterations are still advancing" in compact_history[0].content
 
     assert not any(
@@ -316,7 +500,7 @@ def test_operator_checkin_interrupt_compacts_history_with_reason_and_summary(moc
         content="Launching the simulation now.",
         tool_calls=[{
             "name": "execute_python",
-            "args": {"code": "print('start')", "timeout": 5},
+            "args": {"code": "print('start')", "check_in_after": 10},
             "id": "call-exec",
         }],
     )

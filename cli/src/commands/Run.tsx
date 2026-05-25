@@ -31,6 +31,9 @@ import {
 import { generateUniqueId, truncateText } from '../utils/helpers.js';
 import { cleanTaskDescription, applyFreshStartState, applyInterruptResetState } from '../utils/stateHelpers.js';
 import { INDENT_AGENT } from '../utils/constants.js';
+import { cliTheme } from '../ui/theme.js';
+import { loadReport, normalizeReportCommand } from '../utils/reportFiles.js';
+import { parseCliCommand } from '../utils/commandRegistry.js';
 
 // Handlers
 import { createMessageHandler, type MessageHandlerContext } from '../handlers/messageHandlers.js';
@@ -80,7 +83,10 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
     
     const [checkpointMode, setCheckpointMode] = useState<CheckpointMode>('checking');
     const [previousInput, setPreviousInput] = useState<string>('');
+    const [allowCheckpointSteering, setAllowCheckpointSteering] = useState(false);
     const [pendingStartPrompt, setPendingStartPrompt] = useState('');
+    const [pendingRevertTask, setPendingRevertTask] = useState<number | null>(null);
+    const [checkpointModeBeforeRevert, setCheckpointModeBeforeRevert] = useState<CheckpointMode>('normal');
     const skipStartConfirmOnceRef = useRef(false);
     const hasCompletedFirstInteractivePromptRef = useRef(false);
     const [isPeriodicCheckinActive, setIsPeriodicCheckinActiveState] = useState(false);
@@ -112,10 +118,21 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
 
     const [inputPrefillRevision, setInputPrefillRevision] = useState(0);
     const [inputPrefillText, setInputPrefillText] = useState('');
+    const pendingFreshStartPrefillRef = useRef('');
     const bumpInputPrefill = useCallback((text: string) => {
         setInputPrefillText(text);
         setInputPrefillRevision((r) => r + 1);
     }, []);
+    const queueFreshStartPrefill = useCallback((text: string) => {
+        pendingFreshStartPrefillRef.current = text;
+    }, []);
+    const restorePendingFreshStartPrefill = useCallback(() => {
+        const text = pendingFreshStartPrefillRef.current;
+        pendingFreshStartPrefillRef.current = '';
+        if (!text.trim()) return;
+        setPreviousInput(text);
+        bumpInputPrefill(text);
+    }, [bumpInputPrefill]);
 
     const setIsPeriodicCheckinActive = useCallback((active: boolean) => {
         isPeriodicCheckinActiveRef.current = active;
@@ -185,6 +202,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             taskProgressRef,
             setCheckpointMode,
             setPreviousInput,
+            setAllowCheckpointSteering,
             setIsLoading,
             bridgeRef,
             resumingWithEvaluatorRef
@@ -202,9 +220,9 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
         }
     }, []);
 
-    // Show main UI after RAG init
+    // Show main UI after RAG init. If RAG errors, still allow checkpoint resume.
     useEffect(() => {
-        if (ragStatus?.status === 'done') {
+        if (ragStatus?.status === 'done' || ragStatus?.status === 'error') {
             const timer = setTimeout(() => {
                 setShowMainUI(true);
                 if (bridgeRef.current) {
@@ -214,6 +232,17 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             return () => clearTimeout(timer);
         }
     }, [ragStatus?.status]);
+
+    // If RAG is disabled, the bridge sends system_ready without any rag_status.
+    // Do the checkpoint check from system_ready so resume is not gated on RAG.
+    useEffect(() => {
+        if (isSystemReady && !ragStatus && !showMainUI) {
+            setShowMainUI(true);
+            if (bridgeRef.current) {
+                bridgeRef.current.stdin.write(JSON.stringify({ command: 'check_checkpoint' }) + "\n");
+            }
+        }
+    }, [isSystemReady, ragStatus, showMainUI]);
 
     // Commit banner on mount
     useEffect(() => {
@@ -333,6 +362,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             setBannerCommitted,
             itemIdCounterRef,
             bumpInputPrefill,
+            restorePendingFreshStartPrefill,
             exitIfDirectArgs: () => {
                 if (directArgsUsed) {
                     setTimeout(() => exit(), 500);
@@ -369,7 +399,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
         });
 
         return () => { child.kill(); };
-    }, [bridgeRestartCounter, ensureHeader, genUniqueId, handleCheckpointInfo]);
+    }, [bridgeRestartCounter, ensureHeader, genUniqueId, handleCheckpointInfo, restorePendingFreshStartPrefill]);
 
     // Direct prompt mode
     useEffect(() => {
@@ -387,6 +417,19 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
         }
     }, []);
 
+    const appendSystemLog = useCallback((content: string, isError = false) => {
+        setCommittedItems(prev => [
+            ...prev,
+            {
+                id: genUniqueId(isError ? 'system-error' : 'system-log'),
+                type: 'log',
+                content,
+                agentName: 'system',
+                isError
+            }
+        ]);
+    }, [genUniqueId]);
+
     // ========== HANDLERS ==========
     const handleSubmit = async (input: string) => {
         if (input.trim().toLowerCase() === 'exit') {
@@ -394,15 +437,35 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             return;
         }
 
-        // Handle \settings command
-        if (input.trim().toLowerCase() === '\\settings') {
+        if (checkpointMode === 'confirm-revert') {
+            const answer = input.trim().toLowerCase();
+            if (answer === 'yes' || answer === 'y') {
+                if (!pendingRevertTask) {
+                    setCheckpointMode('normal');
+                    return;
+                }
+                setPreviousInput(`Reverting to Task ${pendingRevertTask}`);
+                setIsLoading(true);
+                setStatus(`Reverting to Task ${pendingRevertTask}...`);
+                sendToBridge({ command: 'revert', target_task: pendingRevertTask });
+                setPendingRevertTask(null);
+            } else {
+                setPendingRevertTask(null);
+                setStatus(null);
+                setCheckpointMode(checkpointModeBeforeRevert);
+            }
+            return;
+        }
+
+        const cliCommand = parseCliCommand(input);
+
+        if (cliCommand?.id === 'settings') {
             setMissingVars([]);
             setSettingsMode(true);
             return;
         }
 
-        // Handle \refresh command
-        if (input.trim().toLowerCase() === '\\refresh') {
+        if (cliCommand?.id === 'refresh') {
             process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
             applyFreshStartState({
                 setPreviousInput, setTaskProgress, taskProgressRef, setCommittedItems,
@@ -417,6 +480,46 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             if (bridgeRef.current) {
                 bridgeRef.current.stdin.write(JSON.stringify({ command: 'clear_checkpoint' }) + "\n");
             }
+            return;
+        }
+
+        if (cliCommand?.id === 'revert') {
+            const rawTarget = cliCommand.args[0];
+            const targetTask = Number(rawTarget);
+            if (cliCommand.args.length !== 1 || !Number.isInteger(targetTask) || targetTask < 1) {
+                appendSystemLog('Usage: \\revert <task-number> (for example: \\revert 2)', true);
+                return;
+            }
+            if (isLoading || systemStatus === 'running') {
+                appendSystemLog('✗ Cannot revert while execution is running', true);
+                return;
+            }
+            setPendingRevertTask(targetTask);
+            setCheckpointModeBeforeRevert(checkpointMode);
+            setCheckpointMode('confirm-revert');
+            setStatus(null);
+            return;
+        }
+
+        const reportKind = normalizeReportCommand(input);
+        if (reportKind) {
+            const report = loadReport(reportKind);
+            setShowMainUI(true);
+            setStatus(null);
+            setCommittedItems(prev => [
+                ...prev,
+                {
+                    id: genUniqueId(`report-${reportKind}`),
+                    type: 'report-panel',
+                    content: {
+                        title: report.title,
+                        content: report.error ? `${report.content}\n\n${report.error}` : report.content,
+                        sourcePath: report.sourcePath
+                    },
+                    agentName: 'system',
+                    isError: Boolean(report.error)
+                }
+            ]);
             return;
         }
 
@@ -444,7 +547,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             const answer = trimmedInput.toLowerCase();
             if (answer === 'yes') {
                 if (bridgeRef.current) {
-                    bridgeRef.current.stdin.write(JSON.stringify({ command: 'plan_confirm', proceed: true }) + '\n');
+                    bridgeRef.current.stdin.write(JSON.stringify({ command: 'plan_confirm', action: 'confirm', feedback: '' }) + '\n');
                 }
                 setCheckpointMode('normal');
                 setIsLoading(true);
@@ -452,7 +555,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             }
             if (answer === 'no') {
                 if (bridgeRef.current) {
-                    bridgeRef.current.stdin.write(JSON.stringify({ command: 'plan_confirm', proceed: false }) + '\n');
+                    bridgeRef.current.stdin.write(JSON.stringify({ command: 'plan_confirm', action: 'decline', feedback: '' }) + '\n');
                 }
                 return;
             }
@@ -471,8 +574,9 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
         }
 
         if (checkpointMode === 'prompt') {
-            const answer = input.trim().toLowerCase();
-            if (answer === 'yes') {
+            const trimmedInput = input.trim();
+            const answer = trimmedInput.toLowerCase();
+            if (answer === '' || answer === 'yes' || answer === 'y') {
                 setCheckpointMode('auto-resume');
                 setIsLoading(true);
                 if (bridgeRef.current) {
@@ -480,7 +584,8 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                     // restart: true would delete the checkpoint!
                     bridgeRef.current.stdin.write(JSON.stringify({ command: 'prompt', content: '', restart: false }) + "\n");
                 }
-            } else if (answer === 'no') {
+            } else if (answer === 'no' || answer === 'n') {
+                queueFreshStartPrefill(previousInput);
                 // Clear checkpoint but keep archives - use clear_checkpoint command
                 // After clearing, bridge will check if archives exist and send appropriate response
                 process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
@@ -498,6 +603,18 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                 // based on whether archives exist
                 if (bridgeRef.current) {
                     bridgeRef.current.stdin.write(JSON.stringify({ command: 'clear_checkpoint' }) + "\n");
+                }
+            } else {
+                if (!allowCheckpointSteering) {
+                    setStatus("Steering is only available when resuming operator work. Press Enter to continue, or type 'no' to start fresh.");
+                    return;
+                }
+                setCheckpointMode('auto-resume');
+                setIsLoading(true);
+                setPreviousInput(trimmedInput);
+                setStatus("Resuming from checkpoint...");
+                if (bridgeRef.current) {
+                    bridgeRef.current.stdin.write(JSON.stringify({ command: 'prompt', content: trimmedInput, restart: false }) + "\n");
                 }
             }
             return;
@@ -528,6 +645,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
         if (checkpointMode === 'confirm-delete-archive') {
             const answer = input.trim().toLowerCase();
             if (answer === 'yes') {
+                queueFreshStartPrefill(previousInput);
                 // User confirmed - proceed with fresh start (deletes archives)
                 process.stdout.write('\x1B[2J\x1B[3J\x1B[H');
                 applyFreshStartState({
@@ -573,8 +691,14 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                 }
                 hasCompletedFirstInteractivePromptRef.current = true;
             } else if (answer === 'no') {
+                const originalText = pendingStartPrompt;
                 setPendingStartPrompt('');
+                setStatus(null);
                 setCheckpointMode('normal');
+                // Restore the user's original request text so they don't lose it
+                if (originalText.trim()) {
+                    bumpInputPrefill(originalText);
+                }
             }
             return;
         }
@@ -613,7 +737,8 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
     };
     
     // Determine if we're in non-interactive mode (direct prompt passed)
-    const isInteractive = args.length === 0;
+    const isInlineCliCommand = args.length > 0 && parseCliCommand(args.join(' ')) !== null;
+    const isInteractive = args.length === 0 || isInlineCliCommand;
     
     // Key handler - only active in interactive mode
     useInput((input, key) => {
@@ -710,10 +835,17 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
     const periodicCheckinStatusText = periodicCheckinToolCall?.content || 'Awaiting Decision';
     const periodicCheckinStatusIsError = periodicCheckinToolCall?.isError ?? false;
 
-    const staticItems = useMemo(() => 
-        committedItems.map(item => ({ ...item, _resizeKey: `${item.id}-r${resizeCounter}` })),
-        [committedItems, resizeCounter]
-    );
+    const staticItems = useMemo(() => {
+        let hasRenderedBanner = false;
+        return committedItems
+            .filter(item => {
+                if (item.type !== 'banner') return true;
+                if (hasRenderedBanner) return false;
+                hasRenderedBanner = true;
+                return true;
+            })
+            .map(item => ({ ...item, _resizeKey: `${item.id}-r${resizeCounter}` }));
+    }, [committedItems, resizeCounter]);
 
     // ========== RENDER ==========
     return (
@@ -735,7 +867,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
             
             {/* RAG Status */}
             {ragStatus && !showMainUI && (bridgeRestartCounter === 0 || ragStatus.status !== 'done') && (
-                <RagStatus ragStatus={ragStatus} leftMargin={leftMargin} />
+                <RagStatus ragStatus={ragStatus} leftMargin={leftMargin} availableWidth={availableWidth} />
             )}
 
             {/* Dynamic content when main UI is shown */}
@@ -761,18 +893,18 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                     {showPeriodicCheckinStatus && (
                         <Box marginLeft={leftMargin + INDENT_AGENT} paddingX={1}>
                             <Text>
-                                <Text color={periodicCheckinStatusIsError ? 'red' : 'gray'}>L </Text>
+                                <Text color={periodicCheckinStatusIsError ? cliTheme.ink.danger : cliTheme.ink.muted}>{cliTheme.glyph.branch} </Text>
                                 {periodicCheckinToolCall ? (
-                                    <Text color={periodicCheckinStatusIsError ? 'red' : 'green'} bold>
-                                        {periodicCheckinStatusIsError ? '✗' : '✓'}{' '}
+                                    <Text color={periodicCheckinStatusIsError ? cliTheme.ink.danger : cliTheme.ink.success} bold>
+                                        {periodicCheckinStatusIsError ? cliTheme.glyph.error : cliTheme.glyph.success}{' '}
                                         {truncateText(periodicCheckinStatusText, Math.max(20, terminalWidth - leftMargin - 10))}
                                     </Text>
                                 ) : (
                                     <>
-                                        <Text color="cyan">
+                                        <Text color={cliTheme.ink.primary}>
                                             <TriangleSpinner />{' '}
                                         </Text>
-                                        <Text color="cyan" bold>
+                                        <Text color={cliTheme.ink.primary} bold>
                                             {truncateText(periodicCheckinStatusText, Math.max(20, terminalWidth - leftMargin - 10))}
                                         </Text>
                                     </>
@@ -785,10 +917,10 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                     {cleanupStatus && (
                         <Box marginLeft={leftMargin + INDENT_AGENT} paddingX={1}>
                             <Text>
-                                <Text color="cyan">
+                                <Text color={cliTheme.ink.primary}>
                                     <TriangleSpinner />{' '}
                                 </Text>
-                                <Text color="cyan" bold>
+                                <Text color={cliTheme.ink.primary} bold>
                                     {cleanupStatus.message}
                                 </Text>
                             </Text>
@@ -797,7 +929,7 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
 
                     {/* Input Area / Settings */}
                     {isSystemReady && checkpointMode !== 'error' && checkpointMode !== 'checking' && (
-                        (settingsMode || checkpointMode === 'confirm-start-prompt') ? (
+                        settingsMode ? (
                             <Box flexDirection="column" width="100%">
                                 <Settings 
                                     onExit={() => setSettingsMode(false)} 
@@ -805,37 +937,22 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
                                     highlightMissing={missingVars}
                                     isActive={settingsMode}
                                 />
-                                {checkpointMode === 'confirm-start-prompt' && !settingsMode && (
-                                    <PromptInput 
-                                        onSubmit={handleSubmit} 
-                                        isLoading={isLoading} 
-                                        taskProgress={taskProgress}
-                                        contextUsage={contextUsage}
-                                        checkpointPrompt={false}
-                                        completedRunPrompt={false}
-                                        confirmDeleteArchive={false}
-                                        startRequestConfirm={true}
-                                        pendingSubmitPreview={pendingStartPrompt}
-                                        planAwaitingConfirm={false}
-                                        prefillRevision={inputPrefillRevision}
-                                        prefillText={inputPrefillText}
-                                        previousInput={previousInput}
-                                        showInterruptWarning={showInterruptWarning}
-                                        showExitWarning={showExitWarning}
-                                    />
-                                )}
                             </Box>
                         ) : (
-                            <Box marginTop={0}>
-                                <PromptInput 
+                            <Box marginTop={1}>
+                                <PromptInput
+                                    key={`prompt-${checkpointMode}-${inputPrefillRevision}`}
                                     onSubmit={handleSubmit} 
                                     isLoading={isLoading} 
                                     taskProgress={taskProgress}
                                     contextUsage={contextUsage}
                                     checkpointPrompt={checkpointMode === 'prompt'}
+                                    allowCheckpointSteering={allowCheckpointSteering}
                                     completedRunPrompt={checkpointMode === 'completed-run-prompt'}
                                     confirmDeleteArchive={checkpointMode === 'confirm-delete-archive'}
-                                    startRequestConfirm={false}
+                                    revertConfirm={checkpointMode === 'confirm-revert'}
+                                    revertTargetTask={pendingRevertTask}
+                                    startRequestConfirm={checkpointMode === 'confirm-start-prompt'}
                                     pendingSubmitPreview={pendingStartPrompt}
                                     planAwaitingConfirm={checkpointMode === 'plan-awaiting-confirm'}
                                     prefillRevision={inputPrefillRevision}

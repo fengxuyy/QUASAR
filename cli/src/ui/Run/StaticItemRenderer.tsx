@@ -11,6 +11,7 @@ import {
     EvaluationSummaryPanel,
     InterruptReasonPanel,
     FinalSummaryPanel,
+    ReportPanel,
     ActiveTaskPanel,
     CheckpointResumePanel,
     CodeResultPanel,
@@ -173,6 +174,20 @@ const StaticItemRenderer: React.FC<StaticItemRendererProps> = ({ item, leftMargi
                 <FinalSummaryPanel 
                     id={key}
                     content={typeof item.content === 'string' ? item.content : ''}
+                    leftMargin={leftMargin}
+                    terminalWidth={terminalWidth}
+                    availableWidth={availableWidth}
+                />
+            );
+
+        case 'report-panel':
+            return (
+                <ReportPanel
+                    id={key}
+                    title={typeof item.content === 'object' ? item.content.title : 'Report'}
+                    content={typeof item.content === 'object' ? item.content.content : String(item.content || '')}
+                    sourcePath={typeof item.content === 'object' ? item.content.sourcePath : undefined}
+                    isError={item.isError === true}
                     leftMargin={leftMargin}
                     terminalWidth={terminalWidth}
                     availableWidth={availableWidth}

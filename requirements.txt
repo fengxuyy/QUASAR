@@ -17,6 +17,7 @@ ddgs>=0.1.0
 pymatgen>=2025.10.7
 mp-api>=0.45.13
 ase>=3.26.0
+rdkit
 mace-torch>=0.3.14
 lxml>=6.0.2
 numpy>=1.26.0,<2.0

@@ -1,11 +1,7 @@
 from .filesystem import (
     read_file,
-    write_file,
     edit_file,
-    delete_file,
     list_directory,
-    move_file,
-    rename_file,
     analyze_image,
     grep_search,
     get_hardware_info
@@ -50,12 +46,8 @@ def get_all_tools():
     """Get all tools for the agent."""
     tools = [
         read_file,
-        write_file,
         edit_file,
-        delete_file,
         list_directory,
-        move_file,
-        rename_file,
         analyze_image,
         execute_python,
         search_web,

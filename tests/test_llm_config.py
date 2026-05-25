@@ -20,6 +20,7 @@ class TestInferProvider:
     
     def test_infer_provider_gemini(self):
         """Test detecting Gemini models."""
+        assert _infer_provider_from_model("gemini-3.5-flash") == "gemini"
         assert _infer_provider_from_model("gemini-2.5-pro") == "gemini"
         assert _infer_provider_from_model("gemini-2.5-flash") == "gemini"
         assert _infer_provider_from_model("GEMINI-3-PRO") == "gemini"

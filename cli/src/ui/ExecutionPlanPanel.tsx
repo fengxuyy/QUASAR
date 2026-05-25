@@ -4,9 +4,9 @@
  */
 import React from 'react';
 import { Box, Text, useStdout } from 'ink';
-import chalk from 'chalk';
 import { formatLine, parseStyledSegments, getPlainTextFromSegments, TextSegment } from '../utils/formatting.js';
 import { getVisualLength } from '../utils/helpers.js';
+import { cliChalk, cliTheme } from './theme.js';
 
 interface ExecutionPlanPanelProps {
     content: string;
@@ -16,11 +16,11 @@ interface ExecutionPlanPanelProps {
     isContinuation?: boolean;
 }
 
-// Render a segment with appropriate styling using chalk
+// Render a segment with terminal styling from the shared CLI theme
 function renderStyledText(segments: TextSegment[], isHeader: boolean, isTask: boolean): string {
     if (isHeader) {
         const plainText = segments.map(s => s.text).join('');
-        return chalk.gray.bold(plainText);
+        return cliChalk.muted(plainText);
     }
     
     if (isTask) {
@@ -37,15 +37,15 @@ function renderStyledText(segments: TextSegment[], isHeader: boolean, isTask: bo
             
             // Highlight "Guidance:" in cyan
             if (seg.text.toLowerCase().includes('guidance:')) {
-                return prefix + chalk.cyan.bold(seg.text);
+                return prefix + cliChalk.primaryBold(seg.text);
             }
             
             // Respect the segment's own style - only bold if segment was marked as bold
             switch (seg.style) {
                 case 'code':
-                    return prefix + chalk.magenta.bold(seg.text);
+                    return prefix + cliChalk.code(seg.text);
                 case 'bold':
-                    return prefix + chalk.cyan.bold(seg.text);
+                    return prefix + cliChalk.primaryBold(seg.text);
                 default:
                     // Normal text stays normal - no automatic bold
                     return prefix + seg.text;
@@ -66,11 +66,11 @@ function renderStyledText(segments: TextSegment[], isHeader: boolean, isTask: bo
         
         switch (seg.style) {
             case 'code':
-                return prefix + chalk.magenta.bold(seg.text);
+                return prefix + cliChalk.code(seg.text);
             case 'bold':
-                return prefix + chalk.cyan.bold(seg.text);
+                return prefix + cliChalk.primaryBold(seg.text);
             case 'italic':
-                return prefix + chalk.gray.italic(seg.text);
+                return prefix + cliChalk.mutedItalic(seg.text);
             default:
                 return seg.text;
         }
@@ -189,29 +189,30 @@ const ExecutionPlanPanel: React.FC<ExecutionPlanPanelProps> = ({
         processedLines.push(...processLine(line));
     }
     
-    const topBorder = chalk.cyan('╭─ Execution Plan ' + '─'.repeat(Math.max(0, panelWidth - 19)) + '╮');
-    const bottomBorder = chalk.cyan('╰' + '─'.repeat(Math.max(0, panelWidth - 2)) + '╯');
+    const title = `${cliTheme.glyph.active} Execution Plan`;
+    const topBorder = '╭─ ' + title + ' ' + '─'.repeat(Math.max(0, panelWidth - getVisualLength(title) - 5)) + '╮';
+    const bottomBorder = '╰' + '─'.repeat(Math.max(0, panelWidth - 2)) + '╯';
     
     return (
         <Box flexDirection="column" marginTop={0}>
-            {!isContinuation && <Text>{topBorder}</Text>}
+            {!isContinuation && <Text color={cliTheme.ink.primary}>{topBorder}</Text>}
             {processedLines.map((line, idx) => (
                 <React.Fragment key={idx}>
                     {line.addEmptyBefore && idx > 0 && (
                         <Text>
-                            <Text color="cyan">│ </Text>
+                            <Text color={cliTheme.ink.primary}>│ </Text>
                             <Text>{' '.repeat(contentWidth)}</Text>
-                            <Text color="cyan"> │</Text>
+                            <Text color={cliTheme.ink.primary}> │</Text>
                         </Text>
                     )}
                     <Text>
-                        <Text color="cyan">│ </Text>
+                        <Text color={cliTheme.ink.primary}>│ </Text>
                         <RenderLine segments={line.segments} isHeader={line.isHeader} isTask={line.isTask} />
-                        <Text color="cyan">{' '.repeat(Math.max(0, contentWidth - getVisualLength(line.plainText)))} │</Text>
+                        <Text color={cliTheme.ink.primary}>{' '.repeat(Math.max(0, contentWidth - getVisualLength(line.plainText)))} │</Text>
                     </Text>
                 </React.Fragment>
             ))}
-            {isComplete && <Text>{bottomBorder}</Text>}
+            {isComplete && <Text color={cliTheme.ink.primary}>{bottomBorder}</Text>}
         </Box>
     );
 };

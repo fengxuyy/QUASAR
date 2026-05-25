@@ -12,17 +12,21 @@ from src.pending_execution import (
 )
 
 
+def _pending_file(workspace):
+    return workspace / "quasar_logs" / "pending_execution.json"
+
+
 def test_save_pending_execution(mock_workspace):
     """Test saving pending execution state to JSON file."""
     ai_message = "Running simulation..."
     tool_call = {"id": "call_123", "name": "execute_python", "args": {"code": "print('test')"}}
     task_index = 2
     
-    with patch('src.pending_execution.PENDING_EXECUTION_FILE', mock_workspace / "pending_execution.json"):
+    pending_file = _pending_file(mock_workspace)
+    with patch('src.pending_execution.PENDING_EXECUTION_FILE', pending_file):
         save_pending_execution(ai_message, tool_call, task_index)
         
         # Verify file exists
-        pending_file = mock_workspace / "pending_execution.json"
         assert pending_file.exists()
         
         # Verify content
@@ -34,7 +38,8 @@ def test_save_pending_execution(mock_workspace):
 
 def test_load_pending_execution_exists(mock_workspace):
     """Test loading valid pending execution state."""
-    pending_file = mock_workspace / "pending_execution.json"
+    pending_file = _pending_file(mock_workspace)
+    pending_file.parent.mkdir(exist_ok=True)
     expected_data = {
         "ai_message_content": "Test content",
         "tool_call": {"id": "call_456", "name": "execute_python", "args": {}},
@@ -63,7 +68,8 @@ def test_load_pending_execution_not_exists(mock_workspace):
 
 def test_load_pending_execution_corrupt(mock_workspace):
     """Test loading handles corrupted JSON gracefully."""
-    pending_file = mock_workspace / "pending_execution.json"
+    pending_file = _pending_file(mock_workspace)
+    pending_file.parent.mkdir(exist_ok=True)
     pending_file.write_text("{ invalid json }")
     
     with patch('src.pending_execution.PENDING_EXECUTION_FILE', pending_file):
@@ -74,7 +80,8 @@ def test_load_pending_execution_corrupt(mock_workspace):
 
 def test_clear_pending_execution(mock_workspace):
     """Test clearing pending execution removes the file."""
-    pending_file = mock_workspace / "pending_execution.json"
+    pending_file = _pending_file(mock_workspace)
+    pending_file.parent.mkdir(exist_ok=True)
     pending_file.write_text('{"test": "data"}')
     
     assert pending_file.exists()

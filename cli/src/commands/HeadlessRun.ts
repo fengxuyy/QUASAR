@@ -9,6 +9,9 @@ import fs from 'fs';
 // ANSI color codes
 const colors = {
     cyan: '\x1b[36m',
+    blue: '\x1b[34m',
+    purple: '\x1b[35m',
+    accent: '\x1b[38;5;141m',
     green: '\x1b[32m',
     yellow: '\x1b[33m',
     red: '\x1b[31m',
@@ -35,33 +38,34 @@ function printBanner(): void {
     const boxWidth = maxLen;
     
     const subtitle = 'Quantum Universal Autonomous System for Atomistic Research';
-    const version = 'v0.3.0';
+    const version = 'v0.4.0';
     
     // Helper to pad line to exact width
     const padLine = (text: string) => text + ' '.repeat(Math.max(0, boxWidth - text.length));
     
     console.log('');
-    console.log(`${colors.cyan}╭${'─'.repeat(boxWidth + 4)}╮${colors.reset}`);
-    console.log(`${colors.cyan}│${' '.repeat(boxWidth + 4)}│${colors.reset}`);
+    const borderColor = colors.accent;
+    console.log(`${borderColor}╭${'─'.repeat(boxWidth + 4)}╮${colors.reset}`);
+    console.log(`${borderColor}│${' '.repeat(boxWidth + 4)}│${colors.reset}`);
     
-    for (const line of logoLines) {
-        console.log(`${colors.cyan}│  ${colors.bold}${padLine(line)}${colors.reset}${colors.cyan}  │${colors.reset}`);
+    for (let i = 0; i < logoLines.length; i++) {
+        console.log(`${borderColor}│  ${colors.accent}${colors.bold}${padLine(logoLines[i])}${colors.reset}${borderColor}  │${colors.reset}`);
     }
     
-    console.log(`${colors.cyan}│${' '.repeat(boxWidth + 4)}│${colors.reset}`);
+    console.log(`${borderColor}│${' '.repeat(boxWidth + 4)}│${colors.reset}`);
     
     // Center the subtitle
     const subtitlePadding = Math.floor((boxWidth - subtitle.length) / 2);
     const subtitleLine = ' '.repeat(subtitlePadding) + subtitle;
-    console.log(`${colors.cyan}│  ${colors.reset}${padLine(subtitleLine)}${colors.cyan}  │${colors.reset}`);
+    console.log(`${borderColor}│  ${colors.accent}${colors.bold}✦${colors.reset} ${padLine(subtitleLine).slice(2)}${borderColor}  │${colors.reset}`);
     
     // Center the version
     const versionPadding = Math.floor((boxWidth - version.length) / 2);
     const versionLine = ' '.repeat(versionPadding) + version;
-    console.log(`${colors.cyan}│  ${colors.dim}${padLine(versionLine)}${colors.cyan}  │${colors.reset}`);
+    console.log(`${borderColor}│  ${colors.dim}${padLine(versionLine)}${borderColor}  │${colors.reset}`);
     
-    console.log(`${colors.cyan}│${' '.repeat(boxWidth + 4)}│${colors.reset}`);
-    console.log(`${colors.cyan}╰${'─'.repeat(boxWidth + 4)}╯${colors.reset}`);
+    console.log(`${borderColor}│${' '.repeat(boxWidth + 4)}│${colors.reset}`);
+    console.log(`${borderColor}╰${'─'.repeat(boxWidth + 4)}╯${colors.reset}`);
     console.log('');
 }
 
@@ -140,15 +144,14 @@ export function runHeadless(prompt: string, flags: any): void {
                         printSuccess('RAG initialized');
                     }
                 } else if (msg.type === 'plan_awaiting_confirm') {
-                    child.stdin.write(JSON.stringify({ command: 'plan_confirm', proceed: true }) + '\n');
+                    child.stdin.write(JSON.stringify({ command: 'plan_confirm', action: 'confirm', feedback: '' }) + '\n');
                 } else if (msg.type === 'system_ready') {
                     // Don't print anything for system ready, print "System Running..." instead
                     printStatus('System Running...');
-                    // Resume reuses the existing checkpoint, so it must NOT send restart: true.
-                    // The interactive auto-resume path sends an empty prompt with restart: false.
+                    // Resume reuses the existing checkpoint. A direct prompt becomes steering text.
                     child.stdin.write(JSON.stringify({
                         command: 'prompt',
-                        content: isResume ? '' : prompt,
+                        content: prompt,
                         restart: false
                     }) + '\n');
                 } else if (msg.type === 'agent_event') {

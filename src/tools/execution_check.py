@@ -8,10 +8,10 @@ from typing import Optional
 
 from langchain_core.tools import tool
 
-from .execution import execute_python_with_state_preserved
+from .execution import execute_python_with_state_preserved, _parse_check_in_after_seconds
 
 
-CHECKIN_TEMP_TIMEOUT_MINUTES = 5.0
+CHECKIN_TEMP_RUNTIME_GUARD_MINUTES = 5.0
 # open() mode strings in the stdlib use only these characters (before encodings like 'latin-1').
 _OPEN_MODE_CHARS_ONLY = re.compile(r"^[rwxabtU+]+$", re.IGNORECASE)
 
@@ -190,37 +190,46 @@ FORBIDDEN_TEMP_PYTHON_PATTERNS = (
 
 
 @tool
-def continue_execution(summary: str = "") -> str:
+def continue_execution(next_check_in_after: float, summary: str = "") -> str:
     """Continue the currently running Python execution.
     
-    Call this when the execution should continue running for another check-in interval.
-    The script will continue running and you will be prompted again after the next interval.
+    Call this when the execution should continue running. The agent must schedule
+    the next progress check by passing next_check_in_after in minutes.
 
     Args:
+        next_check_in_after: Required delay in minutes before the next check-in.
         summary: Brief summary of the current execution stage and why it is safe to continue.
     
     Returns:
         Confirmation message that execution will continue.
     """
-    return "CONTINUE_EXECUTION"
+    if next_check_in_after is None:
+        return "Error: 'next_check_in_after' is required and must be an agent-selected positive number of minutes."
+
+    _, interval_error = _parse_check_in_after_seconds(
+        next_check_in_after,
+        field_name="next_check_in_after",
+    )
+    if interval_error:
+        return interval_error
+
+    return f"CONTINUE_EXECUTION\nNEXT_CHECK_IN_AFTER_MINUTES: {float(next_check_in_after):g}"
 
 
 @tool
 def execute_temporary_python(
     code: str,
     file_path: str = "",
-    timeout: Optional[float] = None,
 ) -> str:
     """Execute a short-lived temporary Python snippet during a check-in.
 
     Use this only to parse existing result files and determine simulation status.
     Do not launch subprocesses, start new simulations, or make long-running changes.
-    This always runs with a fixed 5-minute timeout.
+    This has an internal runtime guard so check-in inspection cannot stall forever.
 
     Args:
         code: Temporary Python code that reads/parses existing outputs.
         file_path: Not allowed for this tool. Temporary check-in parsing must use inline code only.
-        timeout: Not allowed for this tool. The timeout is fixed at 5 minutes.
 
     Returns:
         Execution results including stdout, stderr, and exit code.
@@ -231,11 +240,6 @@ def execute_temporary_python(
         return (
             "Error: 'file_path' is not supported for execute_temporary_python. "
             "Use inline code only so check-in parsing remains temporary."
-        )
-    if timeout is not None:
-        return (
-            "Error: 'timeout' is fixed for execute_temporary_python. "
-            "Do not override it; this tool always uses a 5-minute timeout."
         )
 
     for pattern, label in FORBIDDEN_TEMP_PYTHON_PATTERNS:
@@ -260,8 +264,8 @@ def execute_temporary_python(
             )
 
     return execute_python_with_state_preserved(
-        timeout=CHECKIN_TEMP_TIMEOUT_MINUTES,
         code=code,
+        max_runtime_minutes=CHECKIN_TEMP_RUNTIME_GUARD_MINUTES,
     )
 
 

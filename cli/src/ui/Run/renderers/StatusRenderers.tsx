@@ -4,10 +4,10 @@
  */
 import React from 'react';
 import { Box, Text } from 'ink';
-import chalk from 'chalk';
 import { truncateText, getVisualLength, capitalizeFirst } from '../../../utils/helpers.js';
 import { INDENT_EVALUATOR, INDENT_AGENT, OFFSET_PLAN, OFFSET_SUMMARY } from '../../../utils/constants.js';
 import Banner from '../../Banner.js';
+import { cliChalk, cliTheme } from '../../theme.js';
 
 interface BaseRendererProps {
     leftMargin: number;
@@ -22,12 +22,12 @@ interface AgentHeaderRendererProps extends BaseRendererProps {
 }
 
 /**
- * Agent Header (e.g. "¤ Strategist")
+ * Agent Header (e.g. "◆ Strategist")
  */
 export function AgentHeaderRenderer({ agentName, id, leftMargin }: AgentHeaderRendererProps): React.ReactElement {
     return (
         <Box key={id} marginLeft={leftMargin} marginTop={1}>
-            <Text>{chalk.ansi256(99).bold(`¤ ${capitalizeFirst(agentName)}`)}</Text>
+            <Text>{cliChalk.accentBold(`${cliTheme.glyph.agent} ${capitalizeFirst(agentName)}`)}</Text>
         </Box>
     );
 }
@@ -38,8 +38,8 @@ export function AgentHeaderRenderer({ agentName, id, leftMargin }: AgentHeaderRe
 export function EvaluatorHeaderRenderer({ agentName, id, leftMargin }: AgentHeaderRendererProps): React.ReactElement {
     return (
         <Box key={id} marginLeft={leftMargin + INDENT_AGENT} paddingX={1}>
-            <Text>{chalk.ansi256(253)('L ')}</Text>
-            <Text>{chalk.ansi256(99).bold(`¤ ${capitalizeFirst(agentName)}`)}</Text>
+            <Text>{cliChalk.muted(`${cliTheme.glyph.branch} `)}</Text>
+            <Text>{cliChalk.accentBold(`${cliTheme.glyph.agent} ${capitalizeFirst(agentName)}`)}</Text>
         </Box>
     );
 }
@@ -66,16 +66,16 @@ export function ToolRenderer({ content, agentName, isError, id, leftMargin, term
     let displayContent = content;
     
     if (isError) {
-        toolColor = 'red';
-        icon = '✗';
+        toolColor = cliTheme.ink.danger;
+        icon = cliTheme.glyph.error;
     } else {
-        toolColor = 'green';
-        icon = '✓';
+        toolColor = cliTheme.ink.success;
+        icon = cliTheme.glyph.success;
     }
     
     return (
         <Box key={id} marginLeft={toolIndent} paddingX={1}>
-            <Text>{isError ? chalk.red('L ') : chalk.ansi256(253)('L ')}</Text>
+            <Text>{isError ? cliChalk.danger(`${cliTheme.glyph.branch} `) : cliChalk.muted(`${cliTheme.glyph.branch} `)}</Text>
             <Text color={toolColor as any} bold>{icon} {truncateText(displayContent, toolMaxWidth)}</Text>
         </Box>
     );
@@ -97,14 +97,14 @@ export function LogRenderer({ content, agentName, id, leftMargin, terminalWidth 
     
     return (
         <Box key={id} marginLeft={logIndent} paddingX={1}>
-            <Text>{chalk.ansi256(253)('L ')}</Text>
+            <Text>{cliChalk.muted(`${cliTheme.glyph.branch} `)}</Text>
             {isApiError ? (
                 <>
-                    <Text color="red" bold>✗ API Error</Text>
-                    <Text color="gray"> (see logs/conversation.md)</Text>
+                    <Text color={cliTheme.ink.danger} bold>{cliTheme.glyph.error} API Error</Text>
+                    <Text color={cliTheme.ink.muted}> (see quasar_logs/conversation.md)</Text>
                 </>
             ) : isInterrupt ? (
-                <Text color="red" bold>{truncateText(content, logMaxWidth)}</Text>
+                <Text color={cliTheme.ink.danger} bold>{truncateText(content, logMaxWidth)}</Text>
             ) : (
                 <Text>{truncateText(content, logMaxWidth)}</Text>
             )}
@@ -124,8 +124,8 @@ interface AgentStatusRendererProps extends BaseRendererProps {
 export function AgentStatusRenderer({ content, id, leftMargin }: AgentStatusRendererProps): React.ReactElement {
     return (
         <Box key={id} marginLeft={leftMargin + INDENT_AGENT} paddingX={1}>
-            <Text>{chalk.ansi256(253)('L ')}</Text>
-            <Text color="green" bold>✓ {content.replace('Creating', 'Created')}</Text>
+            <Text>{cliChalk.muted(`${cliTheme.glyph.branch} `)}</Text>
+            <Text color={cliTheme.ink.success} bold>{cliTheme.glyph.success} {content.replace('Creating', 'Created')}</Text>
         </Box>
     );
 }
@@ -137,12 +137,12 @@ export function EvaluatorStatusRenderer({ content, id, leftMargin }: AgentStatus
     const isRetry = content.includes('Retry');
     const isFinalFailure = content.includes('Task Skipped');
     const isFailure = content.includes('Failed');
-    const statusColor = isRetry ? 'yellow' : (isFinalFailure || isFailure ? 'red' : 'green');
-    const icon = isRetry ? '⟳' : (isFailure ? '✗' : '✓');
+    const statusColor = isRetry ? cliTheme.ink.warning : (isFinalFailure || isFailure ? cliTheme.ink.danger : cliTheme.ink.success);
+    const icon = isRetry ? cliTheme.glyph.retry : (isFailure ? cliTheme.glyph.error : cliTheme.glyph.success);
     
     return (
         <Box key={id} marginLeft={leftMargin + INDENT_EVALUATOR} paddingX={1}>
-            <Text>{chalk.ansi256(253)('L ')}</Text>
+            <Text>{cliChalk.muted(`${cliTheme.glyph.branch} `)}</Text>
             <Text color={statusColor} bold>{icon} {content.replace('Creating', 'Created')}</Text>
         </Box>
     );
@@ -186,7 +186,7 @@ export function ModelTextRenderer({ content, agentName, id, leftMargin, terminal
     return (
         <Box key={id} marginLeft={textIndent} paddingX={1} flexDirection="column">
             {wrappedLines.map((line, idx) => (
-                <Text key={idx} dimColor>{line}</Text>
+                <Text key={idx} color={cliTheme.ink.muted}>{line}</Text>
             ))}
         </Box>
     );

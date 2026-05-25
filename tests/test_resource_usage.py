@@ -29,8 +29,6 @@ from pathlib import Path
 
 import src.usage_tracker as usage_tracker
 
-DEFAULT_TIMEOUT_MINUTES = 60.0
-
 
 def _can_enumerate_process_tree() -> bool:
     """Return True when psutil process-tree enumeration is permitted."""
@@ -542,10 +540,12 @@ class TestExecutePythonCheckIn:
         mock_usage = "Execution Process Tree (1 process):\n  PID 55555 (python): CPU 50% | RSS 256 MB\n  Total: CPU 50% | RAM 0.2 GB\nSystem RAM: 4.0/8.0 GB (50%)\nGPU: N/A"
         
         with patch('os.getpgid', return_value=55555), \
-             patch('src.tools.execution._get_check_interval', return_value=0.01), \
              patch('src.tools.execution._get_resource_usage_lazy', return_value=mock_usage), \
              patch('time.sleep'):
-            result = execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "code": "import time; time.sleep(100)"})
+            result = execute_python.invoke({
+                "check_in_after": 0.0001,
+                "code": "import time; time.sleep(100)",
+            })
         
         assert isinstance(result, dict)
         assert result['status'] == 'check_in_required'
@@ -564,10 +564,12 @@ class TestExecutePythonCheckIn:
         mock_process.poll.return_value = None
         
         with patch('os.getpgid', return_value=77777), \
-             patch('src.tools.execution._get_check_interval', return_value=0.01), \
              patch('src.tools.execution._get_resource_usage_lazy', return_value="test") as mock_lazy, \
              patch('time.sleep'):
-            execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "code": "pass"})
+            execute_python.invoke({
+                "check_in_after": 0.0001,
+                "code": "pass",
+            })
         
         mock_lazy.assert_called_once_with(pid=77777)
 
@@ -582,10 +584,12 @@ class TestExecutePythonCheckIn:
         mock_process.poll.return_value = None
         
         with patch('os.getpgid', return_value=88888), \
-             patch('src.tools.execution._get_check_interval', return_value=0.01), \
              patch('src.tools.execution._get_resource_usage_lazy', return_value="data"), \
              patch('time.sleep'):
-            result = execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "code": "pass"})
+            result = execute_python.invoke({
+                "check_in_after": 0.0001,
+                "code": "pass",
+            })
         
         expected_keys = {'status', 'elapsed_seconds', 'elapsed_display', 'file_path', 'use_temp_file', 'resource_usage'}
         assert set(result.keys()) == expected_keys
@@ -616,10 +620,9 @@ class TestResumeExecutionCheckIn:
         mock_usage = "Execution Process Tree (2 processes):\n  PID 66666 (python): CPU 10% | RSS 128 MB\n  PID 66667 (pw.x): CPU 99% | RSS 2048 MB\n  Total: CPU 109% | RAM 2.1 GB"
         
         try:
-            with patch('src.tools.execution._get_check_interval', return_value=0.01), \
-                 patch('src.tools.execution._get_resource_usage_lazy', return_value=mock_usage) as mock_lazy, \
+            with patch('src.tools.execution._get_resource_usage_lazy', return_value=mock_usage) as mock_lazy, \
                  patch('time.sleep'):
-                result = resume_execution()
+                result = resume_execution(check_in_after=0.0001)
             
             assert isinstance(result, dict)
             assert result['status'] == 'check_in_required'
@@ -704,7 +707,8 @@ Based on this assessment, determine whether execution should proceed."""
 # ============================================================================
 
 def _write_checkpoint_settings(workspace: Path, saved_stats: dict) -> None:
-    checkpoint_path = workspace / "checkpoint_settings.json"
+    checkpoint_path = workspace / "quasar_logs" / "checkpoint_settings.json"
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_path.write_text(
         json.dumps({"_usage_stats": saved_stats}, indent=2),
         encoding="utf-8",
@@ -811,7 +815,7 @@ class TestUsageTrackerHardwareResume:
         assert usage_tracker.load_stats_from_checkpoint() is False
         assert usage_tracker.was_hardware_changed_on_resume() is True
 
-        (mock_workspace / "checkpoint_settings.json").unlink()
+        (mock_workspace / "quasar_logs" / "checkpoint_settings.json").unlink()
 
         loaded = usage_tracker.load_stats_from_checkpoint()
 
@@ -890,7 +894,7 @@ class TestUsageTrackerExcludedIntervals:
         clock.advance(15.0)
         usage_tracker.save_stats_to_checkpoint()
 
-        checkpoint = json.loads((mock_workspace / "checkpoint_settings.json").read_text(encoding="utf-8"))
+        checkpoint = json.loads((mock_workspace / "quasar_logs" / "checkpoint_settings.json").read_text(encoding="utf-8"))
         saved_stats = checkpoint["_usage_stats"]
         assert saved_stats["cumulative_elapsed_time"] == pytest.approx(45.0)
 
@@ -898,7 +902,6 @@ class TestUsageTrackerExcludedIntervals:
             "MODEL": "gemini-2.5-pro",
             "ACCURACY": "standard",
             "GRANULARITY": "medium",
-            "CHECK_INTERVAL": "Disabled",
             "ENABLE_RAG": "false",
             "PMG_MAPI_KEY": "",
         }):
@@ -925,7 +928,7 @@ class TestUsageTrackerExcludedIntervals:
         clock.advance(120.0)
         usage_tracker.save_stats_to_checkpoint()
 
-        checkpoint = json.loads((mock_workspace / "checkpoint_settings.json").read_text(encoding="utf-8"))
+        checkpoint = json.loads((mock_workspace / "quasar_logs" / "checkpoint_settings.json").read_text(encoding="utf-8"))
         saved_stats = checkpoint["_usage_stats"]
         assert saved_stats["cumulative_elapsed_time"] == pytest.approx(20.0)
 
@@ -933,7 +936,6 @@ class TestUsageTrackerExcludedIntervals:
             "MODEL": "gemini-2.5-pro",
             "ACCURACY": "standard",
             "GRANULARITY": "medium",
-            "CHECK_INTERVAL": "Disabled",
             "ENABLE_RAG": "false",
             "PMG_MAPI_KEY": "",
         }):
@@ -982,8 +984,14 @@ class TestUsageReportGeneration:
     2. Cost estimate sums per-agent costs when agents use different models.
     """
 
-    def _make_stats(self, primary_model: str, per_agent: dict,
-                    input_tokens: int = 1_000_000, output_tokens: int = 100_000) -> "src.usage_tracker.UsageStats":
+    def _make_stats(
+        self,
+        primary_model: str,
+        per_agent: dict,
+        input_tokens: int = 1_000_000,
+        output_tokens: int = 100_000,
+        cache_read_tokens: int = 0,
+    ) -> "src.usage_tracker.UsageStats":
         import src.usage_tracker as ut
         stats = ut.UsageStats(
             start_time=0,
@@ -991,14 +999,16 @@ class TestUsageReportGeneration:
             cumulative_elapsed_time=120.0,
             api_request_count=sum(a.get('api_request_count', 0) for a in per_agent.values()),
             input_tokens=input_tokens,
+            cache_read_tokens=cache_read_tokens,
             output_tokens=output_tokens,
             model_name=primary_model,
             run_status="success",
             per_agent_stats=per_agent,
         )
-        in_rate, out_rate = ut._get_cost_rates_for_model(primary_model)
+        in_rate, out_rate, cache_read_rate = ut._get_cost_rates_for_model(primary_model)
         stats.input_cost_per_million = in_rate
         stats.output_cost_per_million = out_rate
+        stats.cache_read_cost_per_million = cache_read_rate
         return stats
 
     # --- Bug 1: agent breakdown visibility ---
@@ -1015,7 +1025,7 @@ class TestUsageReportGeneration:
                                  input_tokens=8_889_316, output_tokens=83_536)
         with patch('src.usage_tracker._load_run_settings', return_value={
             'MODEL': model, 'ACCURACY': 'standard', 'GRANULARITY': 'medium',
-            'CHECK_INTERVAL': '0', 'ENABLE_RAG': 'true', 'PMG_MAPI_KEY': 'key',
+            'ENABLE_RAG': 'true', 'PMG_MAPI_KEY': 'key',
         }):
             report = ut._generate_report_from_stats(stats)
 
@@ -1028,7 +1038,7 @@ class TestUsageReportGeneration:
         stats = self._make_stats(model, {})
         with patch('src.usage_tracker._load_run_settings', return_value={
             'MODEL': model, 'ACCURACY': 'standard', 'GRANULARITY': 'medium',
-            'CHECK_INTERVAL': '0', 'ENABLE_RAG': 'true', 'PMG_MAPI_KEY': '',
+            'ENABLE_RAG': 'true', 'PMG_MAPI_KEY': '',
         }):
             report = ut._generate_report_from_stats(stats)
 
@@ -1046,7 +1056,7 @@ class TestUsageReportGeneration:
                                  input_tokens=8_889_316, output_tokens=83_536)
         with patch('src.usage_tracker._load_run_settings', return_value={
             'MODEL': primary_model, 'ACCURACY': 'standard', 'GRANULARITY': 'medium',
-            'CHECK_INTERVAL': '0', 'ENABLE_RAG': 'true', 'PMG_MAPI_KEY': 'key',
+            'ENABLE_RAG': 'true', 'PMG_MAPI_KEY': 'key',
         }):
             report = ut._generate_report_from_stats(stats)
 
@@ -1068,7 +1078,7 @@ class TestUsageReportGeneration:
                                  input_tokens=8_889_316, output_tokens=83_536)
         with patch('src.usage_tracker._load_run_settings', return_value={
             'MODEL': model, 'ACCURACY': 'standard', 'GRANULARITY': 'medium',
-            'CHECK_INTERVAL': '0', 'ENABLE_RAG': 'true', 'PMG_MAPI_KEY': 'key',
+            'ENABLE_RAG': 'true', 'PMG_MAPI_KEY': 'key',
         }):
             report = ut._generate_report_from_stats(stats)
 
@@ -1084,7 +1094,7 @@ class TestUsageReportGeneration:
         import src.usage_tracker as ut
 
         # operator: gemini-3-flash-preview  ($0.50 in / $3.00 out)
-        # evaluator: gemini-3.1-pro-preview ($1.25 in / $10.00 out)
+        # evaluator: gemini-3.1-pro-preview ($2.00 in / $12.00 out)
         op_in  = 8_252_414
         op_out = 76_218
         ev_in  = 636_902
@@ -1092,8 +1102,8 @@ class TestUsageReportGeneration:
 
         op_in_cost  = (op_in  / 1_000_000) * 0.50
         op_out_cost = (op_out / 1_000_000) * 3.00
-        ev_in_cost  = (ev_in  / 1_000_000) * 1.25
-        ev_out_cost = (ev_out / 1_000_000) * 10.00
+        ev_in_cost  = (ev_in  / 1_000_000) * 2.00
+        ev_out_cost = (ev_out / 1_000_000) * 12.00
         expected_total = op_in_cost + op_out_cost + ev_in_cost + ev_out_cost
 
         per_agent = {
@@ -1104,7 +1114,7 @@ class TestUsageReportGeneration:
                                  input_tokens=op_in + ev_in, output_tokens=op_out + ev_out)
         with patch('src.usage_tracker._load_run_settings', return_value={
             'MODEL': 'gemini-3-flash-preview', 'ACCURACY': 'standard', 'GRANULARITY': 'medium',
-            'CHECK_INTERVAL': '0', 'ENABLE_RAG': 'true', 'PMG_MAPI_KEY': 'key',
+            'ENABLE_RAG': 'true', 'PMG_MAPI_KEY': 'key',
         }):
             report = ut._generate_report_from_stats(stats)
 
@@ -1117,3 +1127,82 @@ class TestUsageReportGeneration:
         # Per-agent rows should appear
         assert "Operator (gemini-3-flash-preview)" in report
         assert "Evaluator (gemini-3.1-pro-preview)" in report
+
+    def test_cost_discounts_cache_read_tokens_for_single_model(self):
+        """Gemini cache-read tokens should be charged at the cache-read rate."""
+        import src.usage_tracker as ut
+
+        model = "gemini-3.5-flash"  # $1.50 in / $0.15 cache read / $9.00 out
+        stats = self._make_stats(
+            model,
+            {},
+            input_tokens=1_000_000,
+            cache_read_tokens=400_000,
+            output_tokens=100_000,
+        )
+        expected_total = (600_000 / 1_000_000) * 1.50
+        expected_total += (400_000 / 1_000_000) * 0.15
+        expected_total += (100_000 / 1_000_000) * 9.00
+
+        with patch('src.usage_tracker._load_run_settings', return_value={
+            'MODEL': model, 'ACCURACY': 'standard', 'GRANULARITY': 'medium',
+            'ENABLE_RAG': 'true', 'PMG_MAPI_KEY': 'key',
+        }):
+            report = ut._generate_report_from_stats(stats)
+
+        assert "| Cache Read Tokens | 400,000 |" in report
+        assert "| Input (uncached) | 600,000 | $1.50 | $0.9000 |" in report
+        assert "| Cache read | 400,000 | $0.15 | $0.0600 |" in report
+        assert f"${expected_total:.4f}" in report
+
+    def test_cost_discounts_cache_read_tokens_per_agent(self):
+        """Mixed-model reports should apply each agent's cache-read rate."""
+        import src.usage_tracker as ut
+
+        op_in = 1_000_000
+        op_cache = 250_000
+        op_out = 100_000
+        ev_in = 500_000
+        ev_cache = 100_000
+        ev_out = 50_000
+
+        per_agent = {
+            'operator': {
+                'api_request_count': 2,
+                'input_tokens': op_in,
+                'cache_read_tokens': op_cache,
+                'output_tokens': op_out,
+                'model_name': 'gemini-3-flash-preview',
+            },
+            'evaluator': {
+                'api_request_count': 1,
+                'input_tokens': ev_in,
+                'cache_read_tokens': ev_cache,
+                'output_tokens': ev_out,
+                'model_name': 'gemini-3.1-pro-preview',
+            },
+        }
+        expected_total = ((op_in - op_cache) / 1_000_000) * 0.50
+        expected_total += (op_cache / 1_000_000) * 0.05
+        expected_total += (op_out / 1_000_000) * 3.00
+        expected_total += ((ev_in - ev_cache) / 1_000_000) * 2.00
+        expected_total += (ev_cache / 1_000_000) * 0.20
+        expected_total += (ev_out / 1_000_000) * 12.00
+
+        stats = self._make_stats(
+            "gemini-3-flash-preview",
+            per_agent,
+            input_tokens=op_in + ev_in,
+            cache_read_tokens=op_cache + ev_cache,
+            output_tokens=op_out + ev_out,
+        )
+        with patch('src.usage_tracker._load_run_settings', return_value={
+            'MODEL': 'gemini-3-flash-preview', 'ACCURACY': 'standard', 'GRANULARITY': 'medium',
+            'ENABLE_RAG': 'true', 'PMG_MAPI_KEY': 'key',
+        }):
+            report = ut._generate_report_from_stats(stats)
+
+        assert "| Agent | Model | API Calls | Input Tokens | Cache Read Tokens | Output Tokens | Total Tokens |" in report
+        assert "Operator (gemini-3-flash-preview) - Cache read" in report
+        assert "Evaluator (gemini-3.1-pro-preview) - Cache read" in report
+        assert f"${expected_total:.4f}" in report

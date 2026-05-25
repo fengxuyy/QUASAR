@@ -6,11 +6,14 @@ import { createRequire } from 'module';
 import fs from 'fs';
 import path from 'path';
 import App from './app.js';
-import { applyDefaultEnv, resolveWorkspaceDir } from './utils/envDefaults.js';
+import { applyDefaultEnv, checkpointDbPath, resolveWorkspaceDir } from './utils/envDefaults.js';
+import { normalizeReportCommand, reportCommandHelp } from './utils/reportFiles.js';
+import { parseCliCommand } from './utils/commandRegistry.js';
 
 const require = createRequire(import.meta.url);
 const { version: packageVersion } = require('../package.json');
 const rawArgs = process.argv.slice(2);
+
 const allowedLongFlags = new Set([
 	'--help',
 	'--version',
@@ -20,6 +23,7 @@ const allowedLongFlags = new Set([
 	'--history',
 	'--config',
 	'--info',
+
 	'--no-rag',
 ]);
 
@@ -50,6 +54,9 @@ const cli = meow(
 	  $ quasar --history
 	  $ quasar --config [show|validate]
 	  $ quasar --info
+	  $ quasar \\execution-overview
+	  $ quasar \\usage-report
+	  $ quasar \\revert <task>
 	  $ quasar --version
 	
 	Options
@@ -62,13 +69,20 @@ const cli = meow(
 	  --version   Show version information
 	  --no-rag    Disable RAG functionality (run)
 
+	Backslash Commands
+	  ${reportCommandHelp()}   Show local run reports
+	  \\revert <task>          Revert checkpoint/workspace to a task
+
 	Examples
 	  $ quasar
 	  $ quasar "Calculate bandgap"
 	  $ quasar --resume
+	  $ quasar --resume "Use a longer check-in interval before deciding again"
 	  $ quasar --clear
 	  $ quasar --fresh
 	  $ quasar --history
+	  $ quasar \\usage-report
+	  $ quasar \\revert 2
 	  $ quasar --config validate
 `,
 	{
@@ -97,7 +111,7 @@ const cli = meow(
 			noRag: {
 				type: 'boolean',
 			},
-		},
+			},
 	},
 );
 
@@ -108,6 +122,7 @@ if (resumeFromFlag) {
 cli.flags.restart = resumeFromFlag;
 
 const commandFlags = [
+
 	{ flag: 'clear', command: 'clear' },
 	{ flag: 'fresh', command: 'fresh' },
 	{ flag: 'history', command: 'history' },
@@ -124,23 +139,22 @@ if (selectedCommands.length > 1) {
 
 let command: string = selectedCommands[0]?.command || 'run';
 let args = cli.input;
-
-// Track if headless mode is forced (e.g., restart with direct args)
-let forceHeadless = false;
+const reportKind = command === 'run' && args.length === 1 ? normalizeReportCommand(args[0]) : null;
+if (reportKind) {
+	command = 'report';
+	args = [reportKind];
+}
+const inlineCliCommand = command === 'run' ? parseCliCommand(args.join(' ')) : null;
 
 // Early checks for run command
 if (command === 'run') {
 	const restartFromEnv = ['true', '1', 'yes', 'on'].includes((process.env.IF_RESTART || '').toLowerCase());
 	const isRestart = restartFromEnv || resumeFromFlag;
 	const workspaceDir = resolveWorkspaceDir();
-	const checkpointPath = path.join(workspaceDir, 'checkpoints.sqlite');
+	const checkpointPath = checkpointDbPath(workspaceDir);
 	const hasCheckpoint = fs.existsSync(checkpointPath);
 	const resumeSource = resumeFromFlag ? '--resume' : 'IF_RESTART=True';
 
-	if (resumeFromFlag) {
-		forceHeadless = true;
-	}
-	
 	// Case 1: resume requested but no checkpoint exists
 	if (isRestart && !hasCheckpoint) {
 		console.error('\x1b[31m✗ No Checkpoint to Resume\x1b[0m');
@@ -149,20 +163,8 @@ if (command === 'run') {
 		process.exit(1);
 	}
 	
-	// Case 2: resume requested with direct args - warn and ignore the prompt
-	if (isRestart && args.length > 0) {
-		console.warn('\x1b[33m⚠ Warning: Prompt Ignored\x1b[0m');
-		console.warn(`\x1b[90m${resumeSource} is set - the provided prompt will be ignored.\x1b[0m`);
-		console.warn('\x1b[90mResuming from checkpoint instead.\x1b[0m');
-		console.warn('');
-		// Mark for headless mode since a direct command was passed
-		forceHeadless = true;
-		// Clear args so it proceeds as a checkpoint resume
-		args = [];
-	}
-	
-	// Case 3: Direct args with existing checkpoint but IF_RESTART=False
-	if (!isRestart && args.length > 0 && hasCheckpoint) {
+	// Case 2: Direct args with existing checkpoint but IF_RESTART=False
+	if (!isRestart && args.length > 0 && hasCheckpoint && !inlineCliCommand) {
 		console.error('\x1b[31m✗ Cannot Start New Run\x1b[0m');
 		console.error('\x1b[90mCheckpoint exists from a previous interrupted run.\x1b[0m');
 		console.error('\x1b[90mUse `quasar --resume` to continue, or run `quasar --clear` to start fresh.\x1b[0m');
@@ -170,8 +172,8 @@ if (command === 'run') {
 	}
 }
 
-// Determine if we're in non-interactive mode (direct prompt passed or forced by resume flow)
-const isHeadless = command === 'run' && (args.length > 0 || forceHeadless);
+// Determine if we're in non-interactive mode (direct prompt passed)
+const isHeadless = command === 'run' && args.length > 0 && !inlineCliCommand;
 
 if (isHeadless) {
 	// Use headless mode for direct prompts - simple console output

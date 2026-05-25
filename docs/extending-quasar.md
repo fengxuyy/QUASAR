@@ -29,7 +29,7 @@ permalink: /extending-quasar/
 ## The Short Rule
 
 1. For a one-off experiment or temporary dependency, include the install instruction directly in the prompt.
-2. For repeated use, difficult installs, compiled software, or anything you want to rely on long term, add it to the repo environment with `requirements.txt` or the Dockerfile.
+2. For repeated use, difficult installs, compiled software, or anything you want to rely on long term, add it to the repo environment with `requirements.txt` or the relevant Dockerfile stage.
 3. If the software is already available and should be part of QUASAR's default behavior, add that guidance to the relevant system prompts.
 
 ## Option 1: Temporary Use Through the Prompt
@@ -82,6 +82,10 @@ Examples in this repo include:
 - [docker/Dockerfile.cuda]({{ site.repository_url }}/blob/main/docker/Dockerfile.cuda)
 - [docker/Dockerfile.rocm]({{ site.repository_url }}/blob/main/docker/Dockerfile.rocm)
 
+The Dockerfiles are intentionally staged. Keep compilers, headers, source trees, and build-only packages in builder stages where possible, then copy only runtime binaries, libraries, and data into the final image.
+
+The image build argument `TORCH_PACKAGES` defaults to `torch` to avoid shipping unnecessary PyTorch companion wheels. Expand it only when a workflow truly requires packages such as `torchvision` or `torchaudio`.
+
 ## Option 3: System Prompt Inclusion
 
 Use this level when the software is already installed and you want QUASAR to know, by default, when and how to use it.
@@ -97,5 +101,5 @@ Typical integration points include the agent system prompts in:
 For most extensions, the cleanest progression is:
 
 1. Try it once with explicit install instructions in the prompt.
-2. If the dependency is useful and stable, move it into `requirements.txt` or the relevant Dockerfile.
+2. If the dependency is useful and stable, move it into `requirements.txt` or the relevant Dockerfile stage.
 3. If the software should be part of QUASAR's default behavior, add the relevant guidance to the system prompts.

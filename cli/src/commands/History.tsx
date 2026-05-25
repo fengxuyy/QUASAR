@@ -7,6 +7,7 @@ import { cleanTaskDescription } from '../utils/stateHelpers.js';
 import { buildCommittedTimelineItems } from '../handlers/checkpointHandler.js';
 import StaticItemRenderer from '../ui/Run/StaticItemRenderer.js';
 import type { CommittedItem } from '../hooks/types.js';
+import { cliTheme } from '../ui/theme.js';
 
 interface HistoryProps {
     args: string[];
@@ -111,6 +112,35 @@ except Exception as e:
     }
 }
 
+function getAvailableTaskNumbers(history: HistoryData): number[] {
+    const taskNumbers = new Set<number>();
+    const addTaskIndex = (value: unknown) => {
+        const idx = Number(value);
+        if (Number.isInteger(idx) && idx >= 0) {
+            taskNumbers.add(idx + 1);
+        }
+    };
+
+    for (let i = 0; i < (history.total_tasks || 0); i++) {
+        taskNumbers.add(i + 1);
+    }
+    for (let i = 0; i < (history.plan?.length || 0); i++) {
+        taskNumbers.add(i + 1);
+    }
+
+    Object.keys(history.ordered_items_by_task || {}).forEach(addTaskIndex);
+    Object.keys(history.operator_items_by_task || {}).forEach(addTaskIndex);
+    Object.keys(history.evaluator_items_by_task || {}).forEach(addTaskIndex);
+    Object.keys(history.step_results || {}).forEach(addTaskIndex);
+
+    return Array.from(taskNumbers).sort((a, b) => a - b);
+}
+
+function isTaskCompleted(history: HistoryData, taskNum: number): boolean {
+    const completedCount = history.completed_steps?.length || 0;
+    return taskNum <= completedCount || history.step_results?.[String(taskNum - 1)] != null;
+}
+
 const History: React.FC<HistoryProps> = ({ args: _args }) => {
     const { exit } = useApp();
     const { stdout } = useStdout();
@@ -128,7 +158,7 @@ const History: React.FC<HistoryProps> = ({ args: _args }) => {
     if (error) {
         return (
             <Box flexDirection="column" padding={1}>
-                <Text color="red">Failed to load history</Text>
+                <Text color={cliTheme.ink.danger}>Failed to load history</Text>
                 <Text dimColor>{error}</Text>
             </Box>
         );
@@ -137,14 +167,12 @@ const History: React.FC<HistoryProps> = ({ args: _args }) => {
     if (!history) {
         return (
             <Box flexDirection="column" padding={1}>
-                <Text color="yellow">No checkpoint history available.</Text>
+                <Text color={cliTheme.ink.warning}>No checkpoint history available.</Text>
             </Box>
         );
     }
 
-    const totalTasks = history.total_tasks || 0;
-    const completedCount = history.completed_steps?.length || 0;
-    const availableTasks = Array.from({ length: totalTasks }, (_, i) => i + 1);
+    const availableTasks = getAvailableTaskNumbers(history);
     const isSelectorMode = selectedTaskNum === null;
 
     useInput((input, key) => {
@@ -179,22 +207,22 @@ const History: React.FC<HistoryProps> = ({ args: _args }) => {
     if (isSelectorMode) {
         return (
             <Box flexDirection="column" marginLeft={leftMargin} paddingX={1}>
-                <Text color="cyan">{rule}</Text>
-                <Text bold color="cyan">QUASAR History</Text>
-                <Text color="cyan">{rule}</Text>
+                <Text color={cliTheme.ink.primary}>{rule}</Text>
+                <Text bold color={cliTheme.ink.primary}>QUASAR History</Text>
+                <Text color={cliTheme.ink.primary}>{rule}</Text>
                 {availableTasks.length === 0 ? (
-                    <Text color="yellow">No task history found in checkpoint.</Text>
+                    <Text color={cliTheme.ink.warning}>No task history found in checkpoint.</Text>
                 ) : (
                     <Box flexDirection="column" marginTop={1}>
-                        <Text color="green" bold>Select a task</Text>
+                        <Text color={cliTheme.ink.success} bold>Select a task</Text>
                         {availableTasks.map((taskNum, idx) => (
                             <Text key={taskNum}>
-                                {idx === cursorIndex ? <Text color="cyan" bold>❯ </Text> : <Text dimColor>  </Text>}
+                                {idx === cursorIndex ? <Text color={cliTheme.ink.primary} bold>❯ </Text> : <Text dimColor>  </Text>}
                                 <Text>{`task_${taskNum}`.padEnd(Math.min(18, Math.max(10, listInnerWidth - 20)))}</Text>
-                                {taskNum <= completedCount ? (
-                                    <Text color="green">completed</Text>
+                                {isTaskCompleted(history, taskNum) ? (
+                                    <Text color={cliTheme.ink.success}>completed</Text>
                                 ) : (
-                                    <Text color="yellow">in progress</Text>
+                                    <Text color={cliTheme.ink.warning}>in progress</Text>
                                 )}
                             </Text>
                         ))}
@@ -210,10 +238,10 @@ const History: React.FC<HistoryProps> = ({ args: _args }) => {
 
     const taskNumToShow = selectedTaskNum;
 
-    if (taskNumToShow < 1 || taskNumToShow > totalTasks) {
+    if (!availableTasks.includes(taskNumToShow)) {
         return (
             <Box flexDirection="column" padding={1}>
-                <Text color="red">Task not found: task_{taskNumToShow}</Text>
+                <Text color={cliTheme.ink.danger}>Task not found: task_{taskNumToShow}</Text>
                 {availableTasks.length > 0 && (
                     <Text dimColor>Available: {availableTasks.map(n => `task_${n}`).join(', ')}</Text>
                 )}
@@ -272,13 +300,13 @@ const History: React.FC<HistoryProps> = ({ args: _args }) => {
     return (
         <Box flexDirection="column">
             <Box marginLeft={leftMargin} paddingX={1} flexDirection="column" marginBottom={1}>
-                <Text color="cyan">{rule}</Text>
+                <Text color={cliTheme.ink.primary}>{rule}</Text>
                 <Text>
-                    <Text bold color="cyan">Task History</Text>
+                    <Text bold color={cliTheme.ink.primary}>Task History</Text>
                     <Text> </Text>
                     <Text bold>{`task_${taskNumToShow}`}</Text>
                 </Text>
-                <Text color="cyan">{rule}</Text>
+                <Text color={cliTheme.ink.primary}>{rule}</Text>
             </Box>
             {renderItems.length <= (taskDescription ? 2 : 1) ? (
                 <Box marginLeft={leftMargin} paddingX={1}>

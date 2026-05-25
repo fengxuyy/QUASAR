@@ -18,9 +18,13 @@ DEBUG_LOG_ENABLED = os.getenv("DEBUG", "0").lower() in ("1", "true", "yes")
 try:
     from .tools.base import WORKSPACE_DIR, LOGS_DIR
 except ImportError:
+    try:
+        from .artifacts import get_logs_dir
+    except ImportError:
+        get_logs_dir = None
     _project_root = Path(__file__).parent.parent
     WORKSPACE_DIR = Path(os.getenv("WORKSPACE_DIR", str(_project_root / "workspace")))
-    LOGS_DIR = WORKSPACE_DIR / "logs"
+    LOGS_DIR = get_logs_dir(WORKSPACE_DIR) if get_logs_dir else WORKSPACE_DIR / "quasar_logs"
 
 DEBUG_LOG_FILE = LOGS_DIR / "debug_cli.log"
 

@@ -8,6 +8,7 @@ export {
     EvaluationSummaryPanel, 
     InterruptReasonPanel,
     FinalSummaryPanel, 
+    ReportPanel,
     ActiveTaskPanel, 
     CheckpointResumePanel, 
     CodeResultPanel,

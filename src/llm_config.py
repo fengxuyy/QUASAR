@@ -1,11 +1,55 @@
 """LLM configuration and initialization."""
 
 import os
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_anthropic import ChatAnthropic
-from langchain_xai import ChatXAI
 
 from .openai_compat import QuasarChatOpenAI as ChatOpenAI
+
+ChatGoogleGenerativeAI = None
+ChatAnthropic = None
+ChatXAI = None
+
+
+def _missing_provider_dependency(package_name: str, provider: str) -> ImportError:
+    return ImportError(
+        f"{package_name} is required for {provider} models. "
+        "Install Python dependencies with `python3 -m pip install -r requirements.txt`."
+    )
+
+
+def _load_gemini_chat_model():
+    global ChatGoogleGenerativeAI
+    if ChatGoogleGenerativeAI is not None:
+        return ChatGoogleGenerativeAI
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI as _ChatGoogleGenerativeAI
+    except ImportError as exc:
+        raise _missing_provider_dependency("langchain-google-genai", "Gemini") from exc
+    ChatGoogleGenerativeAI = _ChatGoogleGenerativeAI
+    return ChatGoogleGenerativeAI
+
+
+def _load_anthropic_chat_model():
+    global ChatAnthropic
+    if ChatAnthropic is not None:
+        return ChatAnthropic
+    try:
+        from langchain_anthropic import ChatAnthropic as _ChatAnthropic
+    except ImportError as exc:
+        raise _missing_provider_dependency("langchain-anthropic", "Claude") from exc
+    ChatAnthropic = _ChatAnthropic
+    return ChatAnthropic
+
+
+def _load_xai_chat_model():
+    global ChatXAI
+    if ChatXAI is not None:
+        return ChatXAI
+    try:
+        from langchain_xai import ChatXAI as _ChatXAI
+    except ImportError as exc:
+        raise _missing_provider_dependency("langchain-xai", "Grok") from exc
+    ChatXAI = _ChatXAI
+    return ChatXAI
 
 
 def _infer_provider_from_model(model_name: str) -> str:
@@ -66,6 +110,7 @@ def initialize_llm():
     provider = _infer_provider_from_model(model)
     
     if provider == "gemini":
+        ChatGoogleGenerativeAI = _load_gemini_chat_model()
         llm = ChatGoogleGenerativeAI(
             model=model,
             google_api_key=api_key,
@@ -74,10 +119,12 @@ def initialize_llm():
         return llm, model
     
     if provider == "claude":
+        ChatAnthropic = _load_anthropic_chat_model()
         llm = ChatAnthropic(model=model, api_key=api_key, temperature=0.7)
         return llm, model
     
     if provider == "grok":
+        ChatXAI = _load_xai_chat_model()
         llm = ChatXAI(model=model, xai_api_key=api_key)
         return llm, model
     
@@ -110,6 +157,7 @@ def _create_llm_for_model(model: str, api_key: str, base_url: str = None):
     provider = _infer_provider_from_model(model)
     
     if provider == "gemini":
+        ChatGoogleGenerativeAI = _load_gemini_chat_model()
         return ChatGoogleGenerativeAI(
             model=model,
             google_api_key=api_key,
@@ -117,9 +165,11 @@ def _create_llm_for_model(model: str, api_key: str, base_url: str = None):
         )
     
     if provider == "claude":
+        ChatAnthropic = _load_anthropic_chat_model()
         return ChatAnthropic(model=model, api_key=api_key, temperature=0.7)
     
     if provider == "grok":
+        ChatXAI = _load_xai_chat_model()
         return ChatXAI(model=model, xai_api_key=api_key)
     
     if provider == "openai":

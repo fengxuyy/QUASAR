@@ -90,10 +90,6 @@ def build_graph(llm, agent_llms=None):
         if initial_plan_content:
             return "review"
         
-        # Replanning with plan but no initial_plan_content (legacy/fallback)
-        if is_replanning:
-            return "operator" if plan else "end"
-        
         # No content, end
         return "end"
 

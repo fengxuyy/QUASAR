@@ -18,7 +18,7 @@ export interface CommittedItem {
     type: 'banner' | 'agent-header' | 'tool' | 'log' | 'plan' | 'agent-status' | 
           'evaluator-header' | 'evaluator-status' | 'evaluation-summary' | 
           'checkpoint-resume' | 'active-task-panel' | 'final-summary' | 'model-text' | 'code-result' |
-          'interrupt-reason';
+          'interrupt-reason' | 'report-panel';
     content: any;
     agentName?: string;
     isError?: boolean;  // For styling tool messages red on error
@@ -40,7 +40,7 @@ export interface TaskProgress {
 export interface ContextUsage {
     agent: string;
     model: string;
-    threshold_level: 'low' | 'medium' | 'high';
+    threshold_level: 'low' | 'medium' | 'hard';
     threshold_ratio: number;
     threshold_percent: number;
     max_context_tokens: number | null;
@@ -58,5 +58,5 @@ export interface FileContent {
     content: string;
 }
 
-export type CheckpointMode = 'checking' | 'prompt' | 'normal' | 'error' | 'auto-resume' | 'completed-run-prompt' | 'confirm-delete-archive' | 'confirm-start-prompt' | 'plan-awaiting-confirm';
+export type CheckpointMode = 'checking' | 'prompt' | 'normal' | 'error' | 'auto-resume' | 'completed-run-prompt' | 'confirm-delete-archive' | 'confirm-start-prompt' | 'confirm-revert' | 'plan-awaiting-confirm';
 export type SystemStatus = 'idle' | 'running' | 'completed';

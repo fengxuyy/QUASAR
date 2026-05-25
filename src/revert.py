@@ -26,8 +26,8 @@ PROTECTED_FILES = {
     'pending_execution.json',
     '.rag_index',
     'docs',
-    'archive',
-    'logs',
+    'quasar_archive',
+    'quasar_logs',
 }
 
 
@@ -350,7 +350,7 @@ def delete_task_folders(target_task: int, total_tasks: int) -> List[str]:
         pass
 
     # Also clean up any run-related files at workspace root that might have been created
-    # during task execution (but preserve docs, archive, logs, etc.)
+    # during task execution (but preserve docs, QUASAR archive/logs, etc.)
     cleanup_patterns = [
         # Common output files that might be at workspace root
         'execution_log.md',

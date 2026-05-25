@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
+import { cliTheme } from '../ui/theme.js';
 
 dotenv.config();
 
@@ -17,7 +18,7 @@ const Config: React.FC<ConfigProps> = ({ args }) => {
         "MODEL": process.env.MODEL || "gemini-3.1-pro-preview",
         "MODEL_API_KEY": process.env.MODEL_API_KEY ? "✓" : null,
         "ACCURACY": process.env.ACCURACY || "standard",
-        "GRANULARITY": process.env.GRANULARITY || "medium",
+        "GRANULARITY": process.env.GRANULARITY || "adaptive",
         "CONTEXT_THRESHOLD": process.env.CONTEXT_THRESHOLD || "medium",
         "ENABLE_RAG": process.env.ENABLE_RAG || "true",
         "IF_RESTART": process.env.IF_RESTART || "false",
@@ -32,9 +33,9 @@ const Config: React.FC<ConfigProps> = ({ args }) => {
              <Box flexDirection="column" padding={1}>
             <Box marginBottom={1}>
                 {errors.length > 0 ? (
-                    errors.map((err, i) => <Text key={i} color="red">✖ {err}</Text>)
+                    errors.map((err, i) => <Text key={i} color={cliTheme.ink.danger}>{cliTheme.glyph.error} {err}</Text>)
                 ) : (
-                    <Text color="green">✔ Configuration is valid!</Text>
+                    <Text color={cliTheme.ink.success}>{cliTheme.glyph.success} Configuration is valid!</Text>
                 )}
             </Box>
              </Box>
@@ -50,7 +51,7 @@ const Config: React.FC<ConfigProps> = ({ args }) => {
              {Object.entries(configData).map(([key, val]) => (
                  <Box key={key}>
                      <Box width={20}><Text bold>{key}:</Text></Box>
-                     <Text color="cyan">{val || <Text color="dim">undefined</Text>}</Text>
+                     <Text color={cliTheme.ink.primary}>{val || <Text dimColor>undefined</Text>}</Text>
                  </Box>
              ))}
         </Box>

@@ -180,7 +180,7 @@ def summarize_messages(
     Returns:
         New message list with [SystemMessage, HumanMessage(summary)].
     """
-    from .usage_tracker import record_api_call
+    from .usage_tracker import extract_cache_read_tokens, record_api_call
     
     # Extract the original SystemMessage(s)
     system_messages = [m for m in messages if isinstance(m, SystemMessage)]
@@ -217,7 +217,12 @@ def summarize_messages(
             else:
                 s_in = getattr(usage, "input_tokens", 0)
                 s_out = getattr(usage, "output_tokens", 0)
-            record_api_call(input_tokens=s_in, output_tokens=s_out, agent_name=agent_name)
+            record_api_call(
+                input_tokens=s_in,
+                output_tokens=s_out,
+                agent_name=agent_name,
+                cache_read_tokens=extract_cache_read_tokens(usage),
+            )
         
         summary_text = _extract_summary_text(getattr(summary_response, "content", ""))
         if not isinstance(summary_text, str):
@@ -270,6 +275,8 @@ def maybe_summarize_messages(
     agent_name: str = "",
     model_name: Optional[str] = None,
     input_tokens: Optional[int] = None,
+    runtime_events: Optional[list[dict]] = None,
+    task_index: Optional[int] = None,
 ) -> tuple[list[BaseMessage], bool, str, int]:
     """Summarize messages when the tracked context size exceeds the model threshold.
 
@@ -289,6 +296,24 @@ def maybe_summarize_messages(
     summarized_messages = summarize_messages(messages, llm, agent_name=agent_name)
     did_summarize = summarized_messages is not messages
     if did_summarize and agent_name:
+        if runtime_events:
+            try:
+                from .prompting.events import rehydrate_prompt_runtime_events
+
+                summarized_messages, rehydrated_count = rehydrate_prompt_runtime_events(
+                    summarized_messages,
+                    runtime_events,
+                    agent=agent_name,
+                    task_index=task_index,
+                )
+                if rehydrated_count:
+                    log_custom("CONTEXT_SUMMARIZER", "Rehydrated prompt runtime events", {
+                        "agent_name": agent_name,
+                        "task_index": task_index,
+                        "count": rehydrated_count,
+                    })
+            except Exception:
+                pass
         reset_last_input_tokens(agent_name)
         try:
             from .agents.utils.bridge import send_context_usage

@@ -2,7 +2,7 @@
 title: Configuration
 description: Environment variables and runtime controls for QUASAR.
 section: Tuning
-lead: QUASAR is primarily configured via environment variables, with additional runtime options available through the command-line interface (CLI).
+lead: QUASAR is primarily configured via environment variables, with the same controls exposed in the browser Settings panel and CLI settings view.
 permalink: /configuration/
 ---
 
@@ -14,8 +14,9 @@ permalink: /configuration/
 | `MODEL_API_KEY` | Yes | API key for the base model provider. | None |
 | `OPENAI_API_BASE` | No | Base URL for OpenAI-compatible global endpoints (same effect as `API_BASE_URL`). | None |
 | `API_BASE_URL` | No | Alias for `OPENAI_API_BASE` when routing the primary model through an OpenAI-compatible HTTP API. | None |
+
 | `ACCURACY` | No | Planning/execution rigor: `eco`, `standard`, `pro`, or `adaptive` (experimental: scales numerical rigor with workflow stage). | `standard` |
-| `GRANULARITY` | No | Task decomposition depth: `low`, `medium`, `high`, or `adaptive` (experimental: scales task count with perceived complexity). | `medium` |
+| `GRANULARITY` | No | Task decomposition depth: `low`, `medium`, `high`, or `adaptive` (experimental: scales task count with perceived complexity). | `adaptive` |
 | `AUTO_IMPROVE_CYCLES` | No | Number of automatic auto-improve follow-up runs after a successful user-started run. | `0` |
 | `PMG_MAPI_KEY` | No | Materials Project database access | None |
 | `IF_RESTART` | No | Resume from checkpoint when present. | `false` |
@@ -26,11 +27,17 @@ These settings are helpful for specialized workflows and can usually be left at 
 
 | Variable | Required | Purpose | Default |
 | --- | --- | --- | --- |
-| `CONTEXT_THRESHOLD` | No | Context compression trigger level: `low` = 40%, `medium` = 60%, `high` = 80% of model context. | `medium` |
+| `CONTEXT_THRESHOLD` | No | Context compression trigger level: `low` = 20%, `medium` = 40%, `hard` = 60% of model context. | `medium` |
 | `ENABLE_RAG` | No | Enable documentation retrieval. | `true` |
-| `CHECK_INTERVAL` | No | Minutes between long-run LLM check-ins. Leave unset or use `0` to disable. | Disabled |
 | `NUM_CORES` | No | Override physical core detection. | `Auto` |
 | `AUTO_CONFIRM_PLAN` | No | If `true`/`1`/`yes`/`on`, skips interactive plan confirmation (useful for headless or batch runs). | unset (confirmation on) |
+
+
+Long-running Python check-ins are scheduled by the Operator per tool call through `execute_python(check_in_after=...)` and can be rescheduled with `continue_execution(next_check_in_after=...)`; there is no active `CHECK_INTERVAL` environment variable.
+
+
+
+When resuming from a checkpoint, `ACCURACY` and `GRANULARITY` are locked to the saved run values so an interrupted workflow continues with the same planning assumptions.
 
 ## OpenAI-compatible LLM endpoints
 
@@ -52,17 +59,17 @@ You can override the shared global model for each agent independently.
 | Operator | `OPERATOR_MODEL` | `OPERATOR_MODEL_API_KEY` | `OPERATOR_API_BASE_URL` |
 | Evaluator | `EVALUATOR_MODEL` | `EVALUATOR_MODEL_API_KEY` | `EVALUATOR_API_BASE_URL` |
 
-A strong current combination in QUASAR is to use `gemini-3.1-pro-preview` for planning and evaluation, while using `gemini-3-flash-preview` for operation.
+For Gemini-oriented deployments, a common pattern is to use a stronger model for Strategist and Evaluator work while using a faster model for Operator execution. The exact model names should match the providers available in your environment.
 
 ## Configuration Profiles
 
 | Configuration Pattern | Typical Settings | Best For |
 | --- | --- | --- |
-| Balanced default | `ACCURACY=standard`, `GRANULARITY=medium` | General research workflows where you want a good balance of speed, structure, and completeness. |
-| Faster exploration | `ACCURACY=eco` | Early-stage investigation, quick experiments, and situations where you want shorter iteration cycles. |
+| Balanced default | `ACCURACY=standard`, `GRANULARITY=adaptive` | General research workflows where you want a good balance of speed, structure, and completeness. |
+| Faster exploration | `ACCURACY=eco`, optionally `GRANULARITY=low` | Early-stage investigation, quick experiments, and situations where you want shorter iteration cycles. |
 | Higher rigor | `ACCURACY=pro`, often with `GRANULARITY=high` | More demanding analyses where explicit planning, stronger verification, and fuller scientific coverage matter more than speed. |
-| Long-running execution | Include `CHECK_INTERVAL` with any of the above profiles | Ideal for prolonged Python tasks, enabling periodic status checks instead of silent runs. Suggested initial value: 30 minutes |
 | Adaptive control (experimental) | `ACCURACY=adaptive` and/or `GRANULARITY=adaptive` | Lets the Strategist and Operator adjust theory level and task breakdown based on workflow complexity instead of fixed presets. |
+
 
 A practical research workflow is to begin with `ACCURACY=eco` to establish a fast baseline, then switch to higher accuracy mode to refine the result through auto-improvement or a human-guided follow-up pass based on that initial run.
 

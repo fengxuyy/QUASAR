@@ -1,5 +1,4 @@
 import os
-import shutil
 import base64
 import difflib
 import mimetypes
@@ -20,7 +19,7 @@ from .base import (
     MAX_OUTPUT_CHARS,
     PROTECTED_SYSTEM_FILES,
 )
-from ..usage_tracker import record_api_call
+from ..usage_tracker import extract_cache_read_tokens, record_api_call
 
 
 # Maximum number of characters to return when reading an entire file at once.
@@ -230,40 +229,6 @@ def read_file(
 
 
 @tool
-def write_file(file_path: str, content: str, mode: str = "w") -> str:
-    """Write content to a file in the workspace directory.
-    
-    Args:
-        file_path: Path to the file relative to workspace root, or absolute path
-        content: Content to write to the file
-        mode: Write mode - 'w' for overwrite, 'a' for append (default: 'w')
-    
-    Returns:
-        Success message or error
-    """
-    try:
-        path = _resolve_path(file_path)
-        error = _validate_workspace_path(path)
-        if error:
-            return error.replace("access", "write")
-        
-        # Protect internal/hidden files from being written directly
-        if path.name in PROTECTED_SYSTEM_FILES:
-            return (
-                f"**Write File:** `{file_path}`\n\n> "
-                f"Error: Writing to '{path.name}' is not permitted because it is an "
-                "internal system file."
-            )
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a" if mode == "a" else "w", encoding="utf-8") as f:
-            f.write(content)
-        return f"**Write File:** `{file_path}`\n\n> Successfully wrote to `{file_path}`"
-    except Exception as e:
-        return f"**Write File:** `{file_path}`\n\n> Error writing file: {str(e)}"
-
-
-@tool
 def edit_file(file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
     """Edit an existing file by replacing text. This is useful for modifying scripts incrementally.
     
@@ -286,7 +251,7 @@ def edit_file(file_path: str, old_string: str, new_string: str, replace_all: boo
             return (
                 f"**Edit File:** `{file_path}`\n> "
                 f"Error: File `{file_path}` does not exist. "
-                "Use write_file to create a new file."
+                "Create it with Python/pathlib via execute_python first."
             )
         if not path.is_file():
             return f"**Edit File:** `{file_path}`\n> Error: `{file_path}` is not a file."
@@ -393,50 +358,6 @@ def edit_file(file_path: str, old_string: str, new_string: str, replace_all: boo
 
 
 @tool
-def delete_file(file_path: Union[str, List[str]]) -> str:
-    """Delete one or more files from the workspace directory.
-    
-    Args:
-        file_path: Path to the file relative to workspace root, or absolute path.
-            Can be a single string for one file, or a list of strings to delete multiple files at once.
-    
-    Returns:
-        Success message or error
-    
-    Examples:
-        delete_file(file_path="old_file.txt")  # Delete a single file
-        delete_file(file_path=["file1.txt", "file2.txt"])  # Delete multiple files at once
-    """
-    # Normalize to list for uniform handling
-    paths = file_path if isinstance(file_path, list) else [file_path]
-    results = []
-
-    for fp in paths:
-        try:
-            path = _resolve_path(fp)
-            error = _validate_workspace_path(path)
-            if error:
-                results.append(error.replace("access", "delete"))
-                continue
-
-            # Protect internal/hidden files from deletion, even if directly targeted
-            if path.name in PROTECTED_SYSTEM_FILES:
-                results.append(
-                    f"**Delete File:** `{fp}`\n\n> "
-                    f"Error: Deletion of '{path.name}' is not permitted because it is an "
-                    "internal system file."
-                )
-                continue
-
-            path.unlink()
-            results.append(f"**Delete File:** `{fp}`\n\n> Successfully deleted file.")
-        except Exception as e:
-            results.append(f"**Delete File:** `{fp}`\n\n> Error deleting file: {str(e)}")
-
-    return "\n\n---\n\n".join(results)
-
-
-@tool
 def list_directory(directory_path: Union[str, List[str]] = ".", pattern: str = "*", exclude_docs: bool = False) -> str:
     """List files and directories in one or more directories.
     
@@ -520,124 +441,6 @@ def list_directory(directory_path: Union[str, List[str]] = ".", pattern: str = "
 
 
 @tool
-def move_file(source_path: str, destination_path: str) -> str:
-    """Move a file or directory from one location to another in the workspace.
-    
-    This will move the file/directory from source_path to destination_path. If destination_path
-    is a directory, the source will be moved into that directory with its original name.
-    If destination_path is a file path, the source will be moved and renamed to that path.
-    
-    Args:
-        source_path: Path to the source file or directory relative to workspace root, or absolute path
-        destination_path: Path to the destination file or directory relative to workspace root, or absolute path
-    
-    Returns:
-        Success message or error
-    
-    Examples:
-        move_file("file.txt", "subdir/file.txt")  # Move and rename
-        move_file("file.txt", "subdir/")  # Move into directory (keeps original name)
-        move_file("old_dir", "new_dir")  # Move directory
-    """
-    try:
-        source = _resolve_path(source_path)
-        dest = _resolve_path(destination_path)
-        
-        # Validate source path
-        error = _validate_workspace_path(source)
-        if error:
-            return error.replace("access", "move")
-        
-        if not source.exists():
-            return f"Error: Source '{source_path}' does not exist."
-        
-        # Validate destination path
-        error = _validate_workspace_path(dest)
-        if error:
-            return error.replace("access", "move to")
-        
-        # Protect internal/hidden files from being moved
-        if source.name in PROTECTED_SYSTEM_FILES:
-            return (
-                f"Error: Moving '{source.name}' is not permitted because it is an "
-                "internal system file."
-            )
-        
-        # If destination is an existing directory, move source into it
-        if dest.exists() and dest.is_dir():
-            final_dest = dest / source.name
-        else:
-            final_dest = dest
-            # Create parent directory if it doesn't exist
-            final_dest.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Check if destination already exists
-        if final_dest.exists():
-            return f"Error: Destination '{destination_path}' already exists. Use rename_file to overwrite or delete it first."
-        
-        # Perform the move
-        shutil.move(str(source), str(final_dest))
-        
-        return f"**Move File:** `{source_path}` → `{destination_path}`\n\n> Successfully moved file."
-    except Exception as e:
-        return f"**Move File:** `{source_path}` → `{destination_path}`\n\n> Error moving file: {str(e)}"
-
-
-@tool
-def rename_file(file_path: str, new_name: str) -> str:
-    """Rename a file or directory in the workspace.
-    
-    This renames a file or directory to a new name in the same directory.
-    For moving files to different directories, use move_file instead.
-    
-    Args:
-        file_path: Path to the file or directory to rename relative to workspace root, or absolute path
-        new_name: New name for the file or directory (just the name, not a full path)
-    
-    Returns:
-        Success message or error
-    
-    Examples:
-        rename_file("old_file.txt", "new_file.txt")  # Rename file
-        rename_file("old_dir", "new_dir")  # Rename directory
-    """
-    try:
-        path = _resolve_path(file_path)
-        error = _validate_workspace_path(path)
-        if error:
-            return error.replace("access", "rename")
-        
-        if not path.exists():
-            return f"Error: File or directory '{file_path}' does not exist."
-        
-        # Protect internal/hidden files from being renamed
-        if path.name in PROTECTED_SYSTEM_FILES:
-            return (
-                f"Error: Renaming '{path.name}' is not permitted because it is an "
-                "internal system file."
-            )
-        
-        # Validate new_name doesn't contain path separators
-        if "/" in new_name or "\\" in new_name:
-            return (
-                f"Error: New name '{new_name}' cannot contain path separators. "
-                "Use move_file to move files to different directories."
-            )
-        
-        # Check if new name already exists in the same directory
-        new_path = path.parent / new_name
-        if new_path.exists():
-            return f"Error: A file or directory named '{new_name}' already exists in '{path.parent}'."
-        
-        # Perform the rename
-        path.rename(new_path)
-        
-        return f"**Rename File:**\n> Successfully renamed `{file_path}` to `{new_name}`"
-    except Exception as e:
-        return f"**Rename File:**\n> Error renaming `{file_path}` to `{new_name}`: {str(e)}"
-
-
-@tool
 def analyze_image(file_path: str, prompt: str) -> str:
     """Analyze an image using an LLM with a text prompt and return only the text answer.
     
@@ -681,7 +484,7 @@ def analyze_image(file_path: str, prompt: str) -> str:
             return (
                 f"Error: Cannot analyze image '{file_path}' because the current model "
                 f"'{current_model}' is not configured as multimodal. "
-                "Please use a multimodal model (e.g., gemini-2.5-pro, gpt-4o, claude-sonnet-4-5-20250929)."
+                "Please use a multimodal model (e.g., gemini-3.5-flash, gpt-4o, claude-sonnet-4-5-20250929)."
             )
 
         # Check mime type
@@ -735,7 +538,8 @@ def analyze_image(file_path: str, prompt: str) -> str:
                     output_tokens = getattr(usage, 'output_tokens', 0)
                 record_api_call(
                     input_tokens=input_tokens,
-                    output_tokens=output_tokens
+                    output_tokens=output_tokens,
+                    cache_read_tokens=extract_cache_read_tokens(usage),
                 )
             
             # Extract text content from response
@@ -798,7 +602,7 @@ def grep_search(
     
     Examples:
         grep_search(pattern="def main", include_pattern="*.py")  # Find 'def main' in Python files
-        grep_search(pattern="ERROR", directory_path="logs")  # Search for ERROR in logs directory
+        grep_search(pattern="ERROR", directory_path="quasar_logs")  # Search for ERROR in QUASAR logs
         grep_search(pattern="TODO", case_insensitive=True)  # Case-insensitive search for TODO
         grep_search(pattern="import numpy", include_pattern="*.py", exclude_pattern="test_*")  # Exclude test files
     """
@@ -836,7 +640,7 @@ def grep_search(
         # Always exclude common non-text directories and files
         for exclude in ["*.pyc", "__pycache__", ".git", "*.sqlite*", "*.db"] + list(PROTECTED_SYSTEM_FILES):
             cmd.extend(["--exclude", exclude])
-        for exclude_dir in ["__pycache__", ".git", "node_modules", ".venv", "venv", "logs"]:
+        for exclude_dir in ["__pycache__", ".git", "node_modules", ".venv", "venv", "quasar_logs", "quasar_archive"]:
             cmd.extend(["--exclude-dir", exclude_dir])
         
         # Skip binary files to avoid noise/garbage output

@@ -11,38 +11,41 @@ permalink: /quick-tutorial/
 Make sure you already have:
 
 - a working runtime path such as Docker, Singularity, or local deployment
-- `MODEL` and `MODEL_API_KEY` configured, or access to the interactive `\settings` panel
+- `MODEL` and `MODEL_API_KEY` configured, or access to the interactive CLI `\settings` panel
 - a mounted or exported workspace directory
 
 If not, complete [Get Started]({{ '/installation/' | relative_url }}) first.
 
+
+
 ## User Request
 
-Here we need to provided scientific request to QUASAR. Providing a more detailed prompt is always recommended, as it gives QUASAR the scientific context needed to plan the right actions and ensures you receive the specific outputs you need. For tutorial purposes, we will use a short prompt.
+Here we provide a scientific request to QUASAR. A more detailed prompt is usually better because it gives QUASAR the scientific context needed to plan the right actions and return the specific outputs you need. For tutorial purposes, we use a short prompt.
 
 ```text
-       ╭─────────────────────────────────────────────────────────────────────────────────────────╮
+        ╭─────────────────────────────────────────────────────────────────────────────────────────╮
        │                                                                                         │
-       │         ██████    █████  █████   █████████    █████████    █████████   ███████████      │
-       │       ███░░░░███ ░░███  ░░███   ███░░░░░███  ███░░░░░███  ███░░░░░███ ░░███░░░░░███     │
-       │      ███    ░░███ ░███   ░███  ░███    ░███ ░███    ░░░  ░███    ░███  ░███    ░███     │
-       │     ░███     ░███ ░███   ░███  ░███████████ ░░█████████  ░███████████  ░██████████      │
-       │     ░███   ██░███ ░███   ░███  ░███░░░░░███  ░░░░░░░░███ ░███░░░░░███  ░███░░░░░███     │
-       │     ░░███ ░░████  ░███   ░███  ░███    ░███  ███    ░███ ░███    ░███  ░███    ░███     │
-       │      ░░░██████░██ ░░████████   █████   █████░░█████████  █████   █████ █████   █████    │
-       │        ░░░░░░ ░░   ░░░░░░░░   ░░░░░   ░░░░░  ░░░░░░░░░  ░░░░░   ░░░░░ ░░░░░   ░░░░░     │
+       │        ██████    █████  █████   █████████    █████████    █████████   ███████████       │
+       │      ███░░░░███ ░░███  ░░███   ███░░░░░███  ███░░░░░███  ███░░░░░███ ░░███░░░░░███      │
+       │     ███    ░░███ ░███   ░███  ░███    ░███ ░███    ░░░  ░███    ░███  ░███    ░███      │
+       │    ░███     ░███ ░███   ░███  ░███████████ ░░█████████  ░███████████  ░██████████       │
+       │    ░███   ██░███ ░███   ░███  ░███░░░░░███  ░░░░░░░░███ ░███░░░░░███  ░███░░░░░███      │
+       │    ░░███ ░░████  ░███   ░███  ░███    ░███  ███    ░███ ░███    ░███  ░███    ░███      │
+       │     ░░░██████░██ ░░████████   █████   █████░░█████████  █████   █████ █████   █████     │
+       │       ░░░░░░ ░░   ░░░░░░░░   ░░░░░   ░░░░░  ░░░░░░░░░  ░░░░░   ░░░░░ ░░░░░   ░░░░░      │
        │                                                                                         │
-       │                                                                                         │
-       │                Quantum Universal Autonomous System for Atomistic Research               │
-       │                                          v0.3.0                                         │
+       │              ✦ Quantum Universal Autonomous System for Atomistic Research               │
+       │                                         v0.4.0                                          │
        │                                                                                         │
        ╰─────────────────────────────────────────────────────────────────────────────────────────╯
 
 
-       ───────────────────────────────────────────────────────────────────────────────────────────
-        ✴ Calculate the band gap of silicon.                                               Ctx 0%
-       ───────────────────────────────────────────────────────────────────────────────────────────
-        Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit
+
+       ╭─────────────────────────────────────────────────────────────────────────────────────────╮
+       │ ✴ Calculate the band gap of silicon.                                             Ctx 0% │
+       ╰─────────────────────────────────────────────────────────────────────────────────────────╯
+
+        ESC interrupt · Ctrl+D/Ctrl+C exit
 ```
 
 ## Confirmation and Settings
@@ -57,10 +60,9 @@ After submitting your request, QUASAR presents the current runtime settings for 
         │ API_BASE_URL             : (not set)                         │
         │ ACCURACY                 : [eco]  standard   pro   adaptive  │
         │ GRANULARITY              : [low]  medium   high   adaptive   │
-        │ CONTEXT_THRESHOLD        :  low  [medium]  high              │
+        │ CONTEXT_THRESHOLD        :  low  [medium]  hard              │
         │ ENABLE_RAG               : [true]  false                     │
         │ PMG_MAPI_KEY             : Set                               │
-        │ CHECK_INTERVAL           : (not set)                         │
         │ AUTO_IMPROVE_CYCLES      : 0                                 │
         │ NUM_CORES                : Auto                              │
         │ STRATEGIST_MODEL         : (not set)                         │
@@ -80,7 +82,7 @@ After submitting your request, QUASAR presents the current runtime settings for 
         ✴ Submit this request? (yes/no)                                                    Ctx 0%
        ───────────────────────────────────────────────────────────────────────────────────────────
         Request to send: Calculate the band gap of silicon.
-        Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit
+        Type \ for commands · ESC interrupt · Ctrl+D/Ctrl+C exit
 ```
 
 ## Planning and Strategy
@@ -106,7 +108,7 @@ Once settings are confirmed, QUASAR’s **Strategist** takes over. It analyzes y
        ───────────────────────────────────────────────────────────────────────────────────────────
         ✴ Proceed with this plan? (yes/no)                                                 Ctx 0%
        ───────────────────────────────────────────────────────────────────────────────────────────
-        Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit
+        Type \ for commands · ESC interrupt · Ctrl+D/Ctrl+C exit
 ```
 
 Review the plan and enter `yes` to begin the simulation. If you need changes, use the revision flow in the CLI to send feedback instead of approving immediately, or decline to stop before any simulation work runs. In automation-only contexts, `AUTO_CONFIRM_PLAN=true` skips this prompt (see [Configuration]({{ '/configuration/' | relative_url }})).
@@ -131,7 +133,7 @@ Once authorized, the Operator begins executing the tasks. In this phase, QUASAR 
        ───────────────────────────────────────────────────────────────────────────────────────────
         ✸ yes                                                                    Ctx 1%  Task 1/2
        ───────────────────────────────────────────────────────────────────────────────────────────
-        Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit
+        Type \ for commands · ESC interrupt · Ctrl+D/Ctrl+C exit
 ```
 
 ## Task Completion and Evaluation
@@ -168,7 +170,7 @@ To continue later, relaunch QUASAR with the same workspace and resume from that 
        ───────────────────────────────────────────────────────────────────────────────────────────
         ✴ Resume from checkpoint? (yes/no)                                                 Ctx 0%
        ───────────────────────────────────────────────────────────────────────────────────────────
-        Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit
+        Type \ for commands · ESC interrupt · Ctrl+D/Ctrl+C exit
 ```
 
 If you decide not to continue the interrupted run, clear the active checkpoint before starting over:
@@ -176,6 +178,14 @@ If you decide not to continue the interrupted run, clear the active checkpoint b
 ```bash
 quasar --clear
 ```
+
+If you want to redo work from a specific point instead of clearing everything, use the CLI task revert command while the run is stopped:
+
+```bash
+\revert 2
+```
+
+This asks for confirmation, restores the checkpoint to the start of Task 2, removes later checkpoints, and deletes task folders from Task 2 onward.
 
 ## Final Run Summary
 
@@ -201,7 +211,7 @@ When the entire research goal is reached, QUASAR produces a final **Run Summary*
        ───────────────────────────────────────────────────────────────────────────────────────────
         ✴ Previous results found. Enter to auto-improve (or 'no' to start fresh) Ctx 3%  Task 2/2
        ───────────────────────────────────────────────────────────────────────────────────────────
-        Shortcuts: \settings · ESC interrupt · Ctrl+D/Ctrl+C exit
+        Type \ for commands · ESC interrupt · Ctrl+D/Ctrl+C exit
 ```
 
 Once the summary is displayed, the agent remains active. You can press `Enter` to trigger an **auto-improvement cycle** where QUASAR self-evaluates the results for potential refinements, or you can type a follow-up request to extend the research (e.g., "Now calculate the effective masses at the VBM and CBM").
@@ -211,16 +221,16 @@ Once the summary is displayed, the agent remains active. You can press `Enter` t
 After a completed run, QUASAR archives the results under:
 
 ```text
-workspace/archive/run_N/
+workspace/quasar_archive/quasar_run_YYYYMMDD_HHMMSS_<id>/
 ```
 
-Inspect these locations in the workspace:
+Inspect these locations in the active workspace during a run, or inside the archived run directory after completion:
 
 | Path | Description |
 | --- | --- |
-| `logs/execution_overview.md` | A concise status file with the user request, current plan, and summaries of completed tasks. QUASAR updates it throughout the run, so it is the quickest way to check progress. |
-| `logs/conversation.md` | A chronological record of agent activity, selected messages, completed tool calls, and evaluation results. Use it when you want a detailed view of what happened during the run. |
-| `logs/input_messages.md` | A debugging log of the full messages sent to each agent, including timestamps and tool-call details. This is most useful when you need to inspect the exact context an agent received. |
+| `quasar_logs/execution_overview.md` | A concise status file with the user request, current plan, and summaries of completed tasks. QUASAR updates it throughout the run, so it is the quickest way to check progress. |
+| `quasar_logs/conversation.md` | A chronological record of agent activity, selected messages, completed tool calls, and evaluation results. Use it when you want a detailed view of what happened during the run. |
+| `quasar_logs/input_messages.md` | A debugging log of the full messages sent to each agent, including timestamps and tool-call details. This is most useful when you need to inspect the exact context an agent received. |
 | `final_results/summary.md` | The main written summary of the run's outcome. If the run ends without a complete result, this file may instead describe the unresolved issues. |
 | `final_results/` | The folder containing the run's final deliverables, including any generated artifacts such as plots, tables, or exported data. |
-| `logs/usage_report.md` | A usage report covering run status, duration, model and run settings, token counts, API requests, system details, and cost estimates when available. |
+| `quasar_logs/usage_report.md` | A usage report covering run status, duration, model and run settings, token counts, API requests, system details, and cost estimates when available. |

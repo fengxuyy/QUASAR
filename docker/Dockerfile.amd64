@@ -1,12 +1,13 @@
+# syntax=docker/dockerfile:1.7
 # ==========================================
-# STAGE 1: Builder (Compilers & Build Tools)
+# STAGE 1: Quantum ESPRESSO Builder
 # ==========================================
-FROM ubuntu:24.04 AS builder
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b AS qe-builder
+
+ARG QE_SHA256=7e1f7a9a21b63192f5135218bee20a5321b66582e4756536681b76e9c59b3cc8
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# 1. Install System Build Dependencies
-# Includes OpenCL headers and pkg-config for RASPA3
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     git wget ca-certificates build-essential \
@@ -23,113 +24,256 @@ RUN apt-get update && \
     python3-dev python3-pip python-is-python3 && \
     rm -rf /var/lib/apt/lists/*
 
-# 2. Install latest CMake via pip
 RUN pip3 install --no-cache-dir --break-system-packages cmake
 
-# --- Build Quantum ESPRESSO ---
 WORKDIR /build/qe
 RUN wget -q https://gitlab.com/QEF/q-e/-/archive/qe-7.5/q-e-qe-7.5.tar.gz && \
+    echo "${QE_SHA256}  q-e-qe-7.5.tar.gz" | sha256sum -c - && \
     tar -zxf q-e-qe-7.5.tar.gz --strip-components=1 && \
     ./configure --enable-openmp --enable-parallel || (echo "ERROR: configure failed" && cat config.log && exit 1) && \
     make -j$(nproc) all || (echo "ERROR: make failed" && exit 1) && \
-    ls -la bin/ && \
     test -f bin/pw.x || (echo "ERROR: pw.x not found after build" && exit 1) && \
     strip --strip-unneeded bin/* || true && \
-    find bin/ -type l -exec sh -c 'cp -L "$1" "$1.tmp" && mv "$1.tmp" "$1"' _ {} \; && \
-    find . -mindepth 1 -maxdepth 1 ! -name bin -exec rm -rf {} +
+    find bin/ -type l -exec sh -c 'cp -L "$1" "$1.tmp" && mv "$1.tmp" "$1"' _ {} \;
 
 # ==========================================
-# STAGE 2: Runtime (Minimal & Clean)
+# STAGE 2: LAMMPS/OpenKIM Runtime Files
 # ==========================================
-FROM ubuntu:24.04
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b AS lammps-runtime
+
+ARG DEB_ARCH=x86_64-linux-gnu
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends binutils lammps openkim-models && \
+    (find /usr/bin/lmp /usr/lib -type f \( -name "liblammps.so*" -o -name "libkim-api.so*" -o -path "*/kim-api/*" \) -exec strip --strip-unneeded {} + 2>/dev/null || true) && \
+    mkdir -p /runtime-root/usr/local/bin /runtime-root/usr/share /runtime-root/usr/lib/${DEB_ARCH} && \
+    cp -a /usr/bin/lmp /runtime-root/usr/local/bin/lmp && \
+    cp -a /usr/share/lammps /runtime-root/usr/share/lammps && \
+    cp -a /usr/lib/${DEB_ARCH}/liblammps.so* /runtime-root/usr/lib/${DEB_ARCH}/ && \
+    kim_lib="$(find /usr/lib/${DEB_ARCH} -maxdepth 1 -name 'libkim-api.so.*.*.*' -print -quit)" && \
+    test -n "$kim_lib" && \
+    cp -a "$kim_lib" /runtime-root/usr/lib/${DEB_ARCH}/ && \
+    if [ -d /usr/lib/${DEB_ARCH}/kim-api ]; then cp -a /usr/lib/${DEB_ARCH}/kim-api /runtime-root/usr/lib/${DEB_ARCH}/kim-api; fi && \
+    rm -rf /var/lib/apt/lists/*
+
+# ==========================================
+# STAGE 3: Node.js Builder
+# ==========================================
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b AS node-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg build-essential python3 && \
+    mkdir -p /etc/apt/keyrings && \
+    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o /tmp/nodesource.gpg.key && \
+    echo "b42e0321dabdc24e892115da705cf061167eac12a317f23d329862d0aa0a271d  /tmp/nodesource.gpg.key" | sha256sum -c - && \
+    gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource.gpg.key && \
+    rm -f /tmp/nodesource.gpg.key && \
+    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends nodejs && \
+    npm install -g npm@11.12.1 && \
+    strip --strip-unneeded /usr/bin/node || true && \
+    npm cache clean --force && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man /usr/share/info /usr/share/lintian /usr/share/locale
+
+WORKDIR /build
+
+COPY cli/package*.json ./cli/
+RUN cd cli && npm ci
+COPY cli/ ./cli/
+RUN cd cli && \
+    npm run build && \
+    npm prune --omit=dev && \
+    npm cache clean --force
+
+RUN find /build/cli/node_modules -type d \( \
+        -name ".cache" -o \
+        -name "__tests__" -o \
+        -name "coverage" -o \
+        -name "doc" -o \
+        -name "docs" -o \
+        -name "example" -o \
+        -name "examples" -o \
+        -name "test" -o \
+        -name "tests" \
+    \) -prune -exec rm -rf {} + && \
+    find /build/cli/node_modules -type f \( \
+        -name "*.d.ts" -o \
+        -name "*.d.ts.map" -o \
+        -name "*.map" -o \
+        -iname "readme*" -o \
+        -iname "changelog*" -o \
+        -iname "history*" \
+    \) -delete
+
+# ==========================================
+# STAGE 4: xTB Runtime Files
+# ==========================================
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b AS xtb-runtime
+
+ARG XTB_SHA256=62a8d18778286e815292ee53d76ce447daf460a4dea3782c0f25cbac7019b5df
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates wget xz-utils binutils && \
+    wget -q -O /tmp/xtb.tar.xz https://github.com/grimme-lab/xtb/releases/download/v6.7.1/xtb-6.7.1-linux-x86_64.tar.xz && \
+    echo "${XTB_SHA256}  /tmp/xtb.tar.xz" | sha256sum -c - && \
+    tar xf /tmp/xtb.tar.xz -C /opt/ && \
+    rm -f /tmp/xtb.tar.xz && \
+    rm -rf /opt/xtb-dist/include /opt/xtb-dist/share/man /opt/xtb-dist/share/doc && \
+    find /opt/xtb-dist -type f -name "*.a" -delete && \
+    strip --strip-unneeded /opt/xtb-dist/bin/* || true && \
+    find /opt/xtb-dist -type f \( -name "*.so" -o -name "*.so.*" \) -exec strip --strip-unneeded {} + 2>/dev/null || true && \
+    apt-get purge -y --auto-remove binutils && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man /usr/share/info /usr/share/lintian /usr/share/locale
+
+# ==========================================
+# STAGE 5: Runtime
+# ==========================================
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
+
+ARG DEB_ARCH=x86_64-linux-gnu
+ARG TORCH_PACKAGES="torch"
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+ARG RASPA3_SHA256=689e5f9353538755c76d970fca7086f76eb026f2ff84ba082d292ec877917a8a
+ARG QUASAR_UID=1000
+ARG QUASAR_GID=1000
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV PATH="/opt/qe/bin:$PATH"
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PATH="/opt/qe/bin:/opt/orca:$PATH"
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv python-is-python3 \
+    libpython3.12t64 \
     libgomp1 \
     libgfortran5 \
     libopenblas0 \
+    libblas3 \
+    liblapack3 \
     libfftw3-double3 \
     libopenmpi3 \
     openmpi-bin \
+    libscalapack-openmpi2.2 \
     libhdf5-103-1 \
+    libnetcdf19t64 \
+    libpnetcdf0d \
+    libvtk9.1t64 \
+    libvoro++1 \
+    libtbb12 \
     libomp5-18 \
     libc++1 libc++abi1 \
     ocl-icd-libopencl1 \
-    lammps \
-    openkim-models \
     ca-certificates \
     wget \
     curl \
     git \
-    xz-utils && \
+    xz-utils \
+    procps && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info /usr/share/lintian /usr/share/locale
 
-RUN wget https://github.com/iRASPA/RASPA3/releases/download/v3.0.16/raspa_3.0.16_amd64_ubuntu-24-core-avx2.deb && \
+RUN wget -q -O /tmp/raspa3.deb https://github.com/iRASPA/RASPA3/releases/download/v3.0.16/raspa_3.0.16_amd64_ubuntu-24-core-avx2.deb && \
+    echo "${RASPA3_SHA256}  /tmp/raspa3.deb" | sha256sum -c - && \
     apt-get update && \
-    apt-get install -y --no-install-recommends ./raspa_3.0.16_amd64_ubuntu-24-core-avx2.deb && \
-    rm raspa_3.0.16_amd64_ubuntu-24-core-avx2.deb && \
+    apt-get install -y --no-install-recommends binutils /tmp/raspa3.deb && \
+    strip --strip-unneeded /usr/bin/raspa3 /usr/bin/raspa3-cli /usr/share/raspa3/lib/*.so || true && \
+    rm -rf /usr/share/raspa3/tests /usr/share/raspa3/examples /usr/share/raspa3/manual && \
+    apt-get purge -y --auto-remove binutils && \
+    rm -f /tmp/raspa3.deb && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info /usr/share/lintian /usr/share/locale
 
-# Copy Quantum ESPRESSO binaries (symlinks have been resolved to actual files in builder stage)
-COPY --from=builder /build/qe/bin /opt/qe/bin
-RUN test -f /opt/qe/bin/pw.x || (echo "ERROR: pw.x not found after copy" && ls -la /opt/qe/bin/ && exit 1) && \
-    chmod +x /opt/qe/bin/*
+COPY --from=qe-builder /build/qe/bin /opt/qe/bin
+RUN test -x /opt/qe/bin/pw.x || (echo "ERROR: pw.x not executable after copy" && ls -la /opt/qe/bin/ && exit 1)
+
+RUN --mount=type=bind,from=lammps-runtime,source=/runtime-root,target=/tmp/lammps-root,readonly \
+    cp -a /tmp/lammps-root/. / && \
+    kim_lib="$(find /usr/lib/${DEB_ARCH} -maxdepth 1 -name 'libkim-api.so.*.*.*' -printf '%f\n' | head -n 1)" && \
+    test -n "$kim_lib" && \
+    ln -sf "$kim_lib" /usr/lib/${DEB_ARCH}/libkim-api.so.2 && \
+    ln -sf /usr/local/bin/lmp /usr/local/bin/lammps && \
+    ldconfig && \
+    lmp -h >/dev/null
+
+ENV LAMMPS_POTENTIALS=/usr/share/lammps/potentials
 
 WORKDIR /app
 
-RUN pip3 install --no-cache-dir --break-system-packages \
-    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends binutils && \
+    pip3 install --no-cache-dir --no-compile --break-system-packages ${TORCH_PACKAGES} --index-url "${TORCH_INDEX_URL}" && \
+    pip3 install --no-cache-dir --no-compile --break-system-packages -r requirements.txt && \
+    site_packages="$(python3 -c 'import site; print(site.getsitepackages()[0])')" && \
+    find "$site_packages" -type d \( -name "__pycache__" -o -name "tests" -o -name "test" \) -prune -exec rm -rf {} + && \
+    find "$site_packages" -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.a" \) -delete && \
+    find "$site_packages" -type f \( -name "*.so" -o -name "*.so.*" \) -exec strip --strip-unneeded {} + 2>/dev/null || true && \
+    rm -f "$site_packages"/torch/bin/test_* "$site_packages"/torch/bin/*Test && \
+    rm -rf "$site_packages/torch/include" "$site_packages/torch/share" "$site_packages/pyarrow/include" "$site_packages/pyarrow/includes" "$site_packages/pyarrow/src" "$site_packages"/nvidia/*/include /usr/local/share/jupyter /root/.cache/pip /root/.cache && \
+    apt-get purge -y --auto-remove binutils && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/*
 
 COPY bridge.py bridge_history.py ./
 COPY src/ ./src/
 
-RUN mkdir -p /workspace && \
-    chmod -R a+rX /app
+COPY --from=node-builder /usr/bin/node /usr/local/bin/node
+
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
+COPY --from=xtb-runtime /opt/xtb-dist /opt/xtb-dist
+RUN ln -s /opt/xtb-dist/bin/xtb /usr/local/bin/xtb
+
+ENV XTBPATH="/opt/xtb-dist/share/xtb"
+
+RUN --mount=type=bind,source=orca/orca_6_1_1_linux_x86-64_shared_openmpi418_nodmrg.tar.xz,target=/tmp/orca.tar.xz,readonly \
+    apt-get update && \
+    apt-get install -y --no-install-recommends binutils && \
+    mkdir -p /opt/orca && \
+    tar -xJf /tmp/orca.tar.xz -C /opt/orca --strip-components=1 && \
+    find /opt/orca -type f -name "*.a" -delete && \
+    find /opt/orca -type f \( -perm /111 -o -name "*.so" -o -name "*.so.*" \) -exec strip --strip-unneeded {} + 2>/dev/null || true && \
+    apt-get purge -y --auto-remove binutils && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \
+    chmod -R a+rX /opt/orca && \
+    ln -s /opt/orca/orca /usr/local/bin/orca && \
+    test -x /opt/orca/orca
+
+COPY --from=node-builder /build/cli/package.json /app/cli/package.json
+COPY --from=node-builder /build/cli/node_modules /app/cli/node_modules
+COPY --chmod=755 --from=node-builder /build/cli/dist /app/cli/dist
+RUN ln -s /app/cli/dist/cli.js /usr/local/bin/quasar
+
+
+
+RUN set -eux; \
+    if ! getent group "${QUASAR_GID}" >/dev/null; then \
+        groupadd --gid "${QUASAR_GID}" quasar; \
+    fi; \
+    if ! id -u quasar >/dev/null 2>&1; then \
+        useradd --non-unique --uid "${QUASAR_UID}" --gid "${QUASAR_GID}" --home-dir /workspace --create-home --shell /bin/bash quasar; \
+    fi; \
+    mkdir -p /workspace /tmp/uploads && \
+    chown -R "${QUASAR_UID}:${QUASAR_GID}" /workspace /tmp/uploads
 
 ENV WORKSPACE_DIR=/workspace
 ENV HOME=/workspace
 ENV TOKENIZERS_PARALLELISM=false
-ENV OMPI_ALLOW_RUN_AS_ROOT=1
-ENV OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
 
 VOLUME ["/workspace"]
 
-# Install Node.js 20.x and build tools for native modules
-RUN apt-get update && apt-get install -y --no-install-recommends gnupg build-essential python3 && \
-    mkdir -p /etc/apt/keyrings && \
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
-    echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends nodejs && \
-    npm install -g npm@11.12.1
+USER quasar
 
-# Copy and build Node.js CLI
-COPY cli /app/cli
-RUN cd /app/cli && \
-    npm ci && \
-    npm run build && \
-    npm prune --production && \
-    npm cache clean --force && \
-    chmod +x /app/cli/dist/cli.js && \
-    ln -sf /app/cli/dist/cli.js /usr/local/bin/quasar
-
-ENV NODE_ENV=production
-
-RUN apt-get update && \
-    apt-get purge -y build-essential gnupg && \
-    apt-get autoremove -y && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-CMD ["bash"]
+CMD ["quasar"]

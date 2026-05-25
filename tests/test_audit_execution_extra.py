@@ -5,8 +5,6 @@ from unittest.mock import patch, MagicMock, call
 import subprocess
 from src.tools.execution import execute_python
 
-DEFAULT_TIMEOUT_MINUTES = 60.0
-
 
 @patch('subprocess.Popen')
 def test_audit_execution_process_cleanup(mock_popen, mock_workspace):
@@ -78,7 +76,6 @@ def test_audit_execution_cleanup_on_simulated_timeout(mock_popen, mock_workspace
     # Mock os.getpgid to return a valid pgid
     with patch('os.getpgid', return_value=999), \
          patch('os.killpg') as mock_killpg, \
-         patch('src.tools.execution._get_check_interval', return_value=100), \
          patch('time.sleep'): # speed up
         
         # We simulate TimeoutExpired being raised during the loop
@@ -89,7 +86,7 @@ def test_audit_execution_cleanup_on_simulated_timeout(mock_popen, mock_workspace
         mock_process.communicate.return_value = ("stdout", "stderr")
         
         # Execute
-        result = execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "code": "print('timeout')"})
+        result = execute_python.invoke({"code": "print('timeout')", "check_in_after": 5})
         
         # Assertions
         # 1. Check if killpg was called
@@ -110,10 +107,10 @@ def test_audit_execution_environment_isolation(mock_workspace):
     # 1. Set an env var in one execution
     # Since execute_python runs in a subprocess, it shouldn't affect the parent env.
     
-    execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "code": "import os; os.environ['AUDIT_TEST_VAR'] = 'leaked'"})
+    execute_python.invoke({"code": "import os; os.environ['AUDIT_TEST_VAR'] = 'leaked'", "check_in_after": 5})
     
     assert 'AUDIT_TEST_VAR' not in os.environ, "Env var leaked to parent process!"
     
     # 2. Check if a subsequent execution sees it? (It shouldn't)
-    result = execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "code": "import os; print(os.environ.get('AUDIT_TEST_VAR', 'clean'))"})
+    result = execute_python.invoke({"code": "import os; print(os.environ.get('AUDIT_TEST_VAR', 'clean'))", "check_in_after": 5})
     assert "clean" in result, "Env var persisted between executions!"

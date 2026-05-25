@@ -8,8 +8,7 @@ import { applyPlanDeclinedState } from '../utils/stateHelpers.js';
 
 const STRATEGIST_REVIEWED_PLAN_STATUSES = new Set([
     'Reviewed Plan',
-    'Reviewed Replan',
-    'Created Replan'
+    'Reviewed Replan'
 ]);
 
 const STRATEGIST_REVISED_PLAN_STATUSES = new Set([
@@ -59,6 +58,7 @@ export interface MessageHandlerContext {
     setBannerCommitted: (committed: boolean) => void;
     itemIdCounterRef: React.MutableRefObject<number>;
     bumpInputPrefill: (text: string) => void;
+    restorePendingFreshStartPrefill: () => void;
 }
 
 export interface AgentInfo {
@@ -89,8 +89,14 @@ function collapseCompletedTaskHistory(items: CommittedItem[], taskNum: number): 
 // ========== INDIVIDUAL HANDLERS ==========
 
 /** Handle bridge ready event */
-export function handleReadyMessage(_ctx: MessageHandlerContext): void {
-    // Checkpoint retrieval is triggered by system_ready (fires after all init including RAG).
+export function handleReadyMessage(ctx: MessageHandlerContext): void {
+    if (ctx.ragStatusRef.current?.status === 'done') {
+        setTimeout(() => {
+            if (ctx.bridgeRef.current) {
+                ctx.bridgeRef.current.stdin.write(JSON.stringify({ command: 'check_checkpoint' }) + "\n");
+            }
+        }, 500);
+    }
 }
 
 /** Handle model initialization */
@@ -166,13 +172,6 @@ export function handleRagStatusMessage(ctx: MessageHandlerContext, payload: any)
 /** Handle system ready event */
 export function handleSystemReadyMessage(ctx: MessageHandlerContext): void {
     ctx.setIsSystemReady(true);
-    // system_ready fires after all initialization (RAG and non-RAG paths), making it
-    // the correct trigger for checkpoint retrieval on every startup path.
-    setTimeout(() => {
-        if (ctx.bridgeRef.current) {
-            ctx.bridgeRef.current.stdin.write(JSON.stringify({ command: 'check_checkpoint' }) + "\n");
-        }
-    }, 500);
 }
 
 /** Handle system status changes */
@@ -470,6 +469,7 @@ export function handleCompletedRunInfoMessage(ctx: MessageHandlerContext, payloa
     if (payload?.exists) {
         ctx.setCheckpointMode('completed-run-prompt');
         ctx.setPreviousInput(payload.previous_input || '');
+        ctx.restorePendingFreshStartPrefill();
         
         if (payload.summary) {
             ctx.setCommittedItems(prev => {
@@ -506,6 +506,7 @@ export function handleFreshStartCompleteMessage(ctx: MessageHandlerContext, payl
     // Fresh start complete - workspace AND archives are cleaned
     // Don't re-check for checkpoints - user wants a completely fresh start
     // The checkpointMode should already be set to 'normal' in Run.tsx
+    ctx.restorePendingFreshStartPrefill();
 }
 
 /** Handle clear checkpoint complete (keeps archives) */
@@ -513,6 +514,54 @@ export function handleClearCheckpointCompleteMessage(ctx: MessageHandlerContext,
     // Checkpoint cleared, no archives exist
     // Set to normal mode so user can start a new request
     ctx.setCheckpointMode('normal');
+    ctx.restorePendingFreshStartPrefill();
+}
+
+/** Handle task revert completion */
+export function handleRevertCompleteMessage(ctx: MessageHandlerContext, payload: any): void {
+    ctx.setIsLoading(false);
+    ctx.setStatus(null);
+
+    if (payload?.success) {
+        applyPlanDeclinedState({
+            setCommittedItems: ctx.setCommittedItems,
+            setBannerCommitted: ctx.setBannerCommitted,
+            setPlanContent: ctx.setPlanContent,
+            setIsPlanComplete: ctx.setIsPlanComplete,
+            setTaskProgress: ctx.setTaskProgress,
+            taskProgressRef: ctx.taskProgressRef,
+            setAgents: ctx.setAgents,
+            activeFileContentRef: ctx.activeFileContentRef,
+            setSystemStatus: ctx.setSystemStatus,
+            setStaticKey: ctx.setStaticKey,
+            itemIdCounterRef: ctx.itemIdCounterRef
+        });
+        ctx.setParsedPlan([]);
+        ctx.setCheckpointMode('checking');
+        ctx.setShowMainUI(true);
+        ctx.setIsSystemReady(true);
+
+        if (ctx.bridgeRef.current) {
+            ctx.bridgeRef.current.stdin.write(JSON.stringify({ command: 'check_checkpoint' }) + "\n");
+        }
+        return;
+    }
+
+    const error = payload?.error || 'Unknown revert error';
+    ctx.setCommittedItems(prev => [
+        ...prev,
+        {
+            id: ctx.genUniqueId('revert-error'),
+            type: 'log',
+            content: `✗ Revert failed: ${error}`,
+            agentName: 'system',
+            isError: true
+        }
+    ]);
+    ctx.setCheckpointMode('checking');
+    if (ctx.bridgeRef.current) {
+        ctx.bridgeRef.current.stdin.write(JSON.stringify({ command: 'check_checkpoint' }) + "\n");
+    }
 }
 
 /** Handle final summary */
@@ -643,6 +692,9 @@ export function createMessageHandler(ctx: MessageHandlerContext) {
                 break;
             case 'clear_checkpoint_complete':
                 handleClearCheckpointCompleteMessage(ctx, msg.payload);
+                break;
+            case 'revert_complete':
+                handleRevertCompleteMessage(ctx, msg.payload);
                 break;
             case 'final_summary':
                 handleFinalSummaryMessage(ctx, msg.payload);

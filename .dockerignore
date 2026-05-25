@@ -5,12 +5,13 @@ __pycache__/
 *.so
 .Python
 *.egg-info/
-dist/
 build/
 *.egg
 
 # Node.js
 **/node_modules/
+**/dist/
+**/dist-server/
 
 # Virtual environments
 .venv/
@@ -21,6 +22,7 @@ env/
 # IDE
 .vscode/
 .idea/
+.tools/
 *.swp
 *.swo
 *~
@@ -33,13 +35,6 @@ Thumbs.db
 .git/
 .gitignore
 
-# CI / site / docs (not copied into images; shrinks build context)
-.github/
-docs/
-
-# Never bake host node_modules into COPY cli
-cli/node_modules/
-
 # Docker
 Dockerfile
 .dockerignore
@@ -48,15 +43,41 @@ docker-compose.yml
 # Environment files (will be mounted or set at runtime)
 .env
 .env.local
+.env.*
+**/.env
+**/.env.*
+.npmrc
+.pypirc
+pip.conf
+
+# Local credentials and tool state
+.ssh/
+.aws/
+.gnupg/
+.netrc
+.codex/
+.agents/
+*.pem
+*.key
+*.p12
+*.crt
+*.asc
+*.gpg
 
 # Workspace (will be created in container - use /workspace to match root only)
 /workspace
+workspace/
+
+# Local assets not used by container builds
+logos/
 
 # Documentation (large, but needed for RAG - keep it)
 # rag_documentation/
+docs/_site/
 
 # Tests
 tests/
+
 *.pyc
 .pytest_cache/
 .coverage

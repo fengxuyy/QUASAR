@@ -5,8 +5,6 @@ from pathlib import Path
 from unittest.mock import patch
 from src.tools.execution import execute_python
 
-DEFAULT_TIMEOUT_MINUTES = 60.0
-
 
 def test_temp_file_leak_on_error(mock_workspace):
     """
@@ -27,7 +25,7 @@ def test_temp_file_leak_on_error(mock_workspace):
             # Note: execute_python catches exceptions, but we want to ensure cleanup happens IN that catch block.
             
             # 1. Error case
-            execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "code": "raise ValueError('Crash!')"})
+            execute_python.invoke({"code": "raise ValueError('Crash!')", "check_in_after": 5})
             
             # Check if temp file was cleaned up
             assert len(created_temp_files) > 0
@@ -48,7 +46,7 @@ def test_temp_file_leak_standard_execution(mock_workspace):
         
     with patch('src.tools.execution.WORKSPACE_DIR', mock_workspace):
          with patch('tempfile.mkstemp', side_effect=spy_mkstemp):
-            execute_python.invoke({"timeout": DEFAULT_TIMEOUT_MINUTES, "code": "print('ok')"})
+            execute_python.invoke({"code": "print('ok')", "check_in_after": 5})
             
             assert len(created_temp_files) > 0
             for temp_path in created_temp_files:

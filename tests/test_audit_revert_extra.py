@@ -8,7 +8,8 @@ def test_audit_revert_cleans_all_tables(mock_workspace):
     Audit that reverting checkpoints cleans up ALL related tables (writes, blobs).
     If it leaves data in 'writes', replaying might cause issues.
     """
-    db_path = mock_workspace / "checkpoints.sqlite"
+    db_path = mock_workspace / "quasar_logs" / "checkpoints.sqlite"
+    db_path.parent.mkdir(exist_ok=True)
     
     # Setup a real SQLite DB to test the SQL logic accurately
     conn = sqlite3.connect(str(db_path))
@@ -73,7 +74,8 @@ def test_audit_revert_ordering_assumption(mock_workspace):
     Audit if the assumption that string sorting == chronological sorting holds.
     If we have UUIDs that don't sort chronologically, this logic deletes the wrong things.
     """
-    db_path = mock_workspace / "checkpoints.sqlite"
+    db_path = mock_workspace / "quasar_logs" / "checkpoints.sqlite"
+    db_path.parent.mkdir(exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE checkpoints (thread_id TEXT, checkpoint_ns TEXT, checkpoint_id TEXT, PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id))")

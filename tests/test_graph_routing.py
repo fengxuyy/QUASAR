@@ -20,10 +20,6 @@ class TestRouteAfterInitial:
         if initial_plan_content:
             return "review"
         
-        # Replanning with plan but no initial_plan_content (legacy/fallback)
-        if is_replanning:
-            return "operator" if plan else "end"
-        
         return "end"
     
     def test_replanning_with_initial_content_goes_to_review(self):
@@ -35,14 +31,14 @@ class TestRouteAfterInitial:
         }
         assert self._route_after_initial(state) == "review"
     
-    def test_replanning_with_plan_no_content_goes_to_operator(self):
-        """In replanning mode with plan but no initial_plan_content (legacy), should route to operator."""
+    def test_replanning_with_plan_no_content_ends(self):
+        """In replanning mode with no initial_plan_content, should end."""
         state = {
             "is_replanning": True,
             "plan": ["Task 1", "Task 2"],
             "initial_plan_content": "",
         }
-        assert self._route_after_initial(state) == "operator"
+        assert self._route_after_initial(state) == "end"
     
     def test_replanning_without_plan_or_content_goes_to_end(self):
         """In replanning mode without plan or content, should route to end."""

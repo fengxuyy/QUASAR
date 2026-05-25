@@ -4,6 +4,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional, List
 
+from ..artifacts import get_logs_dir
+
 # Get workspace directory - can be set via WORKSPACE_DIR environment variable for Docker bind mounts
 # Adjusted for src/tools/base.py location (one level deeper than src/tools.py)
 _project_root = Path(__file__).parent.parent.parent
@@ -11,13 +13,14 @@ WORKSPACE_DIR = Path(os.getenv("WORKSPACE_DIR", str(_project_root / "workspace")
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
 # logs directory
-LOGS_DIR = WORKSPACE_DIR / "logs"
+LOGS_DIR = get_logs_dir(WORKSPACE_DIR)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Set of supported multimodal models
 MULTIMODAL_MODELS = {
     "gemini-2.5-pro",
     "gemini-2.5-flash",
+    "gemini-3.5-flash",
     "gemini-3.1-pro-preview",
     "gemini-3-flash-preview",
     "gpt-5.1",
@@ -107,7 +110,8 @@ PROTECTED_SYSTEM_FILES = {
     "execution_overview.md",
     "debug_cli.log",
     "pending_execution.json",
-    "logs",
+    "quasar_logs",
+    "quasar_archive",
 }
 
 
@@ -192,7 +196,4 @@ def get_all_files(directory: Optional[Path] = None) -> set[str]:
         pass
     
     return files
-
-
-
 

@@ -5,7 +5,9 @@ import Config from './commands/Config.js';
 import Checkpoint from './commands/Checkpoint.js';
 import History from './commands/History.js';
 import Info from './commands/Info.js';
+import Report from './commands/Report.js';
 import Banner from './ui/Banner.js';
+import { cliTheme } from './ui/theme.js';
 
 type AppProps = {
 	command?: string;
@@ -19,7 +21,7 @@ const App: React.FC<AppProps> = ({ command, args, flags }) => {
         return (
             <Box flexDirection="column">
                 <Banner />
-                <Text>Please specify a command. Run <Text color="cyan">quasar --help</Text> for usage.</Text>
+                <Text>Please specify a command. Run <Text color={cliTheme.ink.primary}>quasar --help</Text> for usage.</Text>
             </Box>
         );
     }
@@ -35,23 +37,25 @@ const App: React.FC<AppProps> = ({ command, args, flags }) => {
 			return <Config args={args} />;
 		case 'history':
 			return <History args={args} />;
+		case 'report':
+			return <Report args={args} />;
 		case 'info':
 			return <Info />;
 		case 'version':
 			return (
                 <Box flexDirection="column" padding={1}>
                     <Text>
-                        <Text color="cyan" bold>QUASAR-CHEM</Text>{' '}
+                        <Text color={cliTheme.ink.primary} bold>QUASAR-CHEM</Text>{' '}
                         <Text dimColor>version</Text>{' '}
-                        <Text color="yellow">0.3.0 (Node.js)</Text>
+                        <Text color={cliTheme.ink.warning}>0.4.0 (Node.js)</Text>
                     </Text>
                 </Box>
             );
 		default:
 			return (
 				<Box flexDirection="column">
-					<Text color="red">Unknown command: {command}</Text>
-                    <Text>Run <Text color="cyan">quasar --help</Text> for usage.</Text>
+					<Text color={cliTheme.ink.danger}>Unknown command: {command}</Text>
+                    <Text>Run <Text color={cliTheme.ink.primary}>quasar --help</Text> for usage.</Text>
 				</Box>
 			);
 	}

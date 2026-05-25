@@ -49,7 +49,7 @@ class TestBridgeContextUsageReplay:
             {
                 "MODEL": "gemini-2.5-pro",
                 "OPERATOR_MODEL": "gemini-2.5-pro",
-                "CONTEXT_THRESHOLD": "high",
+                "CONTEXT_THRESHOLD": "hard",
             },
             clear=False,
         ):
@@ -58,8 +58,8 @@ class TestBridgeContextUsageReplay:
         assert payload["input_tokens"] == 300_000
         assert payload["agent"] == "operator"
         assert payload["model"] == "gemini-2.5-pro"
-        assert payload["threshold_percent"] == 80
-        assert payload["threshold_tokens"] == int(1_048_576 * 0.80)
+        assert payload["threshold_percent"] == 60
+        assert payload["threshold_tokens"] == int(1_048_576 * 0.60)
 
     def test_replayed_payload_uses_current_env_model(self):
         send_context_usage(
@@ -83,7 +83,7 @@ class TestBridgeContextUsageReplay:
         assert payload["input_tokens"] == 200_000
         assert payload["agent"] == ""
         assert payload["model"] == "gemini-2.5-flash"
-        assert payload["threshold_percent"] == 60
+        assert payload["threshold_percent"] == 40
 
     def test_reset_seed_replays_zero_snapshot(self):
         send_context_usage(
