@@ -14,7 +14,6 @@ permalink: /configuration/
 | `MODEL_API_KEY` | Yes | API key for the base model provider. | None |
 | `OPENAI_API_BASE` | No | Base URL for OpenAI-compatible global endpoints (same effect as `API_BASE_URL`). | None |
 | `API_BASE_URL` | No | Alias for `OPENAI_API_BASE` when routing the primary model through an OpenAI-compatible HTTP API. | None |
-
 | `ACCURACY` | No | Planning/execution rigor: `eco`, `standard`, `pro`, or `adaptive` (experimental: scales numerical rigor with workflow stage). | `standard` |
 | `GRANULARITY` | No | Task decomposition depth: `low`, `medium`, `high`, or `adaptive` (experimental: scales task count with perceived complexity). | `adaptive` |
 | `AUTO_IMPROVE_CYCLES` | No | Number of automatic auto-improve follow-up runs after a successful user-started run. | `0` |

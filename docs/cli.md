@@ -12,7 +12,6 @@ permalink: /cli/
 | --- | --- |
 | `quasar` | Starts the interactive CLI run flow. |
 | `quasar "..."` | Runs a direct prompt in headless mode. |
-
 | `quasar --resume` | Resumes from an active checkpoint and forces restart semantics. |
 | `quasar --clear` | Clears the active checkpoint and current workspace state, but keeps archived runs. |
 | `quasar --fresh` | Clears current workspace state and archived runs, while preserving downloaded docs and dotfiles. |

@@ -751,9 +751,8 @@ blockquote {
 }
 
 table {
-  display: block;
+  display: table;
   width: 100%;
-  overflow-x: auto;
   border-collapse: separate;
   border-spacing: 0;
   border-radius: var(--radius-card);
