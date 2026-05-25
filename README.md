@@ -223,3 +223,11 @@ By default, all agents (Strategist, Operator, Evaluator) use the same model set 
 All are **optional** — when unset, each agent falls back to the primary `MODEL`, `MODEL_API_KEY`, and `OPENAI_API_BASE` / `API_BASE_URL`.
 
 </details>
+
+<br>
+
+## Third-Party Software Licenses
+
+QUASAR integrates with several third-party computational chemistry packages. Most are open-source, but **ORCA** is distributed under its own license terms:
+
+> **ORCA** is free for academic use but is **not open-source**. By using ORCA through QUASAR, you agree to the [ORCA license terms](https://www.faccts.de/docs/orca/6.0/manual/contents/detailed/ORCA_Licensing.html). Users are responsible for obtaining a valid ORCA license and ensuring compliance with its terms of use.
