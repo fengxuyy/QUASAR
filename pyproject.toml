@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "quasar-chem"
+name = "quasar-core"
 version = "0.4.0"
 description = "Autonomous agentic system for atomistic computational chemistry research"
 readme = "README.md"
