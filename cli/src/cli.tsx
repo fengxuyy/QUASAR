@@ -10,8 +10,19 @@ import { applyDefaultEnv, checkpointDbPath, resolveWorkspaceDir } from './utils/
 import { normalizeReportCommand, reportCommandHelp } from './utils/reportFiles.js';
 import { parseCliCommand } from './utils/commandRegistry.js';
 
-const require = createRequire(import.meta.url);
-const { version: packageVersion } = require('../package.json');
+// In dev, read version from package.json. In the esbuild bundle, QUASAR_CLI_VERSION
+// is replaced at build time by the `define` option; the try/catch handles the dev path
+// where the define hasn't been applied and package.json is available.
+declare const QUASAR_CLI_VERSION: string | undefined;
+let packageVersion = typeof QUASAR_CLI_VERSION !== 'undefined' ? QUASAR_CLI_VERSION : '0.0.0';
+if (packageVersion === '0.0.0') {
+	try {
+		const require = createRequire(import.meta.url);
+		packageVersion = require('../package.json').version;
+	} catch {
+		// package.json not available (bundled mode) — version stays at 0.0.0
+	}
+}
 const rawArgs = process.argv.slice(2);
 
 const allowedLongFlags = new Set([

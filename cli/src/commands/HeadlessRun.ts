@@ -89,16 +89,21 @@ export function runHeadless(prompt: string, flags: any): void {
     const isResume = Boolean(flags.resume || flags.restart || restartFromEnv);
     
     // Find bridge.py
-    let bridgePath: string | undefined;
-    const candidates = [
-        path.resolve(process.cwd(), '../bridge.py'),
-        path.resolve(process.cwd(), 'bridge.py'),
-        '/app/bridge.py'
-    ];
-    for (const p of candidates) {
-        if (fs.existsSync(p)) {
-            bridgePath = p;
-            break;
+    let bridgePath: string | undefined = process.env.QUASAR_BRIDGE_PATH;
+    if (bridgePath && !fs.existsSync(bridgePath)) {
+        bridgePath = undefined;
+    }
+    if (!bridgePath) {
+        const candidates = [
+            path.resolve(process.cwd(), '../bridge.py'),
+            path.resolve(process.cwd(), 'bridge.py'),
+            '/app/bridge.py'
+        ];
+        for (const p of candidates) {
+            if (fs.existsSync(p)) {
+                bridgePath = p;
+                break;
+            }
         }
     }
     

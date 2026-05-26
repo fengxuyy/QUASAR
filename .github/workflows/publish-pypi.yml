@@ -21,6 +21,22 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build CLI bundle
+        working-directory: cli
+        run: |
+          npm ci
+          npm run build:bundle
+
+      - name: Copy CLI bundle into Python package
+        run: |
+          mkdir -p quasar_cli/cli_dist
+          cp cli/dist/cli.bundle.mjs quasar_cli/cli_dist/
+
       - name: Install build tools
         run: pip install build
 

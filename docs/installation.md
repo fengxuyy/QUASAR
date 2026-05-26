@@ -64,15 +64,19 @@ singularity build quasar.sif docker://fengxuyang/quasar:<tag>
 
 ### Local Deployment
 
-If you want to run QUASAR directly on your machine, install the Python package and the scientific software stack you need. A minimal example looks like this:
+If you want to run QUASAR directly on your machine, install the Python package and the scientific software stack you need. The `quasar` CLI is included with the pip package. A minimal example looks like this:
 
 ```bash
 conda create -n quasar python=3.11 -y
 conda activate quasar
-conda install -c conda-forge qe lammps raspa3 raspalib -y
+conda install -c conda-forge qe lammps raspa3 raspalib nodejs -y
 pip install --upgrade pip
 pip install quasar-core
 ```
+
+<div class="callout callout-accent">
+  <strong>Node.js required:</strong> The <code>quasar</code> CLI is powered by a bundled Node.js application. Node.js 20 or newer must be available on your <code>PATH</code>. Install it via <code>conda install -c conda-forge nodejs</code>, <code>brew install node</code>, or from <a href="https://nodejs.org/" target="_blank" rel="noopener noreferrer">nodejs.org</a>.
+</div>
 
 ### CLI
 

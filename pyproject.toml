@@ -79,20 +79,29 @@ dev = [
     "twine",
 ]
 
+[project.scripts]
+quasar = "quasar_cli.main:main"
+
 [project.urls]
 Homepage = "https://github.com/fengxuyy/QUASAR"
 Documentation = "https://fengxuyy.github.io/QUASAR-CHEM/"
 Repository = "https://github.com/fengxuyy/QUASAR"
 Issues = "https://github.com/fengxuyy/QUASAR/issues"
 
+[tool.hatch.build]
+artifacts = [
+    "quasar_cli/cli_dist/*.mjs",
+]
+
 [tool.hatch.build.targets.wheel]
-packages = ["src", "bridge.py", "bridge_history.py"]
+packages = ["src", "bridge.py", "bridge_history.py", "quasar_cli"]
 
 [tool.hatch.build.targets.sdist]
 include = [
     "src/",
     "bridge.py",
     "bridge_history.py",
+    "quasar_cli/",
     "tests/",
     "LICENSE",
     "README.md",

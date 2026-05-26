@@ -29,6 +29,8 @@ dist/
 # Misc
 .DS_Store
 cli/node_modules
+cli/dist
+quasar_cli/cli_dist/
 
 # Jekyll
 docs/_site/
