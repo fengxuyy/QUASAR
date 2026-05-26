@@ -8,7 +8,7 @@ A research-ready autonomous computational chemistry agentic system. QUASAR cover
 
 ## Documentation
 
-- **GitHub Pages:** [https://fengxuyy.github.io/QUASAR-CHEM/](https://fengxuyy.github.io/QUASAR-CHEM/)
+- **GitHub Pages:** [https://fengxuyy.github.io/QUASAR](https://fengxuyy.github.io/QUASAR)
 - **Docs source:** [`docs/`](docs/)
 - **Recommended entrypoint:** [`docs/index.md`](docs/index.md)
 
