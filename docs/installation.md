@@ -69,13 +69,17 @@ If you want to run QUASAR directly on your machine, install the Python package a
 ```bash
 conda create -n quasar python=3.11 -y
 conda activate quasar
-conda install -c conda-forge qe lammps raspa3 raspalib nodejs -y
+conda install -c conda-forge qe lammps raspa3 raspalib nodejs xtb -y
 pip install --upgrade pip
 pip install quasar-core
 ```
 
 <div class="callout callout-accent">
   <strong>Node.js required:</strong> The <code>quasar</code> CLI is powered by a bundled Node.js application. Node.js 20 or newer must be available on your <code>PATH</code>. Install it via <code>conda install -c conda-forge nodejs</code>, <code>brew install node</code>, or from <a href="https://nodejs.org/" target="_blank" rel="noopener noreferrer">nodejs.org</a>.
+</div>
+
+<div class="callout callout-accent">
+  <strong>ORCA installation:</strong> While ORCA is pre-packaged and integrated in the official Docker and Singularity container images, it is not included in the local conda setup due to licensing restrictions. For local deployments, users are responsible for obtaining a valid ORCA license and installing it themselves. Ensure the ORCA executable is available on your <code>PATH</code> to use it locally.
 </div>
 
 ### CLI
@@ -86,8 +90,6 @@ Use the CLI when you want terminal-native interaction or a direct headless promp
 
 ```bash
 docker run -it --rm \
-  -e MODEL=<model_name> \
-  -e MODEL_API_KEY=<api_key> \
   -v "<workspace_path>:/workspace" \
   fengxuyang/quasar:<tag> \
   quasar
@@ -99,8 +101,6 @@ docker run -it --rm \
 singularity exec --cleanenv \
   -B "<workspace_path>:/workspace" \
   --home "<workspace_path>:/workspace" \
-  --env MODEL=<model_name> \
-  --env MODEL_API_KEY=<api_key> \
   quasar.sif quasar
 ```
 
@@ -108,8 +108,6 @@ singularity exec --cleanenv \
 
 ```bash
 export WORKSPACE_DIR=<workspace_directory>
-export MODEL=<model_name>
-export MODEL_API_KEY=<api_key>
 quasar
 ```
 
