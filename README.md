@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="logos/logo_text_fancy.png" alt="MOF-ChemUnity Logo" width="400"/>
+    <img src="https://raw.githubusercontent.com/fengxuyy/QUASAR/main/logos/logo_text_fancy.png" alt="QUASAR" width="400"/>
 </p>
 
 <h1 align="center">Universal Autonomous System for Atomistic Research</h1>
@@ -9,8 +9,8 @@ A research-ready autonomous computational chemistry agentic system. QUASAR cover
 ## Documentation
 
 - **GitHub Pages:** [https://fengxuyy.github.io/QUASAR](https://fengxuyy.github.io/QUASAR)
-- **Docs source:** [`docs/`](docs/)
-- **Recommended entrypoint:** [`docs/index.md`](docs/index.md)
+- **Docs source:** [`docs/`](https://github.com/fengxuyy/QUASAR/tree/main/docs)
+- **Recommended entrypoint:** [`docs/index.md`](https://github.com/fengxuyy/QUASAR/blob/main/docs/index.md)
 
 Quick links:
 - [Installation](https://fengxuyy.github.io/QUASAR-CHEM/installation/) for Docker, Singularity, and local setup.
