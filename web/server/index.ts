@@ -1775,12 +1775,24 @@ except Exception as e:
 });
 
 // Start fresh. Strategist-only checkpoints clear checkpoint files without touching workspace files.
-app.post('/api/fresh', (req, res) => {
+app.post('/api/fresh', async (req, res) => {
   const workspaceDir = getWorkspaceDir();
   console.log(`Starting fresh - cleaning workspace: ${workspaceDir}`);
+  isAwaitingPlanConfirmation = false;
   isExecutionRunning = false;
   resetLiveMessageState();
   checkpointInfoCache = null;
+
+  // Ensure any lingering Python bridge exits before removing workspace/checkpoint files
+  // so no open SQLite file handles remain across resets.
+  if (pythonProcess) {
+    try {
+      pythonProcess.kill('SIGINT');
+    } catch {
+      // ignore
+    }
+    await waitForPythonProcessExit(1500);
+  }
 
   const { includeArchive } = req.body;
   const preserveWorkspaceForStrategist = !includeArchive && isStrategistStageCheckpoint(workspaceDir);

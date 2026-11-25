@@ -429,12 +429,19 @@ export function useQuasarBridge(): UseQuasarBridgeReturn {
           setIsInterrupting(false);
         }
 
-        // Handle terminal errors - immediately leave running/starting state
+        // Handle terminal errors - immediately leave running/starting state and
+        // append an interrupted run status so the UI behaves like a stopped run.
         if (data.type === 'error') {
           setIsRunning(false);
           setIsStarting(false);
           setIsAwaitingPlanConfirmation(false);
           setIsInterrupting(false);
+          appendMessage(data);
+          appendMessage({
+            type: 'run_status',
+            payload: { status: 'interrupted' },
+          });
+          return;
         }
 
         // Handle cleanup status - show/hide archiving overlay

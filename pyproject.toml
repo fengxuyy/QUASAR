@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quasar-core"
-version = "0.5.2"
+version = "0.5.3"
 description = "Autonomous agentic system for atomistic computational chemistry research"
 readme = "README.md"
 license = "MIT"

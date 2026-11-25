@@ -18,6 +18,7 @@ interface DynamicInputProps {
   isStarting?: boolean;
   isInitializing?: boolean;
   hasCheckpoint?: boolean;
+  isErrorInterrupted?: boolean;
   allowResumeSteering?: boolean;
   /** Interrupt in flight — keep resume shell (avoid empty composer flash). */
   isInterrupting?: boolean;
@@ -65,6 +66,7 @@ export const DynamicInput: React.FC<DynamicInputProps> = ({
   isStarting,
   isInitializing,
   hasCheckpoint,
+  isErrorInterrupted = false,
   allowResumeSteering = false,
   isInterrupting = false,
   hasArchive,
@@ -339,6 +341,9 @@ export const DynamicInput: React.FC<DynamicInputProps> = ({
       return "Stopping… you can add resume instructions";
     }
     if (hasCheckpoint) {
+      if (isErrorInterrupted) {
+        return "Run interrupted — Resume or Start Fresh";
+      }
       return allowResumeSteering
         ? "Add instructions for the resumed run"
         : "Resume from checkpoint";

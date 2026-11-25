@@ -56,6 +56,7 @@ function App() {
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState('');
   const [runJustFinished, setRunJustFinished] = useState(false);
+  const [hasInterruptedError, setHasInterruptedError] = useState(false);
   const [workspaceRefreshKey, setWorkspaceRefreshKey] = useState(0);
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const [navKey, setNavKey] = useState(0);
@@ -122,7 +123,7 @@ function App() {
       !!taskProgress &&
       taskProgress.total > 0 &&
       !isRunning);
-  const showCheckpointResumeUi = !isRunning && (hasCheckpoint || isInterrupting);
+  const showCheckpointResumeUi = !isRunning && (hasCheckpoint || hasInterruptedError || isInterrupting);
   const isStrategistStageCheckpoint = useMemo(() => {
     if (!hasCheckpoint || !checkpointInfo) return false;
 
@@ -300,10 +301,18 @@ function App() {
     if (messages.length > 0) {
         const lastMsg = messages[messages.length - 1];
 
-        if (lastMsg.type === 'error') {
+        const isErrorInterruption =
+          lastMsg.type === 'error' ||
+          (lastMsg.type === 'run_status' &&
+            lastMsg.payload?.status === 'interrupted' &&
+            messages.length >= 2 &&
+            messages[messages.length - 2]?.type === 'error');
+
+        if (isErrorInterruption) {
           suppressRunCompletion(runLifecycleRef.current);
           setActiveAgent(null);
           setHasStarted(true);
+          setHasInterruptedError(true);
           setRunJustFinished(false);
           setActiveTab('dashboard');
           void checkForCheckpoint();
@@ -361,7 +370,9 @@ function App() {
     if (status === 'error' || status === 'interrupted') {
       suppressRunCompletion(runLifecycleRef.current);
       completedRunHandledRef.current = false;
+      setActiveAgent(null);
       setHasStarted(true);
+      setHasInterruptedError(true);
       setRunJustFinished(false);
       setActiveTab('dashboard');
       void checkForCheckpoint();
@@ -456,6 +467,7 @@ function App() {
     }
 
     setSettingsError(null);
+    setHasInterruptedError(false);
     beginTrackedRun(runLifecycleRef.current);
     completedRunHandledRef.current = false;
     if (!hasStarted || runJustFinished) {
@@ -474,6 +486,7 @@ function App() {
 
   const handleConfirmCancel = async () => {
     setShowCancelModal(false);
+    setHasInterruptedError(false);
     suppressRunCompletion(runLifecycleRef.current);
     const checkpoint = await cancelExecution();
     setActiveAgent(null);
@@ -491,10 +504,24 @@ function App() {
 
   const handleResumeFromCheckpoint = () => {
     setShowResumeConfirm(false);
+    const settings = getStoredSettings();
+    if (!settings.MODEL?.trim() || !hasConfiguredApiKey(settings, { allowServerMask: true })) {
+      setSettingsError('Model Name and API Key are required. Please configure them in Settings.');
+      return;
+    }
+    setSettingsError(null);
+    setHasInterruptedError(false);
     beginTrackedRun(runLifecycleRef.current);
     completedRunHandledRef.current = false;
-    const text = canResumeWithSteering && inputValue.trim() ? inputValue : '';
-    sendMessage({ command: 'prompt', content: text, restart: false });
+    if (hasCheckpoint) {
+      const text = canResumeWithSteering && inputValue.trim() ? inputValue : '';
+      sendMessage({ command: 'prompt', content: text, restart: false });
+    } else {
+      const promptToRetry = inputValue.trim() || currentPrompt;
+      if (!promptToRetry) return;
+      setCurrentPrompt(promptToRetry);
+      sendMessage({ command: 'prompt', content: promptToRetry, restart: true });
+    }
     setInputValue('');
   };
 
@@ -514,6 +541,7 @@ function App() {
     setCurrentPrompt('');
     setInputValue(restoredInput);
     setHasStarted(false);
+    setHasInterruptedError(false);
     setRunJustFinished(false);
     setArchiveLandingDismissed(true);
     completedRunHandledRef.current = false;
@@ -889,6 +917,7 @@ function App() {
             isRunning={isRunning}
             isAwaitingPlanConfirmation={isAwaitingPlanConfirmation && !isBusy}
             hasCheckpoint={showCheckpointResumeUi}
+            isErrorInterrupted={hasInterruptedError && !hasCheckpoint}
             allowResumeSteering={canResumeWithSteering}
             isInterrupting={isInterrupting}
             hasArchive={hasArchive && !archiveLandingDismissed}
@@ -900,6 +929,7 @@ function App() {
             isInitializing={isBusy && !isInterrupting}
             justLoadedCheckpoint={
               (initialCheckDone && hasCheckpoint && hasStarted && !isRetrievingCheckpoint && !isInitializing) ||
+              hasInterruptedError ||
               isInterrupting
             }
             runJustFinished={runJustFinished}
@@ -928,9 +958,13 @@ function App() {
       {/* Resume Confirmation Modal */}
       <ConfirmModal
         isOpen={showResumeConfirm}
-        title="Resume from Checkpoint?"
-        message="Would you like to continue from where you left off? Previous history will be preserved."
-        confirmText="Resume"
+        title={hasCheckpoint ? "Resume from Checkpoint?" : "Continue Run?"}
+        message={
+          hasCheckpoint
+            ? "Would you like to continue from where you left off? Previous history will be preserved."
+            : "Retry your request using the current settings?"
+        }
+        confirmText={hasCheckpoint ? "Resume" : "Continue"}
         cancelText="Cancel"
         variant="info"
         onConfirm={handleResumeFromCheckpoint}

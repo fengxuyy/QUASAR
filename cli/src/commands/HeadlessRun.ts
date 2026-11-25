@@ -38,7 +38,7 @@ function printBanner(): void {
     const boxWidth = maxLen;
     
     const subtitle = 'Quantum Universal Autonomous System for Atomistic Research';
-    const version = 'v0.5.2';
+    const version = 'v0.5.3';
     
     // Helper to pad line to exact width
     const padLine = (text: string) => text + ' '.repeat(Math.max(0, boxWidth - text.length));
