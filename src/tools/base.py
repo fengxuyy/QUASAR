@@ -9,7 +9,7 @@ from ..artifacts import get_logs_dir
 # Get workspace directory - can be set via WORKSPACE_DIR environment variable for Docker bind mounts
 # Adjusted for src/tools/base.py location (one level deeper than src/tools.py)
 _project_root = Path(__file__).parent.parent.parent
-WORKSPACE_DIR = Path(os.getenv("WORKSPACE_DIR", str(_project_root / "workspace")))
+WORKSPACE_DIR = Path(os.getenv("WORKSPACE_DIR", str(_project_root / "workspace"))).expanduser()
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
 # logs directory

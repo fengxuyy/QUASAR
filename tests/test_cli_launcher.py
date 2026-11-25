@@ -66,6 +66,17 @@ def test_build_runtime_env_preserves_explicit_workspace_dir(tmp_path, monkeypatc
     assert env["WORKSPACE_DIR"] == str(custom_ws)
 
 
+def test_build_runtime_env_resolves_relative_and_tilde_workspace_dir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WORKSPACE_DIR", "./relative-ws")
+    env = cli_launcher._build_runtime_env(tmp_path)
+    assert env["WORKSPACE_DIR"] == str(tmp_path / "relative-ws")
+
+    monkeypatch.setenv("WORKSPACE_DIR", "~/quasar-ws-test")
+    env = cli_launcher._build_runtime_env(tmp_path)
+    assert env["WORKSPACE_DIR"] == str(Path.home() / "quasar-ws-test")
+
+
 def test_bootstrap_node_component_installs_once_and_reuses_cache(tmp_path, monkeypatch):
     packaged = tmp_path / "packaged" / "cli"
     (packaged / "dist").mkdir(parents=True)

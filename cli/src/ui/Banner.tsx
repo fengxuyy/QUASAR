@@ -45,7 +45,7 @@ const Banner: React.FC = () => {
         ? subtitle.substring(0, Math.max(0, safeContentWidth - 3)) + '...'
         : subtitle;
     
-    const version = 'v0.5.0';
+    const version = 'v0.5.1';
     const innerWidth = Math.max(0, availableWidth - borderX);
     const paddedLine = (content = '') => {
         const safeContent = content.substring(0, Math.max(0, innerWidth - paddingX * 2));

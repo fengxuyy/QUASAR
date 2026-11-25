@@ -211,11 +211,14 @@ def _build_runtime_env(
     if bridge_path.is_file():
         env.setdefault("QUASAR_BRIDGE_PATH", str(bridge_path))
 
-    if not (env.get("WORKSPACE_DIR") or "").strip():
+    raw_workspace = (env.get("WORKSPACE_DIR") or "").strip()
+    if not raw_workspace:
         if _is_repo_checkout(root):
             env["WORKSPACE_DIR"] = str(root / "workspace")
         else:
             env["WORKSPACE_DIR"] = os.getcwd()
+    else:
+        env["WORKSPACE_DIR"] = os.path.abspath(os.path.expanduser(raw_workspace))
 
     if web_server_entry is not None:
         env["QUASAR_WEB_SERVER_ENTRY"] = str(web_server_entry)

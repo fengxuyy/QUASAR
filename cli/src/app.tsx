@@ -47,7 +47,7 @@ const App: React.FC<AppProps> = ({ command, args, flags }) => {
                     <Text>
                         <Text color={cliTheme.ink.primary} bold>QUASAR-CHEM</Text>{' '}
                         <Text dimColor>version</Text>{' '}
-                        <Text color={cliTheme.ink.warning}>0.5.0 (Node.js)</Text>
+                        <Text color={cliTheme.ink.warning}>0.5.1 (Node.js)</Text>
                     </Text>
                 </Box>
             );

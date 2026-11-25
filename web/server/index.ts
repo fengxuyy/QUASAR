@@ -51,7 +51,12 @@ const webTokenSource = configuredWebToken ? 'QUASAR_WEB_TOKEN' : 'generated';
 const WEB_AUTH_COOKIE = 'quasar_web_token';
 
 function getWorkspaceDir(): string {
-  return process.env.WORKSPACE_DIR || process.env.HOME || '/workspace';
+  const raw = (process.env.WORKSPACE_DIR || process.env.HOME || '/workspace').trim();
+  if (raw === '~') return os.homedir();
+  if (raw.startsWith('~/') || raw.startsWith('~\\')) {
+    return path.join(os.homedir(), raw.slice(2));
+  }
+  return path.resolve(raw);
 }
 
 function tokenMatches(candidate: unknown): boolean {
@@ -163,6 +168,11 @@ let pythonProcess: ChildProcess | null = null;
 let messageBuffer: any[] = [];
 let isAwaitingPlanConfirmation = false;
 let ragPreloaded = false;
+let ragPreloadFailed = false;
+let latestInitStatus: { status: string; message: string } = {
+  status: 'initializing',
+  message: 'Initializing system...',
+};
 let userSettings: Record<string, string> = {};
 let latestUpdateEvent: any | null = null;
 let latestThoughtStream: any | null = null;
@@ -913,7 +923,8 @@ initializeSettings();
 // Pre-download RAG resources (index + embedding model) and docs on server startup
 // This does NOT load the vectorstore - that happens when Python bridge starts
 function preloadResources() {
-  console.log('Starting resource pre-download (index + embeddings model + docs)...');
+  const workspaceDir = getWorkspaceDir();
+  console.log(`Starting resource pre-download in ${workspaceDir} (index + embeddings model + docs)...`);
 
   const preloadProcess = spawnPythonHelper(`
 import os
@@ -927,10 +938,10 @@ def status(code, message):
 
 enable_rag = os.environ.get('ENABLE_RAG', 'true').lower() not in ['false', '0', 'no', 'off']
 
-# Get workspace directory
-workspace_dir = Path(os.environ.get('WORKSPACE_DIR') or os.environ.get('HOME', '/workspace'))
-if not workspace_dir.exists():
-    workspace_dir = Path('/workspace')
+# Get and ensure workspace directory exists (never fall back to Docker-only /workspace on local installs)
+raw_ws = (os.environ.get('WORKSPACE_DIR') or os.environ.get('HOME') or '/workspace').strip()
+workspace_dir = Path(raw_ws).expanduser()
+workspace_dir.mkdir(parents=True, exist_ok=True)
 
 # Link pre-cached resources (docs, .rag_index, .hf_cache) from image cache if present
 try:
@@ -949,8 +960,14 @@ try:
         status('docs_ready', 'Documentation ready')
     else:
         status('downloading_docs', 'Downloading documentation...')
-        download_docs(workspace_dir)
-        status('docs_ready', 'Documentation ready')
+        docs_ok = download_docs(
+            workspace_dir,
+            status_tracker=lambda msg: status('downloading_docs', msg),
+        )
+        if docs_ok:
+            status('docs_ready', 'Documentation ready')
+        else:
+            status('docs_error', 'Documentation download incomplete')
 except Exception as e:
     status('docs_error', f'Failed to download docs: {e}')
 
@@ -963,18 +980,28 @@ if enable_rag:
         status('downloading_index', 'Checking knowledge base index...')
         if not is_index_valid(workspace_dir):
             status('downloading_index', 'Downloading knowledge base index...')
-            download_index(workspace_dir)
+            if not download_index(
+                workspace_dir,
+                status_tracker=lambda msg: status('downloading_index', msg),
+            ):
+                raise RuntimeError('Failed to download knowledge base index')
         status('index_ready', 'Index ready')
 
         # Step 3: Download embedding model (cached by transformers/sentence-transformers)
         status('downloading_embeddings', 'Loading embedding model...')
-        initialize_embeddings(workspace_dir=workspace_dir)
+        embeddings = initialize_embeddings(
+            workspace_dir=workspace_dir,
+            status_tracker=lambda msg: status('downloading_embeddings', msg),
+        )
+        if embeddings is None:
+            raise RuntimeError('Failed to load embedding model')
         status('ready', 'System ready')
     except Exception as e:
         status('error', f'Failed to initialize: {e}')
 else:
     status('ready', 'System ready (RAG disabled)')
 `, {
+    WORKSPACE_DIR: workspaceDir,
     HF_HUB_DISABLE_IMPLICIT_TOKEN: '1',
     HF_HUB_DISABLE_PROGRESS_BARS: '1',
     TOKENIZERS_PARALLELISM: 'false',
@@ -995,15 +1022,17 @@ else:
         const status = parts[0];
         const message = parts.slice(1).join(':') || status;
         if (!ragPreloaded || status === 'ready' || status === 'error') {
-          broadcastToClients({ type: 'init_status', payload: { status, message } });
+          latestInitStatus = { status, message };
+          broadcastToClients({ type: 'init_status', payload: latestInitStatus });
         } else {
           console.log(`[Preload] (post-ready) ${status}: ${message}`);
         }
 
         if (status === 'ready' || status === 'error') {
           ragPreloaded = true;
+          ragPreloadFailed = status === 'error';
           // Also send rag_status for backward compatibility
-          broadcastToClients({ type: 'rag_status', payload: { status: status === 'error' ? 'error' : 'ready' } });
+          broadcastToClients({ type: 'rag_status', payload: { status: ragPreloadFailed ? 'error' : 'ready' } });
         }
       }
     }
@@ -1015,9 +1044,22 @@ else:
 
   preloadProcess.on('close', (code) => {
     console.log(`Resource preload finished with code ${code}`);
-    ragPreloaded = true;
-    broadcastToClients({ type: 'init_status', payload: { status: 'ready', message: 'System ready' } });
-    broadcastToClients({ type: 'rag_status', payload: { status: 'ready' } });
+    if (!ragPreloaded) {
+      ragPreloaded = true;
+      if (code === 0 && !ragPreloadFailed) {
+        latestInitStatus = { status: 'ready', message: 'System ready' };
+        broadcastToClients({ type: 'init_status', payload: latestInitStatus });
+        broadcastToClients({ type: 'rag_status', payload: { status: 'ready' } });
+      } else {
+        ragPreloadFailed = true;
+        latestInitStatus = {
+          status: 'error',
+          message: `Resource initialization failed (exit code ${code ?? 'unknown'})`,
+        };
+        broadcastToClients({ type: 'init_status', payload: latestInitStatus });
+        broadcastToClients({ type: 'rag_status', payload: { status: 'error' } });
+      }
+    }
   });
 }
 
@@ -1142,15 +1184,12 @@ wss.on('connection', (ws, req) => {
   // Send current initialization status
   ws.send(JSON.stringify({
     type: 'init_status',
-    payload: {
-      status: ragPreloaded ? 'ready' : 'initializing',
-      message: ragPreloaded ? 'System ready' : 'Initializing system...'
-    }
+    payload: latestInitStatus,
   }));
   // Also send rag_status for backward compatibility
   ws.send(JSON.stringify({
     type: 'rag_status',
-    payload: { status: ragPreloaded ? 'ready' : 'initializing' }
+    payload: { status: ragPreloadFailed ? 'error' : (ragPreloaded ? 'ready' : 'initializing') }
   }));
 
   // Send current execution status
