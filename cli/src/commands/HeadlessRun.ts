@@ -4,7 +4,7 @@
  */
 import { spawn } from 'child_process';
 import path from 'path';
-import fs from 'fs';
+import { resolveBridgePath, resolvePythonCommand } from '../utils/runtimePaths.js';
 
 // ANSI color codes
 const colors = {
@@ -38,7 +38,7 @@ function printBanner(): void {
     const boxWidth = maxLen;
     
     const subtitle = 'Quantum Universal Autonomous System for Atomistic Research';
-    const version = 'v0.4.0';
+    const version = 'v0.5.0';
     
     // Helper to pad line to exact width
     const padLine = (text: string) => text + ' '.repeat(Math.max(0, boxWidth - text.length));
@@ -88,31 +88,14 @@ export function runHeadless(prompt: string, flags: any): void {
     const restartFromEnv = ['true', '1', 'yes', 'on'].includes((process.env.IF_RESTART || '').toLowerCase());
     const isResume = Boolean(flags.resume || flags.restart || restartFromEnv);
     
-    // Find bridge.py
-    let bridgePath: string | undefined = process.env.QUASAR_BRIDGE_PATH;
-    if (bridgePath && !fs.existsSync(bridgePath)) {
-        bridgePath = undefined;
-    }
-    if (!bridgePath) {
-        const candidates = [
-            path.resolve(process.cwd(), '../bridge.py'),
-            path.resolve(process.cwd(), 'bridge.py'),
-            '/app/bridge.py'
-        ];
-        for (const p of candidates) {
-            if (fs.existsSync(p)) {
-                bridgePath = p;
-                break;
-            }
-        }
-    }
+    const bridgePath = resolveBridgePath();
     
     if (!bridgePath) {
         printError('Could not find bridge.py');
         process.exit(1);
     }
 
-    const child = spawn('python3', [bridgePath], {
+    const child = spawn(resolvePythonCommand(), [bridgePath], {
         cwd: path.dirname(bridgePath),
         stdio: ['pipe', 'pipe', 'pipe'],
         env: {

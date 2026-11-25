@@ -1,0 +1,19 @@
+{
+  "name": "quasar-web-runtime",
+  "private": true,
+  "version": "0.5.0",
+  "type": "module",
+  "dependencies": {
+    "express": "^5.2.1",
+    "multer": "^2.0.2",
+    "ws": "^8.18.3"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  },
+  "overrides": {
+    "qs": "6.15.2",
+    "minimatch": ">=10.2.1",
+    "flatted": ">=3.4.0"
+  }
+}

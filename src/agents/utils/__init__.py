@@ -55,6 +55,7 @@ from .errors import (
     _sanitize_error_message,
     is_api_connection_error,
     handle_api_retry,
+    run_with_api_retries,
     _save_stats_on_system_interrupt,
 )
 
@@ -135,6 +136,7 @@ __all__ = [
     '_sanitize_error_message',
     'is_api_connection_error',
     'handle_api_retry',
+    'run_with_api_retries',
     '_save_stats_on_system_interrupt',
     # logging
     'MAX_LOG_CHARS',

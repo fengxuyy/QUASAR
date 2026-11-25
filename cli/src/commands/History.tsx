@@ -1,9 +1,10 @@
 import React from 'react';
 import { Box, Text, useApp, useInput, useStdout } from 'ink';
-import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { cleanTaskDescription } from '../utils/stateHelpers.js';
+import { resolveWorkspaceDir } from '../utils/envDefaults.js';
+import { resolveBridgePath, resolvePythonCommand } from '../utils/runtimePaths.js';
 import { buildCommittedTimelineItems } from '../handlers/checkpointHandler.js';
 import StaticItemRenderer from '../ui/Run/StaticItemRenderer.js';
 import type { CommittedItem } from '../hooks/types.js';
@@ -25,23 +26,7 @@ interface HistoryData {
     strategist_items?: any[];
 }
 
-const WORKSPACE_DIR = process.env.WORKSPACE_DIR || '/workspace';
-
-function resolveBridgePath(): string | null {
-    const fromEnv = process.env.QUASAR_BRIDGE_PATH;
-    if (fromEnv && fs.existsSync(fromEnv)) return fromEnv;
-
-    const candidates = [
-        path.resolve(process.cwd(), '../bridge.py'),
-        path.resolve(process.cwd(), 'bridge.py'),
-        '/app/bridge.py'
-    ];
-
-    for (const candidate of candidates) {
-        if (fs.existsSync(candidate)) return candidate;
-    }
-    return null;
-}
+const WORKSPACE_DIR = resolveWorkspaceDir();
 
 function loadCheckpointHistory(): { history: HistoryData | null; error: string | null } {
     const bridgePath = resolveBridgePath();
@@ -86,9 +71,9 @@ except Exception as e:
     print(json.dumps({"ok": False, "error": str(e), "traceback": traceback.format_exc()}))
 `;
 
-    const result = spawnSync('python3', ['-c', script], {
+    const result = spawnSync(resolvePythonCommand(), ['-c', script], {
         cwd: path.dirname(bridgePath),
-        env: { ...process.env },
+        env: { ...process.env, WORKSPACE_DIR },
         encoding: 'utf-8'
     });
 

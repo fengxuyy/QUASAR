@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "quasar-core"
-version = "0.4.0"
+version = "0.5.0"
 description = "Autonomous agentic system for atomistic computational chemistry research"
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -80,7 +80,7 @@ dev = [
 ]
 
 [project.scripts]
-quasar = "quasar_cli.main:main"
+quasar = "src.cli_launcher:main"
 
 [project.urls]
 Homepage = "https://github.com/fengxuyy/QUASAR"
@@ -90,19 +90,34 @@ Issues = "https://github.com/fengxuyy/QUASAR/issues"
 
 [tool.hatch.build]
 artifacts = [
-    "quasar_cli/cli_dist/*.mjs",
+    "/cli/dist/**",
+    "/web/dist/**",
+    "/web/dist-server/**",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src", "bridge.py", "bridge_history.py", "quasar_cli"]
+packages = ["src", "bridge.py", "bridge_history.py"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"cli/dist" = "src/_packaged_ui/cli/dist"
+"cli/package.json" = "src/_packaged_ui/cli/package.json"
+"web/dist" = "src/_packaged_ui/web/dist"
+"web/dist-server" = "src/_packaged_ui/web/dist-server"
+"web/package.runtime.json" = "src/_packaged_ui/web/package.json"
+"web/server/scripts/structure_processor.py" = "src/_packaged_ui/web/server/scripts/structure_processor.py"
 
 [tool.hatch.build.targets.sdist]
-include = [
-    "src/",
+only-include = [
+    "src",
     "bridge.py",
     "bridge_history.py",
-    "quasar_cli/",
-    "tests/",
+    "cli/dist",
+    "cli/package.json",
+    "web/dist",
+    "web/dist-server",
+    "web/package.runtime.json",
+    "web/server/scripts/structure_processor.py",
+    "tests",
     "LICENSE",
     "README.md",
     "requirements.txt",

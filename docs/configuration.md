@@ -38,6 +38,13 @@ Long-running Python check-ins are scheduled by the Operator per tool call throug
 
 When resuming from a checkpoint, `ACCURACY` and `GRANULARITY` are locked to the saved run values so an interrupted workflow continues with the same planning assumptions.
 
+In the Docker web UI, settings entered in the browser are also stored in
+`/workspace/.quasar_web_settings.json`. Because `/workspace` is the mounted
+Docker volume, model names, API endpoints, and API keys are restored before the
+first prompt after a container restart. The file is created with owner-only
+permissions (`0600`); protect the mounted workspace as you would any other
+credential store.
+
 ## OpenAI-compatible LLM endpoints
 
 QUASAR routes requests through an OpenAI-compatible HTTP client when:

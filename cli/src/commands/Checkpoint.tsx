@@ -3,8 +3,8 @@ import { Box, Text } from 'ink';
 import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
-import { fileURLToPath } from 'url';
 import { checkpointArtifactPath, checkpointDbPath, QUASAR_LOGS_DIR, resolveWorkspaceDir } from '../utils/envDefaults.js';
+import { resolvePythonCommand, resolveRuntimeRoot } from '../utils/runtimePaths.js';
 import { cliTheme } from '../ui/theme.js';
 
 interface CheckpointProps {
@@ -17,9 +17,7 @@ const CLEAR_PRESERVED_ENTRIES = new Set(['quasar_archive', 'docs']);
 const FRESH_PRESERVED_ENTRIES = new Set(['docs']);
 
 function projectRoot(): string {
-    const compiledRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
-    const candidates = [process.cwd(), compiledRoot, '/app'];
-    return candidates.find(candidate => fs.existsSync(path.join(candidate, 'bridge.py'))) || process.cwd();
+    return resolveRuntimeRoot();
 }
 
 function clearWorkspace(preservedEntries: Set<string>): void {
@@ -57,7 +55,7 @@ function isStrategistStageCheckpoint(): boolean {
     }
 
     const root = projectRoot();
-    const result = spawnSync('python3', ['-c', `
+    const result = spawnSync(resolvePythonCommand(), ['-c', `
 import os
 import sys
 

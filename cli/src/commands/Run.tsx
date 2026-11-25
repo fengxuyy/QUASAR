@@ -7,6 +7,7 @@ import { Box, Text, useApp, useStdout, Static, useInput } from 'ink';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import { resolveBridgePath, resolvePythonCommand } from '../utils/runtimePaths.js';
 
 // UI Components
 import PromptInput from '../ui/PromptInput.js';
@@ -294,28 +295,14 @@ const Run: React.FC<RunProps> = ({ args, flags }) => {
 
     // ========== BRIDGE ==========
     useEffect(() => {
-        let bridgePath = process.env.QUASAR_BRIDGE_PATH;
-        
-        if (!bridgePath) {
-            const candidates = [
-                path.resolve(process.cwd(), '../bridge.py'),
-                path.resolve(process.cwd(), 'bridge.py'),
-                '/app/bridge.py'
-            ];
-            for (const p of candidates) {
-                if (fs.existsSync(p)) {
-                    bridgePath = p;
-                    break;
-                }
-            }
-        }
+        const bridgePath = resolveBridgePath();
         
         if (!bridgePath) {
             setMessages(prev => [...prev, { role: 'system', content: `Error: Could not find bridge.py` }]);
             return;
         }
 
-        const child = spawn('python3', [bridgePath], {
+        const child = spawn(resolvePythonCommand(), [bridgePath], {
             cwd: path.dirname(bridgePath),
             stdio: ['pipe', 'pipe', 'pipe'],
             env: { ...process.env, SKIP_RAG: bridgeRestartCounter > 0 ? 'true' : 'false' }

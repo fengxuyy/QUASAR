@@ -4,10 +4,12 @@ Custom exceptions and error handling utilities.
 
 import re
 import time
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from ...tools import LOGS_DIR
 from .bridge import send_agent_event, send_json
+
+T = TypeVar("T")
 
 
 class StreamingTimeoutError(Exception):
@@ -25,7 +27,10 @@ class FatalAPIError(Exception):
     
     This exception signals that the run should be terminated immediately.
     """
-    pass
+
+    def __init__(self, message: str, *, agent: str = "system"):
+        super().__init__(message)
+        self.agent = agent
 
 
 # Try to import ValidationError from pydantic
@@ -158,48 +163,44 @@ def handle_api_retry(
         wait_seconds: Seconds to wait before retrying
         
     Returns:
-        bool: True if should retry, False if max retries exceeded or error is non-retriable
+        bool: True when the caller should retry.
+
+    Raises:
+        FatalAPIError: If retries are exhausted.
     """
     from .logging import _write_to_log
     
     error_str = str(error)
     
-    # Check if this is a non-retriable error (404 model not found, 401 unauthorized)
-    # These errors won't be fixed by retrying
-    is_non_retriable = bool(re.search(r'\b(404|401)\b', error_str))
-    
-    if is_non_retriable:
-        # Don't retry - send error immediately
-        _write_to_log(f"\n---\n\n**[{agent.upper()}] API Error:**\n\n> {error_str}\n\n")
-        
-        # Send error message to bridge for display in execution log
-        send_json("error", {"message": error_str})
-        
-        # Save usage stats before returning (system will exit)
-        _save_stats_on_system_interrupt()
-        return False
-    
-    # For retriable errors, proceed with retry logic
+    # Keep the run active for the configured retry budget, including errors
+    # such as 401/404. Users may correct a transient gateway/model mapping
+    # while the retry loop is active.
     error_msg = f"API connection error (attempt {current_count}/{max_retries}): {error_str}"
     _write_to_log(f"\n---\n\n**[{agent.upper()}] API Error:**\n\n> {error_msg}\n\n")
-    
-    # Send status update to Node.js CLI - this replaces the current tool status
-    retry_status = f"API Error - Retrying ({current_count}/{max_retries})..."
-    send_agent_event(agent, "update", retry_status)
-    
+
     if current_count >= max_retries:
         # Log final failure
         final_msg = f"System interrupted due to persistent API connection errors after {max_retries} retries."
         _write_to_log(f"\n---\n\n**[{agent.upper()}] Fatal Error:**\n\n> {final_msg}\n\n")
         
-        # Send error message to bridge for display in execution log
-        send_json("error", {"message": error_str})
-        
         # Save usage stats before raising (system will exit)
         _save_stats_on_system_interrupt()
         
         # Raise fatal error to terminate the run
-        raise FatalAPIError(final_msg)
+        raise FatalAPIError(
+            f"{final_msg}\n\nLast API error: {error_str}",
+            agent=agent,
+        )
+
+    # Send status update to Node.js CLI - this replaces the current tool status
+    retry_status = f"API Error - Retrying ({current_count}/{max_retries})..."
+    send_agent_event(
+        agent,
+        "update",
+        retry_status,
+        is_error=True,
+        output=error_str,
+    )
     
     # Wait before retry, but do not count retry backoff as active run time.
     from ...usage_tracker import begin_excluded_interval, end_excluded_interval
@@ -210,6 +211,34 @@ def handle_api_retry(
     finally:
         end_excluded_interval()
     return True
+
+
+def run_with_api_retries(
+    agent: str,
+    operation: Callable[[], T],
+    *,
+    max_retries: int = 3,
+    wait_seconds: int = 120,
+) -> T:
+    """Run one model operation with the shared API retry policy."""
+    api_error_count = 0
+
+    while True:
+        try:
+            return operation()
+        except FatalAPIError:
+            raise
+        except Exception as error:
+            if not is_api_connection_error(error):
+                raise
+            api_error_count += 1
+            handle_api_retry(
+                agent,
+                error,
+                api_error_count,
+                max_retries=max_retries,
+                wait_seconds=wait_seconds,
+            )
 
 
 def _save_stats_on_system_interrupt():

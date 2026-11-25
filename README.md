@@ -23,6 +23,8 @@ Quick links:
 
 ## Quick Start
 
+The **Web UI (`quasar --web`)** is the recommended way to use QUASAR, providing a browser-based dashboard with live execution logs, workspace and 3D structure browsing, run history and traces, an integrated terminal, and visual settings management. Interactive terminal (`quasar`) and headless (`quasar "..."`) modes are also available.
+
 QUASAR supports three deployment paths:
 
 - **Docker** is the recommended default for laptops and workstations.
@@ -36,6 +38,20 @@ Pull the image:
 ```bash
 docker pull fengxuyang/quasar:<tag>
 ```
+
+Launch the Web UI (Recommended):
+
+```bash
+docker run -it --rm \
+  -p 3001:3001 \
+  -e MODEL=<model_name> \
+  -e MODEL_API_KEY=<api_key> \
+  -v "<workspace_path>:/workspace" \
+  fengxuyang/quasar:<tag> \
+  quasar --web
+```
+
+> The Web UI listens on port `3001` and prints a tokenized URL (`http://127.0.0.1:3001/?token=<token>`) on startup. Pass `-e QUASAR_WEB_TOKEN=<token>` if you prefer a fixed access token, or configure `MODEL` and `MODEL_API_KEY` directly in the Web UI **Settings** tab after launch.
 
 Launch the interactive CLI:
 
@@ -90,7 +106,7 @@ singularity exec --cleanenv \
 Prerequisites:
 
 - Python 3.10 or newer
-- Node.js 20 or newer for the local interactive CLI
+- Node.js 20 or newer for the Web UI and interactive CLI
 - Scientific software installed separately as needed for your workflows
 
 Example setup:
@@ -103,7 +119,16 @@ pip install --upgrade pip
 pip install quasar-core
 ```
 
-Launch QUASAR:
+Launch the Web UI (Recommended):
+
+```bash
+export WORKSPACE_DIR=<workspace_directory>
+export MODEL=<model_name>
+export MODEL_API_KEY=<api_key>
+quasar --web
+```
+
+Launch the interactive CLI:
 
 ```bash
 export WORKSPACE_DIR=<workspace_directory>
@@ -119,7 +144,7 @@ export WORKSPACE_DIR=<workspace_directory>
 quasar "Your research prompt here"
 ```
 
-> Interactive sessions can fill missing `MODEL` and `MODEL_API_KEY` values through the built-in `\settings` panel. Headless runs should still provide required variables before launch.
+> In the Web UI (**Settings** tab) or interactive CLI (`\settings`), you can configure `MODEL` and `MODEL_API_KEY` after launch. Headless runs should provide required variables beforehand.
 
 > The first run in a new workspace can be slower because QUASAR may prepare documentation assets, retrieval indexes, and embedding resources.
 
@@ -127,6 +152,7 @@ quasar "Your research prompt here"
 
 | Command | What it does |
 | --- | --- |
+| `quasar --web` | Launches the browser-based Web UI dashboard on port 3001 *(Recommended)*. |
 | `quasar` | Starts the interactive terminal UI. |
 | `quasar "..."` | Runs a direct prompt in headless mode. |
 | `quasar --resume` | Resumes the active checkpoint. |
@@ -167,6 +193,8 @@ While using the interactive CLI, type `\` at the start of the input box to open 
 | `PMG_MAPI_KEY` | Materials Project API key for `pymatgen`. | None |
 | `HF_TOKEN` | Optional Hugging Face token for authenticated retrieval access. | None |
 | `IF_RESTART` | Resume from the last checkpoint. | `false` |
+| `QUASAR_WEB_TOKEN` | Access token for the Web UI (`quasar --web`). Auto-generated per session if unset. | Generated |
+| `QUASAR_WEB_PORT` | Port for the Web UI server. | `3001` |
 
 Long-running Python executions use agent-scheduled check-ins via `execute_python(check_in_after=...)` and are rescheduled after each check-in via `continue_execution(next_check_in_after=...)`.
 

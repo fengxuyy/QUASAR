@@ -108,6 +108,12 @@ def get_docs_path(*args, **kwargs):
     return _get_docs_path(*args, **kwargs)
 
 
+def link_cached_resources(*args, **kwargs):
+    from .resource_cache import link_cached_resources as _link_cached_resources
+
+    return _link_cached_resources(*args, **kwargs)
+
+
 __all__ = [
     "initialize_embeddings",
     "initialize_rag",
@@ -117,6 +123,7 @@ __all__ = [
     "download_docs",
     "is_docs_available",
     "get_docs_path",
+    "link_cached_resources",
     "get_vectorstore",
     "set_vectorstore",
     "get_embeddings",

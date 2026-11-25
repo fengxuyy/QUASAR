@@ -126,8 +126,9 @@ def download_index(
                 status_tracker("Extracting RAG index...")
             _log(f"Extracting index from {archive_path}")
             
+            from src.utils.safe_tar import safe_extractall
             with tarfile.open(archive_path, "r:gz") as tar:
-                tar.extractall(path=index_path)
+                safe_extractall(tar, index_path)
             
         except ImportError:
             # Fallback to direct URL download
@@ -147,8 +148,9 @@ def download_index(
             if status_tracker:
                 status_tracker("Extracting RAG index...")
             
+            from src.utils.safe_tar import safe_extractall
             with tarfile.open(fileobj=io.BytesIO(response.content), mode="r:gz") as tar:
-                tar.extractall(path=index_path)
+                safe_extractall(tar, index_path)
         
         # Verify download
         if is_index_valid(workspace_dir):

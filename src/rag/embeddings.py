@@ -68,7 +68,24 @@ else:
     BGEEmbeddings = None
 
 
-def _create_embeddings(device: str):
+def _has_local_model_snapshot(cache_dir: Optional[Path]) -> bool:
+    """Return True if HuggingFace cache already holds a snapshot of MODEL_NAME."""
+    if not cache_dir:
+        return False
+    repo_slug = f"models--{MODEL_NAME.replace('/', '--')}"
+    for candidate in (
+        cache_dir / "hub" / repo_slug / "snapshots",
+        cache_dir / repo_slug / "snapshots",
+    ):
+        try:
+            if candidate.is_dir() and any(candidate.iterdir()):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _create_embeddings(device: str, offline: bool = False):
     """Create embeddings instance with BGE model.
     
     Suppresses stdout/stderr during creation to avoid interfering with CLI spinners.
@@ -92,6 +109,12 @@ def _create_embeddings(device: str):
     for name in _noisy_loggers:
         logging.getLogger(name).setLevel(logging.ERROR)
 
+    prev_hf_offline = os.environ.get("HF_HUB_OFFLINE")
+    prev_tf_offline = os.environ.get("TRANSFORMERS_OFFLINE")
+    if offline:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
     try:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             return BGEEmbeddings(
@@ -100,6 +123,15 @@ def _create_embeddings(device: str):
                 encode_kwargs={'normalize_embeddings': True}
             )
     finally:
+        if offline:
+            if prev_hf_offline is None:
+                os.environ.pop("HF_HUB_OFFLINE", None)
+            else:
+                os.environ["HF_HUB_OFFLINE"] = prev_hf_offline
+            if prev_tf_offline is None:
+                os.environ.pop("TRANSFORMERS_OFFLINE", None)
+            else:
+                os.environ["TRANSFORMERS_OFFLINE"] = prev_tf_offline
         for name, level in _saved_levels.items():
             logging.getLogger(name).setLevel(level)
 
@@ -119,8 +151,11 @@ def initialize_embeddings(workspace_dir: Optional[Path] = None, status_tracker=N
     if _embeddings is not None:
         return _embeddings
     
-    # Setup cache directory
+    cache_folder: Optional[Path] = None
+    # Setup cache directory (link pre-cached image weights if present)
     if workspace_dir:
+        from .resource_cache import link_cached_resources
+        link_cached_resources(workspace_dir, names=(".hf_cache",))
         cache_folder = workspace_dir / ".hf_cache"
         expected_cache = str(cache_folder)
         if os.environ.get("HF_HOME") != expected_cache:
@@ -128,6 +163,8 @@ def initialize_embeddings(workspace_dir: Optional[Path] = None, status_tracker=N
             os.environ["HF_HOME"] = expected_cache
             os.environ["TRANSFORMERS_CACHE"] = expected_cache
             os.environ["SENTENCE_TRANSFORMERS_HOME"] = expected_cache
+    elif os.environ.get("HF_HOME"):
+        cache_folder = Path(os.environ["HF_HOME"])
     
     device = _detect_device(status_tracker)
     device_str = "GPU" if device == 'cuda' else "CPU"
@@ -136,9 +173,17 @@ def initialize_embeddings(workspace_dir: Optional[Path] = None, status_tracker=N
         status_tracker(f"Loading embedding model ({device_str})...")
     
     _log(f"Loading {MODEL_NAME} on {device}")
+    use_offline_first = _has_local_model_snapshot(cache_folder)
     
     try:
-        _embeddings = _create_embeddings(device)
+        if use_offline_first:
+            try:
+                _embeddings = _create_embeddings(device, offline=True)
+            except Exception as offline_err:
+                _log(f"Offline cache load failed, falling back to online: {offline_err}")
+                _embeddings = _create_embeddings(device, offline=False)
+        else:
+            _embeddings = _create_embeddings(device, offline=False)
         _log(f"Embeddings loaded successfully on {device}")
         
     except Exception as e:
@@ -149,7 +194,7 @@ def initialize_embeddings(workspace_dir: Optional[Path] = None, status_tracker=N
             if status_tracker:
                 status_tracker("Falling back to CPU...")
             try:
-                _embeddings = _create_embeddings('cpu')
+                _embeddings = _create_embeddings('cpu', offline=False)
                 _log("Embeddings loaded on CPU")
             except Exception as e2:
                 _log(f"Failed to load embeddings on CPU: {e2}")

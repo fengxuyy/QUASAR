@@ -28,13 +28,13 @@ from .utils import (
     log_tool_call,
     log_result,
     is_api_connection_error,
-    handle_api_retry,
+    run_with_api_retries,
     MAX_LOG_CHARS,
     truncate_content,
     send_agent_event,
     send_text_stream,
     send_thought_stream,
-    APIConnectionError,
+    FatalAPIError,
     extract_tool_call_info,
     extract_target_name,
     extract_project_request,
@@ -336,9 +336,21 @@ def evaluator_loop_node(state: State, llm_with_tools=None) -> State:
             accumulated_thoughts += text
             send_thought_stream("evaluator", accumulated_thoughts, is_complete=False)
         
-        full_content, tool_calls, _, _ = stream_with_token_tracking(
-            llm_with_tools, evaluation_messages, on_content=on_content, on_thought=on_thought,
-            agent_name='evaluator'
+        def invoke_evaluator():
+            nonlocal accumulated_text, accumulated_thoughts
+            accumulated_text = ""
+            accumulated_thoughts = ""
+            return stream_with_token_tracking(
+                llm_with_tools,
+                evaluation_messages,
+                on_content=on_content,
+                on_thought=on_thought,
+                agent_name='evaluator',
+            )
+
+        full_content, tool_calls, _, _ = run_with_api_retries(
+            "evaluator",
+            invoke_evaluator,
         )
         
         # Send completion signal for text streaming
@@ -546,12 +558,15 @@ def evaluator_loop_node(state: State, llm_with_tools=None) -> State:
                 "evaluation_messages": [],
             }
         
-        evaluation_messages, did_summarize_context, effective_model, trigger_input = maybe_summarize_messages(
-            evaluation_messages,
-            llm_with_tools,
-            agent_name='evaluator',
-            runtime_events=prompt_runtime_events,
-            task_index=current_task_index,
+        evaluation_messages, did_summarize_context, effective_model, trigger_input = run_with_api_retries(
+            "evaluator",
+            lambda: maybe_summarize_messages(
+                evaluation_messages,
+                llm_with_tools,
+                agent_name='evaluator',
+                runtime_events=prompt_runtime_events,
+                task_index=current_task_index,
+            ),
         )
         if did_summarize_context:
             from ..debug_logger import log_custom as _log
@@ -564,10 +579,11 @@ def evaluator_loop_node(state: State, llm_with_tools=None) -> State:
         
         return {"evaluation_messages": evaluation_messages}
 
+    except FatalAPIError:
+        raise
     except Exception as e:
         if is_api_connection_error(e):
-            # Let graph handle retry by returning with current state
-            raise APIConnectionError(f"API connection error: {str(e)}")
+            raise
         else:
             import traceback
             error_trace = traceback.format_exc()

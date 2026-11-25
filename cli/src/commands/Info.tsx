@@ -2,10 +2,11 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import os from 'os';
 import { cliTheme } from '../ui/theme.js';
+import { resolveWorkspaceDir } from '../utils/envDefaults.js';
 
 const Info: React.FC = () => {
     const infoData = {
-        "Workspace": process.cwd(),
+        "Workspace": resolveWorkspaceDir(),
         "Node Version": process.version,
         "Platform": os.platform(),
         "Arch": os.arch(),

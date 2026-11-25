@@ -3,26 +3,17 @@ import React from 'react';
 import { render } from 'ink';
 import meow from 'meow';
 import { createRequire } from 'module';
+import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import App from './app.js';
 import { applyDefaultEnv, checkpointDbPath, resolveWorkspaceDir } from './utils/envDefaults.js';
 import { normalizeReportCommand, reportCommandHelp } from './utils/reportFiles.js';
 import { parseCliCommand } from './utils/commandRegistry.js';
 
-// In dev, read version from package.json. In the esbuild bundle, QUASAR_CLI_VERSION
-// is replaced at build time by the `define` option; the try/catch handles the dev path
-// where the define hasn't been applied and package.json is available.
-declare const QUASAR_CLI_VERSION: string | undefined;
-let packageVersion = typeof QUASAR_CLI_VERSION !== 'undefined' ? QUASAR_CLI_VERSION : '0.0.0';
-if (packageVersion === '0.0.0') {
-	try {
-		const require = createRequire(import.meta.url);
-		packageVersion = require('../package.json').version;
-	} catch {
-		// package.json not available (bundled mode) — version stays at 0.0.0
-	}
-}
+const require = createRequire(import.meta.url);
+const { version: packageVersion } = require('../package.json');
 const rawArgs = process.argv.slice(2);
 
 const allowedLongFlags = new Set([
@@ -34,7 +25,7 @@ const allowedLongFlags = new Set([
 	'--history',
 	'--config',
 	'--info',
-
+	'--web',
 	'--no-rag',
 ]);
 
@@ -65,6 +56,7 @@ const cli = meow(
 	  $ quasar --history
 	  $ quasar --config [show|validate]
 	  $ quasar --info
+	  $ quasar --web
 	  $ quasar \\execution-overview
 	  $ quasar \\usage-report
 	  $ quasar \\revert <task>
@@ -77,6 +69,7 @@ const cli = meow(
 	  --history   Show per-task run history
 	  --config    Configuration management commands
 	  --info      Show system information
+	  --web       Launch the QUASAR Web UI
 	  --version   Show version information
 	  --no-rag    Disable RAG functionality (run)
 
@@ -92,6 +85,7 @@ const cli = meow(
 	  $ quasar --clear
 	  $ quasar --fresh
 	  $ quasar --history
+	  $ quasar --web
 	  $ quasar \\usage-report
 	  $ quasar \\revert 2
 	  $ quasar --config validate
@@ -122,7 +116,10 @@ const cli = meow(
 			noRag: {
 				type: 'boolean',
 			},
+			web: {
+				type: 'boolean',
 			},
+		},
 	},
 );
 
@@ -133,7 +130,7 @@ if (resumeFromFlag) {
 cli.flags.restart = resumeFromFlag;
 
 const commandFlags = [
-
+	{ flag: 'web', command: 'web' },
 	{ flag: 'clear', command: 'clear' },
 	{ flag: 'fresh', command: 'fresh' },
 	{ flag: 'history', command: 'history' },
@@ -186,7 +183,85 @@ if (command === 'run') {
 // Determine if we're in non-interactive mode (direct prompt passed)
 const isHeadless = command === 'run' && args.length > 0 && !inlineCliCommand;
 
-if (isHeadless) {
+function firstExistingPath(paths: string[]): string | null {
+	return paths.find(candidate => fs.existsSync(candidate)) || null;
+}
+
+function launchWebUi() {
+	console.log('Starting QUASAR Web UI...');
+
+	const cliFile = fileURLToPath(import.meta.url);
+	const cliDir = path.dirname(cliFile);
+	const configuredServer = (process.env.QUASAR_WEB_SERVER_ENTRY || '').trim();
+	const possibleCompiledServers = [
+		configuredServer,
+		'/app/web/dist-server/index.js',
+		path.join(process.cwd(), 'web/dist-server/index.js'),
+		path.join(cliDir, '../../web/dist-server/index.js'),
+	].filter(Boolean);
+	const possibleSourceServers = [
+		path.join(process.cwd(), 'web/server/index.ts'),
+		path.join(cliDir, '../../web/server/index.ts'),
+	];
+
+	const compiledServer = firstExistingPath(possibleCompiledServers);
+	const sourceServer = firstExistingPath(possibleSourceServers);
+	let launchCommand = 'node';
+	let launchArgs: string[];
+	let serverScript: string;
+
+	if (compiledServer) {
+		serverScript = compiledServer;
+		launchArgs = [serverScript];
+	} else {
+		if (!sourceServer) {
+			console.error('\x1b[31m✗ Web UI Server Not Found\x1b[0m');
+			console.error('\x1b[90mExpected web/dist-server/index.js or web/server/index.ts.\x1b[0m');
+			console.error('\x1b[90mBuild the web app first, or run this command from the repository root.\x1b[0m');
+			process.exit(1);
+		}
+		serverScript = sourceServer;
+		console.log('Compiled web server not found, using the TypeScript source server.');
+
+		const tsxBin = firstExistingPath([
+			path.join(process.cwd(), 'web/node_modules/.bin/tsx'),
+			path.join(cliDir, '../../web/node_modules/.bin/tsx'),
+		]);
+
+		if (tsxBin) {
+			launchCommand = tsxBin;
+			launchArgs = [serverScript];
+		} else {
+			launchCommand = 'npx';
+			launchArgs = ['tsx', serverScript];
+		}
+	}
+
+	console.log(`Launching Web UI server from ${serverScript}`);
+
+	const webProcess = spawn(launchCommand, launchArgs, {
+		stdio: 'inherit',
+		env: {
+			...process.env,
+			NODE_ENV: 'production',
+			SERVE_STATIC: 'true',
+		},
+	});
+
+	webProcess.on('error', error => {
+		console.error('\x1b[31m✗ Failed to Launch Web UI\x1b[0m');
+		console.error(`\x1b[90m${error.message}\x1b[0m`);
+		process.exit(1);
+	});
+
+	webProcess.on('close', code => {
+		process.exit(code ?? 0);
+	});
+}
+
+if (command === 'web') {
+	launchWebUi();
+} else if (isHeadless) {
 	// Use headless mode for direct prompts - simple console output
 	import('./commands/HeadlessRun.js').then(({ runHeadless }) => {
 		runHeadless(args.join(' '), cli.flags);

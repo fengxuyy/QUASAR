@@ -48,6 +48,20 @@ def test_resume_steering_allowed_for_operator_activity_without_next_node():
     assert checkpoint_allows_resume_steering((), state_values) is True
 
 
+def test_resume_steering_allowed_for_interrupted_task_with_empty_next():
+    """Hard interrupts can leave next empty while operator task context remains."""
+    state_values = {
+        "plan": ["Task 1: Continue current simulation"],
+        "completed_steps": [],
+        "current_task_messages": [
+            HumanMessage(content="Run the current simulation task."),
+        ],
+        "files_at_task_start": ["input.in"],
+    }
+
+    assert checkpoint_allows_resume_steering((), state_values) is True
+
+
 def test_resume_steering_not_allowed_for_evaluator_checkpoint_with_operator_history():
     state_values = {
         "plan": ["Task 1: Continue current simulation"],

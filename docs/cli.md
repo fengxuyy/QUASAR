@@ -19,6 +19,7 @@ permalink: /cli/
 | `quasar --config` | Shows current configuration values. |
 | `quasar --config validate` | Verifies required configuration such as `MODEL_API_KEY`. |
 | `quasar --info` | Prints system and environment context such as workspace path and platform. |
+| `quasar --web` | Launches the browser-based Web UI server on port 3001. |
 | `quasar --no-rag "..."` | Runs without documentation retrieval for that specific prompt. |
 | `quasar \execution-overview` | Prints the current or latest archived execution overview report. |
 | `quasar \usage-report` | Prints the current or latest archived usage report. |

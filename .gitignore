@@ -11,10 +11,18 @@ __pycache__/
 .env
 .env.*
 .venv/
+app-cred-*.sh
+*-openrc.sh
 
 # Build artifacts
 build/
 dist/
+/web/release/
+/web/worker-runtime/
+/web/worker-engine-cache/
+/web/worker-resource-cache/
+/web/quasar_cloud.sqlite*
+/web/.env.cloud.local
 *.egg-info/
 *.whl
 
@@ -29,8 +37,6 @@ dist/
 # Misc
 .DS_Store
 cli/node_modules
-cli/dist
-quasar_cli/cli_dist/
 
 # Jekyll
 docs/_site/

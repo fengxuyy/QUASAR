@@ -74,7 +74,22 @@ def checkpoint_allows_resume_steering(next_nodes, state_values: dict | None = No
     if not isinstance(state_values, dict):
         return False
 
-    return _has_operator_activity(state_values)
+    if _has_operator_activity(state_values):
+        return True
+
+    # Hard interrupts can leave `next` empty while task context already exists.
+    # If a plan is still incomplete and operator task context or workspace
+    # snapshots are present, allow steering so the web resume box stays editable.
+    plan = state_values.get("plan") or []
+    completed_steps = state_values.get("completed_steps") or []
+    if not plan or len(completed_steps) >= len(plan):
+        return False
+    if state_values.get("evaluation_messages"):
+        return False
+    if state_values.get("current_task_messages") or state_values.get("files_at_task_start"):
+        return True
+
+    return False
 
 
 def checkpoint_is_strategist_stage(next_nodes, state_values: dict | None = None) -> bool:

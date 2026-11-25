@@ -125,7 +125,7 @@ def send_agent_event(
         event: Event type (e.g., 'step_complete', 'update', 'start', 'complete')
         status: Status text to display
         is_error: Whether this event represents an error (for step_complete display)
-        output: Optional output text to show in collapsible section (for step_complete events)
+        output: Optional output text to show in the event's collapsible section
         user_feedback: Optional user request (e.g. plan revision feedback for the web UI)
         tool_name: Optional tool id for error events (e.g. execute_python for validation failures)
     """

@@ -52,15 +52,60 @@ def _resolve_path(file_path: str) -> Path:
     return Path(file_path) if os.path.isabs(file_path) else WORKSPACE_DIR / file_path
 
 
+def _allowed_external_roots() -> List[Path]:
+    """Extra realpath roots workspace symlinks may target (shared docs/RAG cache).
+
+    Matches web/server/pathSecurity.ts allowedExternalRoots so agent tools can
+    read ``docs/`` / ``.rag_index`` when they are symlinks into
+    QUASAR_RESOURCE_CACHE rather than real directories under WORKSPACE_DIR.
+    """
+    roots: List[Path] = []
+    for key in ("QUASAR_RESOURCE_CACHE",):
+        value = (os.getenv(key) or "").strip()
+        if not value:
+            continue
+        candidate = Path(value)
+        try:
+            roots.append(candidate.resolve())
+        except OSError:
+            roots.append(candidate)
+    return roots
+
+
+def _is_path_inside(base: Path, target: Path, extra_roots: Optional[List[Path]] = None) -> bool:
+    """Return True if target is base or a descendant (no sibling-prefix bypass).
+
+    Also allows targets under shared resource-cache roots so symlink-backed
+    ``docs/`` remains readable by agent tools.
+    """
+    try:
+        target.resolve().relative_to(base.resolve())
+        return True
+    except (ValueError, OSError):
+        pass
+
+    try:
+        target_resolved = target.resolve()
+    except OSError:
+        return False
+
+    roots = extra_roots if extra_roots is not None else _allowed_external_roots()
+    for root in roots:
+        try:
+            target_resolved.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 def _validate_workspace_path(path: Path) -> Optional[str]:
     """Validate that a path is within the workspace directory.
     
     Returns:
         Error message if invalid, None if valid
     """
-    resolved = path.resolve()
-    workspace_resolved = WORKSPACE_DIR.resolve()
-    if not str(resolved).startswith(str(workspace_resolved)):
+    if not _is_path_inside(WORKSPACE_DIR, path):
         return "Error: Cannot access files outside workspace directory."
     return None
 

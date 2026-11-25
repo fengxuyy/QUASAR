@@ -4,7 +4,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
-import fs from 'fs';
+import { resolveBridgePath, resolvePythonCommand } from '../utils/runtimePaths.js';
 
 interface BridgeOptions {
     onMessage: (msg: any) => void;
@@ -22,30 +22,14 @@ export function useBridge({ onMessage, onError, restartCounter }: BridgeOptions)
     const stdoutBufferRef = useRef<string>('');
 
     useEffect(() => {
-        // Try multiple paths for bridge.py
-        let bridgePath = process.env.QUASAR_BRIDGE_PATH;
+        const bridgePath = resolveBridgePath();
         
         if (!bridgePath) {
-            const candidates = [
-                path.resolve(process.cwd(), '../bridge.py'),
-                path.resolve(process.cwd(), 'bridge.py'),
-                '/app/bridge.py'
-            ];
-            
-            for (const p of candidates) {
-                if (fs.existsSync(p)) {
-                    bridgePath = p;
-                    break;
-                }
-            }
-        }
-        
-        if (!bridgePath) {
-            onError(`Error: Could not find bridge.py in ${process.cwd()} or ../`);
+            onError(`Error: Could not find bridge.py in ${process.cwd()} or configured runtime root`);
             return;
         }
 
-        const child = spawn('python3', [bridgePath], {
+        const child = spawn(resolvePythonCommand(), [bridgePath], {
             cwd: path.dirname(bridgePath),
             stdio: ['pipe', 'pipe', 'inherit'],
             env: {

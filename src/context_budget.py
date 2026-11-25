@@ -45,16 +45,14 @@ def get_context_threshold_ratio(value: Optional[str] = None) -> float:
     return CONTEXT_THRESHOLD_RATIOS[get_context_threshold_level(value)]
 
 
-def get_model_max_context(model_name: str) -> Optional[int]:
-    """Return the max context length for a model, or None if not registered."""
-    return MODEL_MAX_CONTEXT.get((model_name or "").lower())
+def get_model_max_context(model_name: str) -> int:
+    """Return the max context length for a model, defaulting to 400,000 if not registered."""
+    return MODEL_MAX_CONTEXT.get((model_name or "").lower(), 400_000)
 
 
-def get_restricted_context_limit(model_name: str, threshold_level: Optional[str] = None) -> Optional[int]:
+def get_restricted_context_limit(model_name: str, threshold_level: Optional[str] = None) -> int:
     """Return the effective context-compression limit for a model."""
     max_context = get_model_max_context(model_name)
-    if max_context is None:
-        return None
     return int(max_context * get_context_threshold_ratio(threshold_level))
 
 
@@ -71,23 +69,11 @@ def build_context_usage_snapshot(
     threshold_ratio = CONTEXT_THRESHOLD_RATIOS[normalized_threshold_level]
     effective_model = model_name or os.getenv("MODEL", "")
     max_context_tokens = get_model_max_context(effective_model)
-    threshold_tokens = (
-        int(max_context_tokens * threshold_ratio)
-        if max_context_tokens is not None
-        else None
-    )
+    threshold_tokens = int(max_context_tokens * threshold_ratio)
 
-    usage_percent = None
-    if threshold_tokens:
-        usage_percent = round((normalized_input_tokens / threshold_tokens) * 100, 1)
-
-    max_context_percent = None
-    if max_context_tokens:
-        max_context_percent = round((normalized_input_tokens / max_context_tokens) * 100, 1)
-
-    remaining_tokens = None
-    if threshold_tokens is not None:
-        remaining_tokens = max(threshold_tokens - normalized_input_tokens, 0)
+    usage_percent = round((normalized_input_tokens / threshold_tokens) * 100, 1) if threshold_tokens else 0
+    max_context_percent = round((normalized_input_tokens / max_context_tokens) * 100, 1) if max_context_tokens else 0
+    remaining_tokens = max(threshold_tokens - normalized_input_tokens, 0)
 
     return {
         "agent": agent_name,
@@ -101,6 +87,6 @@ def build_context_usage_snapshot(
         "usage_percent": usage_percent,
         "max_context_percent": max_context_percent,
         "remaining_tokens": remaining_tokens,
-        "is_supported_model": max_context_tokens is not None,
-        "is_over_limit": bool(threshold_tokens is not None and normalized_input_tokens >= threshold_tokens),
+        "is_supported_model": True,
+        "is_over_limit": bool(normalized_input_tokens >= threshold_tokens),
     }

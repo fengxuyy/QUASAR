@@ -469,6 +469,7 @@ from src.llm_config import initialize_llm, initialize_llm_for_agent
 from src.usage_tracker import generate_report, reset as reset_usage_tracker
 from src.tools.base import LOGS_DIR, WORKSPACE_DIR
 from src.artifacts import latest_archive_run_dir
+from src.agents.utils import FatalAPIError
 
 # Mutable LLM handles (rebuilt after CLI `update_env` for model-related keys).
 _bridge_llm_state = {"llm": None, "agent_llms": None}
@@ -605,6 +606,8 @@ def _clear_auto_improve_state_if_terminal() -> None:
 
 
 def _done_status_for_result(run_result, run_error: Optional[Exception]) -> str:
+    if isinstance(run_error, FatalAPIError):
+        return "interrupted"
     if run_error:
         return "error"
     if getattr(run_result, "status", "") == "fail":
@@ -655,6 +658,14 @@ def _execute_prompt_sequence(prompt: str, restart: bool) -> None:
             send_system_status("completed")
             return
         raise
+    except FatalAPIError as e:
+        run_error = e
+        _clear_auto_improve_state_if_terminal()
+        send_json("error", {
+            "message": str(e),
+            "agent": e.agent,
+            "kind": "api",
+        })
     except Exception as e:
         run_error = e
         _clear_auto_improve_state_if_terminal()

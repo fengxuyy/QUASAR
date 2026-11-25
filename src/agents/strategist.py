@@ -31,6 +31,7 @@ from .utils import (
     _extract_text,
     is_api_connection_error,
     handle_api_retry,
+    run_with_api_retries,
     log_agent_header,
     log_tool_call,
     MAX_LOG_CHARS,
@@ -38,7 +39,7 @@ from .utils import (
     send_agent_event,
     send_plan_stream,
     send_thought_stream,
-    APIConnectionError,
+    FatalAPIError,
     extract_tool_call_info,
     extract_target_name,
     execute_tool_with_logging,
@@ -743,20 +744,13 @@ def strategist_initial_node(
                 
                 if is_api_connection_error(e):
                     api_error_count += 1
-                    if handle_api_retry("strategist", e, api_error_count, max_api_retries):
-                        continue
-                    # handle_api_retry already sent error to UI, return error state
-                    error_state = {
-                        'messages': [AIMessage(content=f"API Error: {str(e)}")],
-                        'plan': [],
-                        'completed_steps': [],
-                        'step_results': {},
-                        'initial_plan_content': '',
-                        'is_replanning': is_replanning,
-                        **prompt_metadata,
-                    }
-                    log_strategist_return(error_state)
-                    return error_state
+                    handle_api_retry(
+                        "strategist",
+                        e,
+                        api_error_count,
+                        max_api_retries,
+                    )
+                    continue
                 else:
                     error_state = {
                         'messages': [AIMessage(content=f"Error in planning: {str(e)}")],
@@ -782,10 +776,12 @@ def strategist_initial_node(
         log_strategist_return(final_error_state)
         return final_error_state
         
+    except FatalAPIError:
+        raise
     except Exception as e:
         log_exception("STRATEGIST", e, {"outer_exception": True})
         if is_api_connection_error(e):
-            raise e
+            raise
         error_state = {
             'messages': [AIMessage(content=f"Error in planning: {str(e)}")],
             'plan': [],
@@ -853,12 +849,15 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
     
     try:
         # Perform self-review and get improved plan
-        improved_content, improved_response = _revise_plan(
-            messages=messages,
-            llm=llm,
-            review_prompt=review_prompt,
-            status_text=status_text,
-            is_replanning=is_replanning,
+        improved_content, improved_response = run_with_api_retries(
+            "strategist",
+            lambda: _revise_plan(
+                messages=messages,
+                llm=llm,
+                review_prompt=review_prompt,
+                status_text=status_text,
+                is_replanning=is_replanning,
+            ),
         )
         
         # Extract final plan from improved content
@@ -915,8 +914,13 @@ def strategist_review_node(state: State, llm: ChatOpenAI) -> State:
         log_strategist_return(return_state)
         return return_state
         
+    except FatalAPIError:
+        raise
     except Exception as e:
         log_exception("STRATEGIST_REVIEW", e, {"context": "self-review failed"})
+
+        if is_api_connection_error(e):
+            raise
         
         # Fall back to using initial plan if review fails
         plan = _extract_plan_from_content(latest_plan_content)

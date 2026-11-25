@@ -55,7 +55,7 @@ def _extract_summary_text(content_obj) -> str:
     return str(content_obj)
 
 
-def _get_model_max_context(model_name: str) -> int | None:
+def _get_model_max_context(model_name: str) -> int:
     """Backward-compatible wrapper around the shared model-context lookup."""
     return get_model_max_context(model_name)
 
@@ -80,9 +80,6 @@ def should_summarize_context(input_tokens: int, model_name: Optional[str] = None
         model_name = os.getenv("MODEL", "")
     
     max_context = _get_model_max_context(model_name)
-    if max_context is None:
-        return False
-    
     threshold = int(max_context * get_context_threshold_ratio())
     return input_tokens >= threshold
 

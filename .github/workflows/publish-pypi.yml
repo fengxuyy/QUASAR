@@ -5,66 +5,81 @@ on:
     types: [published]
   workflow_dispatch:
 
-permissions:
-  contents: read
-
-
 jobs:
   build:
-    name: Build distribution
+    name: Build sdist and wheel
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build CLI and Web UI assets
+        run: |
+          (cd cli && npm ci && npm run build)
+          (cd web && npm ci && npm run build)
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Build CLI bundle
-        working-directory: cli
+      - name: Build Python distributions
         run: |
-          npm ci
-          npm run build:bundle
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check dist/*
 
-      - name: Copy CLI bundle into Python package
+      - name: Verify packaged UI assets in wheel
         run: |
-          mkdir -p quasar_cli/cli_dist
-          cp cli/dist/cli.bundle.mjs quasar_cli/cli_dist/
+          python -c "
+          import glob, zipfile
+          wheels = glob.glob('dist/quasar_core-*.whl')
+          assert len(wheels) == 1, f'Expected 1 wheel, found {wheels}'
+          with zipfile.ZipFile(wheels[0]) as z:
+              names = set(z.namelist())
+          required = [
+              'bridge.py',
+              'src/cli_launcher.py',
+              'src/_packaged_ui/cli/dist/cli.js',
+              'src/_packaged_ui/cli/package.json',
+              'src/_packaged_ui/web/dist/index.html',
+              'src/_packaged_ui/web/dist-server/index.js',
+              'src/_packaged_ui/web/package.json',
+              'src/_packaged_ui/web/server/scripts/structure_processor.py',
+          ]
+          missing = [r for r in required if r not in names]
+          assert not missing, f'Missing packaged assets: {missing}'
+          print(f'Verified {len(names)} files in {wheels[0]}')
+          "
 
-      - name: Install build tools
-        run: pip install build
-
-      - name: Build sdist and wheel
-        run: python -m build
-
-      - name: Upload build artifacts
+      - name: Upload distribution artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: dist
+          name: python-package-distributions
           path: dist/
 
-  publish-pypi:
+  publish:
     name: Publish to PyPI
-    needs: build
+    needs: [build]
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/quasar-core
+    permissions:
+      id-token: write
+
     steps:
-      - name: Download build artifacts
+      - name: Download distribution artifacts
         uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: python-package-distributions
           path: dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          user: __token__
-          password: ${{ secrets.PYPI_API_TOKEN || secrets.PYPI_TOKEN }}
-
-
-

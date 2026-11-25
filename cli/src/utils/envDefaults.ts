@@ -63,12 +63,23 @@ export function checkpointSettingsPath(workspaceDir: string): string {
 }
 
 export function resolveWorkspaceDir(): string {
-    const candidates = [process.env.WORKSPACE_DIR, PROJECT_WORKSPACE_DIR, '/workspace'].filter(
-        (dir): dir is string => Boolean(dir),
-    );
+    const configured = (process.env.WORKSPACE_DIR || '').trim();
+    if (configured) {
+        return configured;
+    }
+
+    const repoBridge = path.resolve(PROJECT_WORKSPACE_DIR, '../bridge.py');
+    const candidates = [
+        fs.existsSync(repoBridge) ? PROJECT_WORKSPACE_DIR : '',
+        '/workspace',
+    ].filter((dir): dir is string => Boolean(dir));
 
     const existingDir = candidates.find(dir => fs.existsSync(dir));
-    return existingDir || process.env.WORKSPACE_DIR || PROJECT_WORKSPACE_DIR;
+    if (existingDir) {
+        return existingDir;
+    }
+
+    return fs.existsSync(repoBridge) ? PROJECT_WORKSPACE_DIR : process.cwd();
 }
 
 export function applyDefaultEnv() {

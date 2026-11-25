@@ -47,6 +47,7 @@ from .utils import (
     write_execution_log,
     is_api_connection_error,
     handle_api_retry,
+    run_with_api_retries,
     MAX_LOG_CHARS,
     truncate_content,
     send_agent_event,
@@ -54,6 +55,7 @@ from .utils import (
     send_text_stream,
     send_thought_stream,
     APIConnectionError,
+    FatalAPIError,
     extract_tool_call_info,
     extract_target_name,
     get_execute_python_status,
@@ -390,6 +392,25 @@ def operator_node(state: State, llm_with_tools, all_tools) -> State:
             })
     
     _update_operator_status = update_operator_status
+
+    # Sanitize consecutive trailing AIMessages to prevent API errors
+    # Some LLM APIs (e.g. GLM) reject: "Cannot have 2 or more assistant messages at the end of the list."
+    # This can happen when the operator returns an AIMessage without tool calls and the graph re-enters.
+    trailing_ai_count = 0
+    for msg in reversed(current_task_messages):
+        if isinstance(msg, AIMessage):
+            trailing_ai_count += 1
+        else:
+            break
+    if trailing_ai_count >= 2:
+        # Merge all trailing AIMessages into the last one
+        non_trailing = current_task_messages[:-trailing_ai_count]
+        trailing_msgs = current_task_messages[-trailing_ai_count:]
+        merged_content = "\n\n".join(
+            _extract_text(getattr(m, "content", "")) for m in trailing_msgs if _extract_text(getattr(m, "content", ""))
+        )
+        current_task_messages = non_trailing + [AIMessage(content=merged_content)] if merged_content else non_trailing
+        log_custom("OPERATOR", f"Merged {trailing_ai_count} trailing AIMessages to prevent API error")
     
     # Write the exact messages being sent to the LLM before the call
     _write_input_messages(current_task_messages, "OPERATOR", current_task_index)
@@ -515,37 +536,29 @@ def operator_node(state: State, llm_with_tools, all_tools) -> State:
                     
                 except APIConnectionError as e:
                     api_error_count += 1
-                    if handle_api_retry("operator", e, api_error_count, max_retries=3):
-                        continue
-                    # handle_api_retry already sent error to UI
-                    error_message = f"API Error executing step: {str(e)}"
-                    error_msg = AIMessage(content=error_message)
-                    update = {
-                        'messages': [error_msg],
-                        'current_task_messages': current_task_messages + [error_msg]
-                    }
-                    if initial_files is not None:
-                        update["files_at_task_start"] = initial_files
-                    return finalize_update(update)
+                    handle_api_retry(
+                        "operator",
+                        e,
+                        api_error_count,
+                        max_retries=3,
+                    )
+                    continue
                     
                 except Exception as e:
                     _write_to_log(f"\n---\n\n**[OPERATOR] Error during LangChain streaming:**\n\n> {str(e)}\n\n")
                     raise
+            except FatalAPIError:
+                raise
             except Exception as e:
                 if is_api_connection_error(e):
                     api_error_count += 1
-                    if handle_api_retry("operator", e, api_error_count, max_retries=3):
-                        continue
-                    # handle_api_retry already sent error to UI
-                    error_message = f"API Error executing step: {str(e)}"
-                    error_msg = AIMessage(content=error_message)
-                    update = {
-                        'messages': [error_msg],
-                        'current_task_messages': current_task_messages + [error_msg]
-                    }
-                    if initial_files is not None:
-                        update["files_at_task_start"] = initial_files
-                    return finalize_update(update)
+                    handle_api_retry(
+                        "operator",
+                        e,
+                        api_error_count,
+                        max_retries=3,
+                    )
+                    continue
                 raise
         
         if response is None or (not full_content.strip() and not tool_calls):
@@ -1061,12 +1074,15 @@ def operator_node(state: State, llm_with_tools, all_tools) -> State:
         # Log updated messages (including AI response and tool results) to input_messages.md
         _write_input_messages(updated_task_messages, "OPERATOR", current_task_index)
         
-        updated_task_messages, did_summarize_context, effective_model, trigger_input = maybe_summarize_messages(
-            updated_task_messages,
-            llm_with_tools,
-            agent_name='operator',
-            runtime_events=prompt_runtime_events,
-            task_index=current_task_index,
+        updated_task_messages, did_summarize_context, effective_model, trigger_input = run_with_api_retries(
+            "operator",
+            lambda: maybe_summarize_messages(
+                updated_task_messages,
+                llm_with_tools,
+                agent_name='operator',
+                runtime_events=prompt_runtime_events,
+                task_index=current_task_index,
+            ),
         )
         if did_summarize_context:
             log_custom(
@@ -1084,13 +1100,15 @@ def operator_node(state: State, llm_with_tools, all_tools) -> State:
             update["files_at_task_start"] = initial_files
         return finalize_update(update)
 
+    except FatalAPIError:
+        raise
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
         _write_to_log(f"\n[DEBUG OPERATOR] Exception: {e}\n{error_trace}\n")
         
         if is_api_connection_error(e):
-            raise e
+            raise
             
         validation_tool_hint = None
         if ValidationError and isinstance(e, ValidationError):

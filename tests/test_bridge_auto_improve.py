@@ -10,6 +10,7 @@ for module_name in (
     sys.modules.setdefault(module_name, MagicMock())
 
 import bridge
+from src.agents.utils import FatalAPIError
 from src.runner import PromptRunResult
 
 
@@ -166,6 +167,32 @@ def test_fail_stops_auto_improve_chain_and_clears_runtime_state(mock_workspace, 
     settings = _read_checkpoint_settings(mock_workspace)
     assert settings["AUTO_IMPROVE_CYCLES"] == "2"
     assert bridge.AUTO_IMPROVE_STATE_KEY not in settings
+
+
+def test_fatal_api_error_is_visible_and_interrupts_run(mock_workspace, monkeypatch):
+    monkeypatch.setenv("AUTO_IMPROVE_CYCLES", "0")
+    _configure_bridge(monkeypatch)
+    events = _capture_send_json(monkeypatch)
+    _install_process_prompt(
+        monkeypatch,
+        [
+            FatalAPIError(
+                "Error code: 404 - {'error': {'message': 'Not Found', 'code': 404}}",
+                agent="strategist",
+            )
+        ],
+    )
+
+    bridge._execute_prompt_sequence("Initial request", restart=False)
+
+    assert [payload for type_, payload in events if type_ == "error"] == [{
+        "message": "Error code: 404 - {'error': {'message': 'Not Found', 'code': 404}}",
+        "agent": "strategist",
+        "kind": "api",
+    }]
+    assert [payload for type_, payload in events if type_ == "done"] == [{
+        "status": "interrupted",
+    }]
 
 
 def test_interrupted_automatic_cycle_preserves_remaining_budget_across_resume(mock_workspace, monkeypatch):

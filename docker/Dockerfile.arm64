@@ -91,7 +91,17 @@ RUN cd cli && \
     npm prune --omit=dev && \
     npm cache clean --force
 
-RUN find /build/cli/node_modules -type d \( \
+COPY web/package*.json ./web/
+RUN cd web && npm ci
+COPY web/ ./web/
+RUN cd web && \
+    npm_config_build_from_source=true npm rebuild node-pty && \
+    npm run build && \
+    node -e "const fs=require('fs'); const keep=new Set(['express','multer','node-pty','ws']); const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); pkg.dependencies=Object.fromEntries(Object.entries(pkg.dependencies||{}).filter(([name])=>keep.has(name))); fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');" && \
+    npm prune --omit=dev && \
+    npm cache clean --force
+
+RUN find /build/cli/node_modules /build/web/node_modules -type d \( \
         -name ".cache" -o \
         -name "__tests__" -o \
         -name "coverage" -o \
@@ -102,7 +112,7 @@ RUN find /build/cli/node_modules -type d \( \
         -name "test" -o \
         -name "tests" \
     \) -prune -exec rm -rf {} + && \
-    find /build/cli/node_modules -type f \( \
+    find /build/cli/node_modules /build/web/node_modules -type f \( \
         -name "*.d.ts" -o \
         -name "*.d.ts.map" -o \
         -name "*.map" -o \
@@ -209,6 +219,15 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/*
 
+ARG PRECACHE_RESOURCES=all
+ENV QUASAR_RESOURCE_CACHE=/opt/quasar/resource-cache
+RUN --mount=type=bind,source=src/rag,target=/tmp/precache-src/src/rag,readonly \
+    --mount=type=bind,source=src/utils,target=/tmp/precache-src/src/utils,readonly \
+    --mount=type=bind,source=docker/precache_resources.py,target=/tmp/precache_resources.py,readonly \
+    PYTHONPATH=/tmp/precache-src QUASAR_PRECACHE_MODE="${PRECACHE_RESOURCES}" python3 /tmp/precache_resources.py && \
+    chmod -R a+rwX "${QUASAR_RESOURCE_CACHE}" && \
+    rm -rf /root/.cache
+
 COPY bridge.py bridge_history.py ./
 COPY src/ ./src/
 
@@ -255,7 +274,11 @@ COPY --from=node-builder /build/cli/node_modules /app/cli/node_modules
 COPY --chmod=755 --from=node-builder /build/cli/dist /app/cli/dist
 RUN ln -s /app/cli/dist/cli.js /usr/local/bin/quasar
 
-
+COPY --from=node-builder /build/web/package.json /app/web/package.json
+COPY --from=node-builder /build/web/node_modules /app/web/node_modules
+COPY --from=node-builder /build/web/dist /app/web/dist
+COPY --from=node-builder /build/web/dist-server /app/web/dist-server
+COPY --from=node-builder /build/web/server/scripts /app/web/server/scripts
 
 RUN set -eux; \
     if ! getent group "${QUASAR_GID}" >/dev/null; then \
@@ -273,6 +296,8 @@ ENV TOKENIZERS_PARALLELISM=false
 
 VOLUME ["/workspace"]
 
+EXPOSE 3001
+
 USER quasar
 
-CMD ["quasar"]
+CMD ["quasar", "--web"]

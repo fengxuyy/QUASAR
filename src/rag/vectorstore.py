@@ -32,6 +32,7 @@ def _log(message: str, data: dict = None):
 from .embeddings import get_embeddings, initialize_embeddings
 from .index_downloader import download_index, load_prebuilt_index, is_index_valid
 from .docs_downloader import download_docs, is_docs_available
+from .resource_cache import link_cached_resources
 
 # Global vectorstore state
 _vectorstore = None
@@ -60,7 +61,10 @@ def initialize_rag(
     
     if workspace_dir is None:
         workspace_dir = Path.cwd()
-    
+
+    # Link pre-cached docs / RAG index / HF weights from container image if available
+    link_cached_resources(workspace_dir)
+
     # 1. Download documentation repos if needed
     if download_documentation and not is_docs_available(workspace_dir):
         if status_tracker:
