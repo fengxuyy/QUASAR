@@ -188,6 +188,64 @@ def has_checkpoint_history(graph: "CompiledGraph", config: dict):
         return False
 
 
+def checkpoint_has_progress(state_values: Optional[dict]) -> bool:
+    """Return True when checkpoint state contains real resumable progress.
+
+    A brand-new run creates checkpoints.sqlite before the first LLM call. If the
+    model/API key is invalid or the user cancels before strategist produces any
+    plan or step output, there is nothing meaningful to resume.
+    """
+    if not isinstance(state_values, dict) or not state_values:
+        return False
+    if state_values.get("plan"):
+        return True
+    if state_values.get("completed_steps"):
+        return True
+    if state_values.get("step_results"):
+        return True
+    if state_values.get("current_task_messages"):
+        return True
+    if state_values.get("evaluation_messages"):
+        return True
+    if state_values.get("files_at_task_start"):
+        return True
+    return False
+
+
+def cleanup_empty_checkpoint_if_needed() -> bool:
+    """Delete a hollow checkpoint that has no resumable progress.
+
+    Returns:
+        True if a resumable checkpoint still exists, False if no checkpoint
+        exists (or an empty one was deleted).
+    """
+    if not checkpoint_file_exists():
+        return False
+
+    has_progress = False
+    try:
+        from .graph import build_graph
+
+        graph_builder = build_graph(_CheckpointInspectionLLM())
+        graph = create_checkpoint_infrastructure(graph_builder)
+        state = graph.get_state(get_thread_config())
+        state_values = state.values if state else {}
+        has_progress = checkpoint_has_progress(state_values)
+    except Exception as e:
+        log_custom("CHECKPOINT", "Could not inspect checkpoint progress", {"error": str(e)})
+        # Be conservative if inspection itself fails on an existing DB.
+        return True
+    finally:
+        release_checkpoint_resources()
+
+    if not has_progress:
+        log_custom("CHECKPOINT", "Removing empty checkpoint with no resumable progress")
+        delete_checkpoint()
+        return False
+
+    return True
+
+
 def get_thread_config():
     """Get the standard configuration for the thread."""
     return {"configurable": {"thread_id": THREAD_ID}, "recursion_limit": 1000}

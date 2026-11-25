@@ -472,7 +472,7 @@ from src.artifacts import latest_archive_run_dir
 from src.agents.utils import FatalAPIError
 
 # Mutable LLM handles (rebuilt after CLI `update_env` for model-related keys).
-_bridge_llm_state = {"llm": None, "agent_llms": None}
+_bridge_llm_state = {"llm": None, "agent_llms": None, "init_error": None}
 _graph_cache_stale = False
 
 # Env keys that require new LangChain clients and a fresh compiled graph.
@@ -506,6 +506,7 @@ def _refresh_llm_clients_from_env(*, mark_graph_stale: bool = False) -> dict:
         "operator": operator_llm,
         "evaluator": evaluator_llm,
     }
+    _bridge_llm_state["init_error"] = None
     model_info = {"model": model_name}
     if strategist_model != model_name:
         model_info["strategist_model"] = strategist_model
@@ -661,6 +662,11 @@ def _execute_prompt_sequence(prompt: str, restart: bool) -> None:
     except FatalAPIError as e:
         run_error = e
         _clear_auto_improve_state_if_terminal()
+        try:
+            from src.checkpoint import cleanup_empty_checkpoint_if_needed
+            cleanup_empty_checkpoint_if_needed()
+        except Exception:
+            pass
         send_json("error", {
             "message": str(e),
             "agent": e.agent,
@@ -669,6 +675,11 @@ def _execute_prompt_sequence(prompt: str, restart: bool) -> None:
     except Exception as e:
         run_error = e
         _clear_auto_improve_state_if_terminal()
+        try:
+            from src.checkpoint import cleanup_empty_checkpoint_if_needed
+            cleanup_empty_checkpoint_if_needed()
+        except Exception:
+            pass
         tb = traceback.format_exc()
         send_json("error", {"message": str(e), "traceback": tb})
 
@@ -691,6 +702,9 @@ def main():
     except Exception as e:
         # Don't crash on startup if just missing environment variables.
         # The CLI handles displaying Settings if MODEL/MODEL_API_KEY are missing on prompt.
+        _bridge_llm_state["llm"] = None
+        _bridge_llm_state["agent_llms"] = None
+        _bridge_llm_state["init_error"] = str(e)
         send_json("init", {"model": None, "warning": str(e)})
 
     send_context_usage_snapshot()
@@ -735,7 +749,15 @@ def main():
                 restart = data.get("restart", False)
                 
                 if _bridge_llm_state.get("llm") is None:
-                    send_json("error", {"message": "Language model is not properly initialized. Please check your CLI Settings (e.g., verify your API_BASE_URL if using a custom model, or ensure your MODEL_API_KEY is valid).", "traceback": ""})
+                    init_err = _bridge_llm_state.get("init_error")
+                    base_msg = (
+                        "Language model is not properly initialized. Please check your Settings "
+                        "(verify MODEL, MODEL_API_KEY, and OPENAI_API_BASE if using a custom model)."
+                    )
+                    full_msg = f"{base_msg}\n\nDetails: {init_err}" if init_err else base_msg
+                    send_json("error", {"message": full_msg, "kind": "config", "traceback": ""})
+                    send_system_status("completed")
+                    send_json("done", {"status": "error"})
                     continue
                 
                 if _HAS_DEBUG_LOGGER:
@@ -1028,6 +1050,9 @@ def main():
                         model_info = _refresh_llm_clients_from_env(mark_graph_stale=True)
                         send_json("init", model_info)
                     except Exception as e:
+                        _bridge_llm_state["llm"] = None
+                        _bridge_llm_state["agent_llms"] = None
+                        _bridge_llm_state["init_error"] = str(e)
                         send_json("init", {"model": None, "warning": f"Model client refresh failed: {e}"})
                 send_context_usage_snapshot()
                 

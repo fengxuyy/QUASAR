@@ -151,6 +151,19 @@ function App() {
     });
   }, [activeTab]);
 
+  // Refresh the workspace tree as initialization/downloads advance (e.g. docs, RAG index).
+  useEffect(() => {
+    if (
+      initStatus.status === 'downloading_docs' ||
+      initStatus.status === 'docs_ready' ||
+      initStatus.status === 'downloading_index' ||
+      initStatus.status === 'index_ready' ||
+      initStatus.status === 'ready'
+    ) {
+      setWorkspaceRefreshKey(prev => prev + 1);
+    }
+  }, [initStatus.status, initStatus.message]);
+
   // Navigation callback for file links in execution log
   const handleNavigateToFile = useCallback((filePath: string, archiveId?: string | null) => {
     const target = resolveWorkspaceLinkTarget(filePath, archiveId);
@@ -287,7 +300,7 @@ function App() {
     if (messages.length > 0) {
         const lastMsg = messages[messages.length - 1];
 
-        if (lastMsg.type === 'error' && lastMsg.payload?.kind === 'api') {
+        if (lastMsg.type === 'error') {
           suppressRunCompletion(runLifecycleRef.current);
           setActiveAgent(null);
           setHasStarted(true);
@@ -462,9 +475,18 @@ function App() {
   const handleConfirmCancel = async () => {
     setShowCancelModal(false);
     suppressRunCompletion(runLifecycleRef.current);
-    await cancelExecution();
+    const checkpoint = await cancelExecution();
     setActiveAgent(null);
-    setInputValue('');
+    if (!checkpoint?.exists) {
+      clearMessages();
+      setHasStarted(false);
+      setRunJustFinished(false);
+      setTaskProgress(null);
+      setInputValue(currentPrompt || '');
+      setCurrentPrompt('');
+    } else {
+      setInputValue('');
+    }
   };
 
   const handleResumeFromCheckpoint = () => {
@@ -751,6 +773,7 @@ function App() {
                     navKey={navKey}
                     refreshKey={workspaceRefreshKey}
                     isActive={activeTab === 'workspace'}
+                    fastPoll={isInitializing || isRunning}
                   />
                 </Suspense>
               )}

@@ -107,16 +107,16 @@ def _sanitize_error_message(error_str: str) -> str:
 
 
 def is_api_connection_error(e: Exception) -> bool:
-    """Check if an exception is a known API connection error based on HTTP error codes."""
-    # API error codes to detect: 400 (Bad Request), 401 (Unauthorized), 404 (Not Found - invalid model), 
-    # 429 (Rate Limit), 499 (Client Closed Request), 500 (Server Error), 502 (Bad Gateway), 503 (Service Unavailable), 504 (Gateway Timeout)
-    api_error_codes = {400, 401, 404, 429, 499, 500, 502, 503, 504}
+    """Check if an exception is a known API error based on HTTP error codes or messages."""
+    # API error codes to detect: 400 (Bad Request), 401 (Unauthorized), 403 (Forbidden),
+    # 404 (Not Found - invalid model), 429 (Rate Limit), 499 (Client Closed Request),
+    # 500 (Server Error), 502 (Bad Gateway), 503 (Service Unavailable), 504 (Gateway Timeout)
+    api_error_codes = {400, 401, 403, 404, 429, 499, 500, 502, 503, 504}
     
     error_str = str(e)
     
-    # Try to extract error code from the error string
     # Pattern 1: Look for "429 RESOURCE_EXHAUSTED" or "401 UNAUTHORIZED" or "404 NOT_FOUND" etc.
-    code_match = re.search(r'\b(400|401|404|429|499|500|502|503|504)\b', error_str)
+    code_match = re.search(r'\b(400|401|403|404|429|499|500|502|503|504)\b', error_str)
     if code_match:
         return True
     
@@ -138,7 +138,51 @@ def is_api_connection_error(e: Exception) -> bool:
     
     # Fallback: check for common error strings (for backward compatibility)
     error_str_lower = error_str.lower()
-    return "resource_exhausted" in error_str_lower or "connection error" in error_str_lower
+    return (
+        "resource_exhausted" in error_str_lower
+        or "connection error" in error_str_lower
+        or is_non_retriable_api_error(e)
+    )
+
+
+def is_non_retriable_api_error(e: Exception) -> bool:
+    """Return True for invalid credentials, permissions, or model names that will not self-heal on retry."""
+    non_retriable_codes = {401, 403, 404}
+    error_str = str(e)
+    error_str_lower = error_str.lower()
+
+    for attr in ("status_code", "code"):
+        val = getattr(e, attr, None)
+        if isinstance(val, int) and val in non_retriable_codes:
+            return True
+
+    if re.search(r'\b(401|403|404)\b', error_str):
+        return True
+
+    code_in_dict = re.search(r"'code':\s*(\d+)", error_str) or re.search(r'"code":\s*(\d+)', error_str)
+    if code_in_dict and int(code_in_dict.group(1)) in non_retriable_codes:
+        return True
+
+    non_retriable_phrases = (
+        "api_key_invalid",
+        "api key not valid",
+        "invalid api key",
+        "invalid_api_key",
+        "incorrect api key",
+        "api key expired",
+        "authentication_error",
+        "invalid x-api-key",
+        "permission_denied",
+        "permission denied",
+        "model_not_found",
+        "model not found",
+        "is not found for api version",
+        "does not exist",
+        "invalid model",
+        "unknown model",
+        "not a valid model",
+    )
+    return any(phrase in error_str_lower for phrase in non_retriable_phrases)
 
 
 def handle_api_retry(
@@ -152,29 +196,20 @@ def handle_api_retry(
     Handle API connection error with retry logic.
     
     Sends status updates to Node.js CLI and logs error details to conversation.md.
-    When retries are exhausted or error is non-retriable, saves usage stats to
-    checkpoint_settings.json and generates usage_report.md before returning.
-    
-    Args:
-        agent: Agent name (e.g., "operator", "evaluator", "strategist")
-        error: The exception that occurred
-        current_count: Current retry attempt number (1-indexed)
-        max_retries: Maximum number of retries allowed
-        wait_seconds: Seconds to wait before retrying
-        
-    Returns:
-        bool: True when the caller should retry.
-
-    Raises:
-        FatalAPIError: If retries are exhausted.
+    Non-retriable authentication/model errors (e.g. 401/403/404, invalid API key)
+    fail immediately with FatalAPIError instead of sitting in a retry loop.
+    When retries are exhausted, saves usage stats and raises FatalAPIError.
     """
     from .logging import _write_to_log
     
     error_str = str(error)
-    
-    # Keep the run active for the configured retry budget, including errors
-    # such as 401/404. Users may correct a transient gateway/model mapping
-    # while the retry loop is active.
+
+    if is_non_retriable_api_error(error):
+        final_msg = f"API request failed (check MODEL and MODEL_API_KEY in Settings): {error_str}"
+        _write_to_log(f"\n---\n\n**[{agent.upper()}] Fatal API Error:**\n\n> {final_msg}\n\n")
+        _save_stats_on_system_interrupt()
+        raise FatalAPIError(final_msg, agent=agent)
+
     error_msg = f"API connection error (attempt {current_count}/{max_retries}): {error_str}"
     _write_to_log(f"\n---\n\n**[{agent.upper()}] API Error:**\n\n> {error_msg}\n\n")
 
@@ -203,11 +238,23 @@ def handle_api_retry(
     )
     
     # Wait before retry, but do not count retry backoff as active run time.
+    # Respect bridge.interrupt_event if available so user Stop works immediately.
     from ...usage_tracker import begin_excluded_interval, end_excluded_interval
+
+    interrupt_ev = None
+    try:
+        import bridge as _bridge
+        interrupt_ev = getattr(_bridge, "interrupt_event", None)
+    except Exception:
+        interrupt_ev = None
 
     begin_excluded_interval()
     try:
-        time.sleep(wait_seconds)
+        if interrupt_ev is not None and wait_seconds > 0:
+            if interrupt_ev.wait(wait_seconds):
+                raise KeyboardInterrupt("Interrupted during API retry backoff")
+        else:
+            time.sleep(wait_seconds)
     finally:
         end_excluded_interval()
     return True

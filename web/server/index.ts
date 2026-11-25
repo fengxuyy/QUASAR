@@ -167,6 +167,7 @@ const wss = new WebSocketServer({ server });
 let pythonProcess: ChildProcess | null = null;
 let messageBuffer: any[] = [];
 let isAwaitingPlanConfirmation = false;
+let isExecutionRunning = false;
 let ragPreloaded = false;
 let ragPreloadFailed = false;
 let latestInitStatus: { status: string; message: string } = {
@@ -1115,15 +1116,22 @@ function startPythonBridge(settings: Record<string, string> = {}) {
       const parsed = JSON.parse(msg);
       rememberBridgeMessage(parsed);
 
-      if (parsed.type === 'plan_awaiting_confirm') {
+      if (parsed.type === 'system_status') {
+        if (parsed.payload?.status === 'running') {
+          isExecutionRunning = true;
+        } else if (parsed.payload?.status === 'completed') {
+          isExecutionRunning = false;
+        }
+      } else if (parsed.type === 'plan_awaiting_confirm') {
         // Auto-confirm plan if AUTO_CONFIRM_PLAN is enabled
         if (userSettings.AUTO_CONFIRM_PLAN?.toLowerCase() === 'true') {
           pythonProcess?.stdin?.write(JSON.stringify({ command: 'plan_confirm', action: 'confirm', feedback: '' }) + '\n');
         } else {
           isAwaitingPlanConfirmation = true;
         }
-      } else if (parsed.type === 'plan_declined' || parsed.type === 'done') {
+      } else if (parsed.type === 'plan_declined' || parsed.type === 'done' || parsed.type === 'error') {
         isAwaitingPlanConfirmation = false;
+        isExecutionRunning = false;
       }
 
       // Check for run completion and exit if EXIT_ON_COMPLETION is enabled
@@ -1167,6 +1175,7 @@ function startPythonBridge(settings: Record<string, string> = {}) {
     }
     console.log(`Python bridge exited with code ${code}`);
     isAwaitingPlanConfirmation = false;
+    isExecutionRunning = false;
     pythonProcess = null;
   });
 }
@@ -1195,7 +1204,7 @@ wss.on('connection', (ws, req) => {
   // Send current execution status
   ws.send(JSON.stringify({
     type: 'execution_status',
-    payload: { running: pythonProcess !== null }
+    payload: { running: isExecutionRunning }
   }));
 
   // Check if checkpoint exists - if so, DON'T send messageBuffer
@@ -1204,14 +1213,14 @@ wss.on('connection', (ws, req) => {
   const checkpointPath = checkpointDbPath(getWorkspaceDir());
   const hasCheckpoint = fs.existsSync(checkpointPath);
 
-  if (messageBuffer.length > 0 && !hasCheckpoint) {
+  if (isExecutionRunning && messageBuffer.length > 0 && !hasCheckpoint) {
     // No checkpoint exists, so send buffered messages
     // This handles the case where a new run just started but hasn't checkpointed yet
     console.log(`Syncing ${messageBuffer.length} buffered messages to new client (no checkpoint)`);
     messageBuffer.forEach(msg => {
       safeSendJson(ws, msg);
     });
-  } else if (messageBuffer.length > 0) {
+  } else if (isExecutionRunning && messageBuffer.length > 0) {
     console.log(`Skipping messageBuffer sync (${messageBuffer.length} msgs) - checkpoint exists, frontend will load history`);
 
     // But send the latest live status so the UI shows the current running state.
@@ -1283,11 +1292,14 @@ wss.on('connection', (ws, req) => {
           const workspaceDir = getWorkspaceDir();
 
           try {
-            // Include userSettings in the PTY environment so terminal has access to configured variables
+            // Include userSettings in the PTY environment so terminal has access to configured variables.
+            // Preserve the host user's real HOME so shell init scripts (.zshenv, .bashrc, ~/.cargo/env)
+            // resolve properly in local/pip installs; fall back to workspaceDir only when HOME is unset.
             const ptyEnv: { [key: string]: string } = {
               ...process.env as { [key: string]: string },
               TERM: 'xterm-256color',
-              HOME: workspaceDir,
+              HOME: (process.env.HOME || '').trim() || workspaceDir,
+              WORKSPACE_DIR: workspaceDir,
             };
 
             // Apply user settings to PTY environment
@@ -1408,6 +1420,8 @@ wss.on('connection', (ws, req) => {
       // Handle prompt - now we start Python if not running
       if (data.command === 'prompt') {
         isAwaitingPlanConfirmation = false;
+        isExecutionRunning = true;
+        resetLiveMessageState();
         if (!pythonProcess) {
           startPythonBridge(userSettings);
 
@@ -1465,6 +1479,7 @@ app.get('/api/settings', (req, res) => {
 });
 
 app.post('/api/restart', (req, res) => {
+  isExecutionRunning = false;
   startPythonBridge(userSettings);
   broadcastToClients({ type: 'bridge_restarted', payload: {} });
   res.json({ status: 'restarted' });
@@ -1474,6 +1489,7 @@ app.post('/api/restart', (req, res) => {
 app.post('/api/cancel', async (req, res) => {
   console.log('Cancelling execution...');
   isAwaitingPlanConfirmation = false;
+  isExecutionRunning = false;
   // Force a fresh checkpoint metadata read after interrupt.
   checkpointInfoCache = null;
 
@@ -1489,9 +1505,30 @@ app.post('/api/cancel', async (req, res) => {
     await waitForPythonProcessExit(1500);
   }
 
-  // Check for checkpoint (SQLite database file)
-  const checkpointPath = checkpointDbPath(getWorkspaceDir());
-  const hasCheckpoint = fs.existsSync(checkpointPath);
+  // Check for checkpoint (SQLite database file) and drop hollow unstarted checkpoints
+  const workspaceDir = getWorkspaceDir();
+  const checkpointPath = checkpointDbPath(workspaceDir);
+  let hasCheckpoint = fs.existsSync(checkpointPath);
+  if (hasCheckpoint) {
+    const cleanupResult = spawnSync(pythonCommand, ['-c', `
+${PYTHON_HELPER_PREAMBLE}
+from src.checkpoint import cleanup_empty_checkpoint_if_needed
+print("true" if cleanup_empty_checkpoint_if_needed() else "false")
+`], {
+      cwd: projectRoot,
+      env: { ...process.env, QUASAR_BRIDGE_PATH: bridgePath, WORKSPACE_DIR: workspaceDir },
+      encoding: 'utf-8',
+    });
+    if (!cleanupResult.error && cleanupResult.status === 0) {
+      hasCheckpoint = cleanupResult.stdout.trim().split(/\s+/).pop() === 'true';
+    } else {
+      hasCheckpoint = fs.existsSync(checkpointPath);
+    }
+  }
+
+  if (!hasCheckpoint) {
+    resetLiveMessageState();
+  }
 
   console.log(`Checkpoint path: ${checkpointPath}, exists: ${hasCheckpoint}`);
 
@@ -1523,7 +1560,7 @@ app.get('/api/checkpoint', async (req, res) => {
     if (savedSettings) {
       result.savedSettings = publicSettings(savedSettings);
     }
-    result.isRunning = pythonProcess !== null;
+    result.isRunning = isExecutionRunning;
     return res.json(result);
   }
 
@@ -1533,7 +1570,14 @@ ${PYTHON_HELPER_PREAMBLE}
 from pathlib import Path
 
 try:
-    from src.checkpoint import checkpoint_file_exists, get_thread_config, create_checkpoint_infrastructure
+    from src.checkpoint import (
+        checkpoint_file_exists,
+        checkpoint_has_progress,
+        create_checkpoint_infrastructure,
+        delete_checkpoint,
+        get_thread_config,
+        release_checkpoint_resources,
+    )
     from src.graph import build_graph
     from src.llm_config import initialize_llm
     from bridge_history import extract_checkpoint_history
@@ -1545,12 +1589,7 @@ try:
         print(json.dumps({"exists": False}))
         sys.exit(0)
 
-    # Generate usage report for interrupted run BEFORE loading checkpoint
-    # This ensures interrupted runs get their reports even if killed with SIGKILL
-    try:
-        generate_interrupted_report_if_needed()
-    except Exception:
-        pass
+    is_exec_running = os.environ.get("QUASAR_EXECUTION_RUNNING", "false") == "true"
 
     # Initialize minimal components to read state
     # We need a dummy LLM just to build the graph structure
@@ -1563,18 +1602,36 @@ try:
     graph = create_checkpoint_infrastructure(graph_builder)
     config = get_thread_config()
     state = graph.get_state(config)
+    state_values = state.values if state else {}
+
+    # If no execution is running and the checkpoint has zero real progress
+    # (e.g. failed immediately on invalid API key/model or cancelled before planning),
+    # clean it up so the UI returns to the input home page.
+    if not is_exec_running and not checkpoint_has_progress(state_values):
+        release_checkpoint_resources()
+        delete_checkpoint()
+        print(json.dumps({"exists": False}))
+        sys.exit(0)
+
+    # Generate usage report for interrupted run BEFORE loading checkpoint
+    # This ensures interrupted runs get their reports even if killed with SIGKILL
+    try:
+        generate_interrupted_report_if_needed()
+    except Exception:
+        pass
+
     state_history = list(graph.get_state_history(config))
     checkpoint_next = list(getattr(state, "next", ()) or []) if state else []
     can_resume_steering = checkpoint_allows_resume_steering(
         checkpoint_next,
-        state.values if state else {},
+        state_values,
     )
 
     history = None
-    if state and state.values:
+    if state_values:
         history = extract_checkpoint_history(
-            state.values,
-            state.values.get('messages', []),
+            state_values,
+            state_values.get('messages', []),
             state_history=state_history,
         )
 
@@ -1593,7 +1650,7 @@ except Exception as e:
         "error": str(e),
         "traceback": format_exc()
     }))
-`, { WORKSPACE_DIR: workspaceDir });
+`, { WORKSPACE_DIR: workspaceDir, QUASAR_EXECUTION_RUNNING: isExecutionRunning ? 'true' : 'false' });
 
   let output = '';
   let stderr = '';
@@ -1607,6 +1664,16 @@ except Exception as e:
   extractProcess.on('close', (code) => {
     try {
       const extracted = JSON.parse(output.trim());
+      if (!extracted.exists) {
+        checkpointInfoCache = null;
+        const runs = listArchiveRuns(workspaceDir);
+        return res.json({
+          exists: false,
+          hasArchive: runs.length > 0,
+          archiveCount: runs.length,
+          isRunning: isExecutionRunning,
+        });
+      }
       // Recompute signature after extract in case WAL was checkpointed/merged.
       const freshCacheKey = getFileSignature(checkpointPath) || checkpointCacheKey;
       if (freshCacheKey && !extracted.error) {
@@ -1620,7 +1687,7 @@ except Exception as e:
       }
       // Include isRunning to indicate if a live session is active
       // This helps frontend avoid loading stale history when system is running
-      result.isRunning = pythonProcess !== null;
+      result.isRunning = isExecutionRunning;
       // Ensure the steering flag is always a boolean for the web client.
       if (result.exists === true && typeof result.can_resume_steering !== 'boolean') {
         result.can_resume_steering = false;
@@ -1631,7 +1698,7 @@ except Exception as e:
       res.status(500).json({
         exists: true,
         error: 'Failed',
-        isRunning: pythonProcess !== null,
+        isRunning: isExecutionRunning,
         can_resume_steering: false,
       });
     }
@@ -1647,7 +1714,7 @@ app.post('/api/revert', async (req, res) => {
   }
 
   // Don't allow revert while running
-  if (pythonProcess !== null) {
+  if (isExecutionRunning) {
     return res.status(400).json({ success: false, error: 'Cannot revert while execution is running' });
   }
 
@@ -1711,7 +1778,8 @@ except Exception as e:
 app.post('/api/fresh', (req, res) => {
   const workspaceDir = getWorkspaceDir();
   console.log(`Starting fresh - cleaning workspace: ${workspaceDir}`);
-  messageBuffer = [];
+  isExecutionRunning = false;
+  resetLiveMessageState();
   checkpointInfoCache = null;
 
   const { includeArchive } = req.body;

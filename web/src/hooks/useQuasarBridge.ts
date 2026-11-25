@@ -429,6 +429,14 @@ export function useQuasarBridge(): UseQuasarBridgeReturn {
           setIsInterrupting(false);
         }
 
+        // Handle terminal errors - immediately leave running/starting state
+        if (data.type === 'error') {
+          setIsRunning(false);
+          setIsStarting(false);
+          setIsAwaitingPlanConfirmation(false);
+          setIsInterrupting(false);
+        }
+
         // Handle cleanup status - show/hide archiving overlay
         if (data.type === 'cleanup_status' && data.payload) {
           if (data.payload.status === 'starting') {

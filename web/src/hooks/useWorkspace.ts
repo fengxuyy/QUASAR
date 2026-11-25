@@ -37,7 +37,7 @@ function filterHiddenWorkspaceNodes(nodes: FileNode[]): FileNode[] {
     );
 }
 
-export function useWorkspace({ enabled = true }: { enabled?: boolean } = {}) {
+export function useWorkspace({ enabled = true, fastPoll = false }: { enabled?: boolean; fastPoll?: boolean } = {}) {
   const [files, setFiles] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +45,9 @@ export function useWorkspace({ enabled = true }: { enabled?: boolean } = {}) {
   const [selectedArchive, setSelectedArchive] = useState<string | null>(null);
 
   const isInitialLoad = useRef(true);
+  const filesRef = useRef<FileNode[]>([]);
+  const lastArchiveRef = useRef<string | null>(null);
+  filesRef.current = files;
 
   const buildFilesUrl = useCallback((dirPath = '') => {
     const pathQuery = dirPath ? `&path=${encodeURIComponent(dirPath)}` : '';
@@ -109,12 +112,68 @@ export function useWorkspace({ enabled = true }: { enabled?: boolean } = {}) {
     return merge(next);
   }, []);
 
-  /** Top-level identity only — used to skip no-op poll updates and avoid re-render flash. */
-  const rootListingKey = useCallback((nodes: FileNode[]) => (
-    nodes
-      .map(n => `${n.path}\0${n.isDirectory ? 'd' : 'f'}\0${n.size ?? ''}\0${n.mtime ?? ''}`)
-      .join('\n')
-  ), []);
+  /** Full loaded-tree identity — used to skip no-op poll updates and avoid re-render flash. */
+  const treeListingKey = useCallback((nodes: FileNode[]): string => {
+    const parts: string[] = [];
+    const walk = (items: FileNode[]) => {
+      for (const n of items) {
+        parts.push(`${n.path}\0${n.isDirectory ? 'd' : 'f'}\0${n.size ?? ''}\0${n.mtime ?? ''}\0${n.childrenLoaded ? '1' : '0'}`);
+        if (n.children?.length) {
+          walk(n.children);
+        }
+      }
+    };
+    walk(nodes);
+    return parts.join('\n');
+  }, []);
+
+  const collectLoadedDirPaths = useCallback((nodes: FileNode[], limit = 30): string[] => {
+    const paths: string[] = [];
+    const walk = (items: FileNode[]) => {
+      for (const node of items) {
+        if (paths.length >= limit) return;
+        if (node.isDirectory && node.childrenLoaded) {
+          paths.push(node.path);
+          if (node.children?.length) {
+            walk(node.children);
+          }
+        }
+      }
+    };
+    walk(nodes);
+    return paths;
+  }, []);
+
+  const fetchDirectoryChildren = useCallback(async (dirPath: string): Promise<FileNode[]> => {
+    const response = await fetch(buildFilesUrl(dirPath));
+    if (!response.ok) throw new Error('Failed to fetch directory');
+    return filterHiddenWorkspaceNodes(await response.json() as FileNode[]);
+  }, [buildFilesUrl]);
+
+  const applyRefreshedChildren = useCallback((
+    nodes: FileNode[],
+    refreshedMap: Map<string, FileNode[]>,
+  ): FileNode[] => {
+    return nodes.map(node => {
+      if (!node.isDirectory) return node;
+      const updated = refreshedMap.get(node.path);
+      if (updated !== undefined) {
+        const merged = mergePreservingLoadedChildren(node.children || [], updated);
+        return {
+          ...node,
+          children: applyRefreshedChildren(merged, refreshedMap),
+          childrenLoaded: true,
+        };
+      }
+      if (node.children?.length) {
+        return {
+          ...node,
+          children: applyRefreshedChildren(node.children, refreshedMap),
+        };
+      }
+      return node;
+    });
+  }, [mergePreservingLoadedChildren]);
 
   const fetchFiles = useCallback(async () => {
     if (isInitialLoad.current) {
@@ -125,15 +184,41 @@ export function useWorkspace({ enabled = true }: { enabled?: boolean } = {}) {
       const response = await fetch(url);
       if (!response.ok) throw new Error('Failed to fetch files');
       const data = filterHiddenWorkspaceNodes(await response.json() as FileNode[]);
+
+      // Also refresh any already-expanded/loaded directories in the live workspace
+      // so newly downloaded folders (e.g. docs/ase, docs/pymatgen, docs/q-e/SSSP)
+      // appear automatically without collapsing or flashing the tree.
+      const refreshedMap = new Map<string, FileNode[]>();
+      if (!isInitialLoad.current && !selectedArchive) {
+        const rootDirPaths = new Set(data.filter(n => n.isDirectory).map(n => n.path));
+        const loadedDirs = collectLoadedDirPaths(filesRef.current).filter(dirPath => {
+          const topSegment = dirPath.split('/')[0];
+          return rootDirPaths.has(topSegment);
+        });
+        if (loadedDirs.length > 0) {
+          await Promise.all(
+            loadedDirs.map(async dirPath => {
+              try {
+                const children = await fetchDirectoryChildren(dirPath);
+                refreshedMap.set(dirPath, children);
+              } catch {
+                // Ignore transient errors (e.g. temp clone dir renamed mid-poll)
+              }
+            }),
+          );
+        }
+      }
+
       setFiles(prev => {
         if (isInitialLoad.current) return data;
-        // Poll is depth=0 only. If the root listing is unchanged, keep the
-        // existing tree (including expanded docs/lammps children) so React
-        // does not re-render and flash the same content every few seconds.
-        if (rootListingKey(prev) === rootListingKey(data)) {
+        let next = mergePreservingLoadedChildren(prev, data);
+        if (refreshedMap.size > 0) {
+          next = applyRefreshedChildren(next, refreshedMap);
+        }
+        if (treeListingKey(prev) === treeListingKey(next)) {
           return prev;
         }
-        return mergePreservingLoadedChildren(prev, data);
+        return next;
       });
       isInitialLoad.current = false;
       setError(null);
@@ -142,13 +227,15 @@ export function useWorkspace({ enabled = true }: { enabled?: boolean } = {}) {
     } finally {
       setLoading(false);
     }
-  }, [buildFilesUrl, mergePreservingLoadedChildren, rootListingKey]);
-
-  const fetchDirectoryChildren = useCallback(async (dirPath: string): Promise<FileNode[]> => {
-    const response = await fetch(buildFilesUrl(dirPath));
-    if (!response.ok) throw new Error('Failed to fetch directory');
-    return filterHiddenWorkspaceNodes(await response.json() as FileNode[]);
-  }, [buildFilesUrl]);
+  }, [
+    applyRefreshedChildren,
+    buildFilesUrl,
+    collectLoadedDirPaths,
+    fetchDirectoryChildren,
+    mergePreservingLoadedChildren,
+    selectedArchive,
+    treeListingKey,
+  ]);
 
   const replaceChildren = useCallback((nodes: FileNode[], dirPath: string, children: FileNode[]): FileNode[] => {
     return nodes.map(node => {
@@ -214,22 +301,25 @@ export function useWorkspace({ enabled = true }: { enabled?: boolean } = {}) {
     fetchArchives();
   }, [enabled, fetchArchives]);
 
-  // Fetch files when archive selection changes
+  // Fetch files when archive selection or polling cadence changes
   useEffect(() => {
     if (!enabled) return;
-    isInitialLoad.current = true;
-    fetchFiles();
-    // Poll root listing for current workspace only (depth=0). No-op when the
-    // root is unchanged so expanded folders do not re-render/flash.
+    if (lastArchiveRef.current !== selectedArchive || filesRef.current.length === 0) {
+      isInitialLoad.current = true;
+      lastArchiveRef.current = selectedArchive;
+    }
+    void fetchFiles();
+    // Poll live workspace (faster while docs/RAG download or an agent run is active).
+    // No-op when tree listing is unchanged so expanded folders do not re-render/flash.
     if (!selectedArchive) {
       const tick = () => {
         if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
         void fetchFiles();
       };
-      const interval = setInterval(tick, 15000);
+      const interval = setInterval(tick, fastPoll ? 3000 : 15000);
       return () => clearInterval(interval);
     }
-  }, [enabled, fetchFiles, selectedArchive]);
+  }, [enabled, fastPoll, fetchFiles, selectedArchive]);
 
   return {
     files,

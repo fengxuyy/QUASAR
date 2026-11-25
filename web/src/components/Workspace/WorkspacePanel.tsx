@@ -22,6 +22,7 @@ export interface WorkspacePanelProps {
   navKey?: number;
   refreshKey?: number;
   isActive?: boolean;
+  fastPoll?: boolean;
 }
 
 // Initial load size for text files (500KB) - the rest can be loaded on demand
@@ -61,7 +62,8 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
   onFileRedirectNotFound,
   navKey,
   refreshKey,
-  isActive = true
+  isActive = true,
+  fastPoll = false,
 }) => {
   const { 
     files, 
@@ -79,7 +81,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({
     renameFile,
     saveFileContent,
     createNewFile
-  } = useWorkspace({ enabled: isActive });
+  } = useWorkspace({ enabled: isActive, fastPoll });
 
   // Trigger manual refresh when refreshKey changes
   useEffect(() => {
