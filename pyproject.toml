@@ -96,6 +96,7 @@ artifacts = [
 ]
 
 [tool.hatch.build.targets.wheel]
+core-metadata-version = "2.4"
 packages = ["src", "bridge.py", "bridge_history.py"]
 
 [tool.hatch.build.targets.wheel.force-include]
@@ -107,6 +108,7 @@ packages = ["src", "bridge.py", "bridge_history.py"]
 "web/server/scripts/structure_processor.py" = "src/_packaged_ui/web/server/scripts/structure_processor.py"
 
 [tool.hatch.build.targets.sdist]
+core-metadata-version = "2.4"
 only-include = [
     "src",
     "bridge.py",

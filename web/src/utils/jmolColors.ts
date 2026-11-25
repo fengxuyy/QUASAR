@@ -1,0 +1,47 @@
+
+export const ElementColors: { [key: string]: string } = {
+  H: "#FFFFFF",
+  He: "#D9FFFF",
+  Li: "#CC80FF",
+  Be: "#C2FF00",
+  B: "#FFB5B5",
+  C: "#909090",
+  N: "#3050F8",
+  O: "#FF0D0D",
+  F: "#90E050",
+  Ne: "#B3E3F5",
+  Na: "#AB5CF2",
+  Mg: "#8AFF00",
+  Al: "#BFA6A6",
+  Si: "#F0C8A0",
+  P: "#FF8000",
+  S: "#FFFF30",
+  Cl: "#1FF01F",
+  Ar: "#80D1E3",
+  K: "#8F40D4",
+  Ca: "#3DFF00",
+  Sc: "#E6E6E6",
+  Ti: "#BFC2C7",
+  V: "#A6A6AB",
+  Cr: "#8A99C7",
+  Mn: "#9C7AC7",
+  Fe: "#E06633",
+  Co: "#F090A0",
+  Ni: "#50D050",
+  Cu: "#C88033",
+  Zn: "#7D80B0",
+  Ga: "#C28F8F",
+  Ge: "#668F8F",
+  As: "#BD80E3",
+  Se: "#FFA100",
+  Br: "#A62929",
+  Kr: "#5CB8D1",
+  Rb: "#702EB0",
+  Sr: "#00FF00",
+  Y: "#94FFFF",
+  // Add more as needed
+};
+
+export function getElementColor(symbol: string): string {
+  return ElementColors[symbol] || "#FF1493"; // Default pink for unknown
+}
