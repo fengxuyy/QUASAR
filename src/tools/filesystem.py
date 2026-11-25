@@ -484,7 +484,7 @@ def analyze_image(file_path: str, prompt: str) -> str:
             return (
                 f"Error: Cannot analyze image '{file_path}' because the current model "
                 f"'{current_model}' is not configured as multimodal. "
-                "Please use a multimodal model (e.g., gemini-3.5-flash, gpt-4o, claude-sonnet-4-5-20250929)."
+                "Please use a multimodal model (e.g., gemini-4-neon, gemini-4-hydrogen, gemini-4-carbon, gpt-4o, claude-sonnet-4-5-20250929)."
             )
 
         # Check mime type

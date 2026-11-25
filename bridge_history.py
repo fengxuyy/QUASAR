@@ -339,18 +339,66 @@ def _step_complete_status_execute_python(tool_name: str, tool_args: dict) -> str
     return format_tool_display(tool_name, tool_args or {})
 
 
+def _format_multi_target_output(tool_name: str, tool_args: dict) -> str | None:
+    """Build a markdown bullet list for multi-file read_file / multi-dir list_directory calls."""
+    if not isinstance(tool_args, dict):
+        return None
+    if tool_name == "read_file":
+        paths = tool_args.get("file_path")
+        if not isinstance(paths, list) or not paths:
+            return None
+        lines = []
+        for p in paths:
+            if p is None:
+                continue
+            raw = str(p).strip().rstrip("/")
+            if raw.startswith("./"):
+                raw = raw[2:]
+            if raw:
+                lines.append(f"- `{raw}`")
+        return "\n".join(lines) if lines else None
+    if tool_name == "list_directory":
+        paths = tool_args.get("directory_path")
+        if not isinstance(paths, list) or not paths:
+            return None
+        pattern = tool_args.get("pattern", "*")
+        suffix = f" ({pattern})" if (isinstance(pattern, str) and pattern and pattern != "*") else ""
+        lines = []
+        for d in paths:
+            if d is None:
+                continue
+            raw = str(d).strip().rstrip("/")
+            if raw in ("", "."):
+                display = "workspace"
+            else:
+                if raw.startswith("./"):
+                    raw = raw[2:]
+                display = raw
+            lines.append(f"- `{display}`{suffix}")
+        return "\n".join(lines) if lines else None
+    return None
+
+
 def format_tool_display(tool_name: str, tool_args: dict) -> str:
     """Format a tool call into a display string like 'Listed pseudo' or 'Executed Python code'."""
-    # Special handling for read_file with keyword
+    # Special handling for read_file with keyword or multi-file lists
     if tool_name == 'read_file' and tool_args:
         keyword = tool_args.get('keyword')
         file_path = tool_args.get('file_path', 'file')
-        file_name = _extract_target_name(file_path) if file_path else 'file'
+        if isinstance(file_path, list) and len(file_path) > 3:
+            file_name = f"{len(file_path)} files"
+        else:
+            file_name = _extract_target_name(file_path) if file_path else 'file'
         
         if keyword:
             return f"Read {file_name} ({keyword})"
         else:
             return f"Read {file_name}"
+
+    if tool_name == 'list_directory' and tool_args:
+        directory_path = tool_args.get('directory_path', '.')
+        if isinstance(directory_path, list) and len(directory_path) > 3:
+            return f"Listed {len(directory_path)} directories"
     
     # Special handling for query_rag - show query
     if tool_name == 'query_rag' and tool_args:
@@ -924,6 +972,10 @@ def _apply_tool_message_to_task_history(
 
     if tool_name in ("query_rag", "grep_search", "search_web", "fetch_web_page") and content_str:
         matching_tool["output"] = _truncate_collapsible_output(content_str)
+    else:
+        multi_output = _format_multi_target_output(tool_name, tool_args)
+        if multi_output:
+            matching_tool["output"] = multi_output
 
 
 def _should_skip_task_ai_content(content: str) -> bool:
@@ -1607,6 +1659,10 @@ def extract_checkpoint_history(
                 # Add output for tools that expose collapsible details in history.
                 if tool_name in ("query_rag", "grep_search", "search_web", "fetch_web_page") and content_str:
                     matching_tool["output"] = _truncate_collapsible_output(content_str)
+                else:
+                    multi_output = _format_multi_target_output(tool_name, tool_args)
+                    if multi_output:
+                        matching_tool["output"] = multi_output
 
         # Handle text content from AIMessage (model thought/text)
         elif isinstance(msg, AIMessage) and msg.content:
@@ -1728,6 +1784,10 @@ def extract_checkpoint_history(
                     # Add output for tools that expose collapsible details in history.
                     if tool_name in ("query_rag", "grep_search", "search_web", "fetch_web_page") and content_str:
                         matching_tool["output"] = _truncate_collapsible_output(content_str)
+                    else:
+                        multi_output = _format_multi_target_output(tool_name, tool_args)
+                        if multi_output:
+                            matching_tool["output"] = multi_output
 
     current_task_index = len(completed_steps)
     for item in _extract_interrupt_reason_items(current_task_messages):

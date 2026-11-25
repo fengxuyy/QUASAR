@@ -396,8 +396,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       {
         key: keys.model,
         label: 'Model Name',
-        placeholder: isGlobal ? 'Required (e.g. gemini-3.5-flash)' : 'Same as Global',
-        description: isGlobal ? 'Provider model identifier (e.g. gemini-3.5-flash)' : MODEL_SCOPE_DESCRIPTIONS[modelScope],
+        placeholder: isGlobal ? 'Required (e.g. gemini-4-neon, gemini-4-hydrogen)' : 'Same as Global',
+        description: isGlobal ? 'Provider model identifier (e.g. gemini-4-neon, gemini-4-carbon, gemini-4-hydrogen)' : MODEL_SCOPE_DESCRIPTIONS[modelScope],
       },
       {
         key: keys.apiKey,

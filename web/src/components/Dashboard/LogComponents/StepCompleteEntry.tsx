@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { clsx } from 'clsx';
-import { CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Terminal, FileText, ListTodo, ArrowRight, MessageSquare } from 'lucide-react';
+import { CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Terminal, FileText, Folder, FolderOpen, ListTodo, ArrowRight, MessageSquare } from 'lucide-react';
 import { MarkdownRenderer } from '../../UI/MarkdownRenderer';
 import { agentSubPanelThemes } from './constants';
 import { parseStatusWithFileLinks, type StatusSegment } from '../../../utils/fileLinkUtils';
@@ -45,6 +45,71 @@ const DiffRenderer: React.FC<{ content: string }> = ({ content }) => {
         );
       })}
     </div>
+  );
+};
+
+interface ParsedPathItem {
+  path: string;
+  suffix?: string;
+}
+
+function parseBulletPathList(content?: string): ParsedPathItem[] | null {
+  if (!content) return null;
+  const lines = content
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+
+  const items: ParsedPathItem[] = [];
+  for (const line of lines) {
+    const match = line.match(/^-\s+`([^`]+)`(?:\s+(.*))?$/);
+    if (!match) return null;
+    items.push({
+      path: match[1],
+      suffix: match[2]?.trim() || undefined,
+    });
+  }
+  return items;
+}
+
+const MultiPathListRenderer: React.FC<{
+  items: ParsedPathItem[];
+  kind: 'files' | 'directories';
+  archiveId?: string | null;
+}> = ({ items, kind, archiveId }) => {
+  const { navigateToFile } = useNavigation();
+
+  return (
+    <ul className="space-y-1 text-xs">
+      {items.map((item, idx) => (
+        <li key={`${item.path}-${idx}`} className="flex items-center gap-2 text-slate-700">
+          {kind === 'directories' ? (
+            <Folder size={13} className="shrink-0 text-amber-500" />
+          ) : (
+            <FileText size={13} className="shrink-0 text-sky-500" />
+          )}
+          {kind === 'files' ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                navigateToFile(item.path, archiveId);
+              }}
+              className="truncate font-mono text-left text-sky-700 underline decoration-sky-400/70 underline-offset-2 transition-colors hover:text-sky-900"
+              title={`View ${item.path} in Workspace`}
+            >
+              {item.path}
+            </button>
+          ) : (
+            <span className="truncate font-mono text-slate-700">{item.path}</span>
+          )}
+          {item.suffix ? (
+            <span className="shrink-0 text-slate-400">{item.suffix}</span>
+          ) : null}
+        </li>
+      ))}
+    </ul>
   );
 };
 
@@ -139,7 +204,24 @@ export const StepCompleteEntry: React.FC<StepCompleteEntryProps> = ({
   }, [isPlanEntry, output]);
   
   // Detect output type from status if not explicitly provided
-  const detectOutputType = (): 'code' | 'markdown' | 'text' | 'diff' => {
+  const parsedPathItems = useMemo(() => {
+    const statusLower = normalizedStatus.toLowerCase();
+    if (!statusLower.startsWith('listed ') && !statusLower.startsWith('read ')) {
+      return null;
+    }
+    return parseBulletPathList(output);
+  }, [normalizedStatus, output]);
+
+  const pathListKind: 'files' | 'directories' | null = useMemo(() => {
+    if (!parsedPathItems) return null;
+    const statusLower = normalizedStatus.toLowerCase();
+    if (statusLower.startsWith('listed ')) return 'directories';
+    if (statusLower.startsWith('read ')) return 'files';
+    return null;
+  }, [normalizedStatus, parsedPathItems]);
+
+  const detectOutputType = (): 'code' | 'markdown' | 'text' | 'diff' | 'paths' => {
+    if (pathListKind && parsedPathItems) return 'paths';
     if (outputType !== 'text') return outputType;
     const statusLower = normalizedStatus.toLowerCase();
     if (statusLower.startsWith('edited')) return 'diff';
@@ -183,6 +265,16 @@ export const StepCompleteEntry: React.FC<StepCompleteEntryProps> = ({
       );
     }
     
+    if (detectedType === 'paths' && parsedPathItems && pathListKind) {
+      return (
+        <MultiPathListRenderer
+          items={parsedPathItems}
+          kind={pathListKind}
+          archiveId={archiveId}
+        />
+      );
+    }
+
     if (detectedType === 'diff') {
       return <DiffRenderer content={output} />;
     }
@@ -273,6 +365,8 @@ export const StepCompleteEntry: React.FC<StepCompleteEntryProps> = ({
               <div className="flex items-center gap-2 mb-1">
                 {detectedType === 'code' ? (
                   <Terminal size={14} className={effectiveIsError ? "text-red-500" : subTheme.icon} />
+                ) : pathListKind === 'directories' ? (
+                  <FolderOpen size={14} className={effectiveIsError ? "text-red-500" : subTheme.icon} />
                 ) : (
                   <FileText size={14} className={effectiveIsError ? "text-red-500" : subTheme.icon} />
                 )}
@@ -281,7 +375,13 @@ export const StepCompleteEntry: React.FC<StepCompleteEntryProps> = ({
                   effectiveIsError ? "text-red-700" : subTheme.text
                 )}>
                   {outputSectionLabel ||
-                    (detectedType === 'code' ? 'Code Output' : 'Result Content')}
+                    (detectedType === 'code'
+                      ? 'Code Output'
+                      : pathListKind === 'directories'
+                        ? 'Directories'
+                        : pathListKind === 'files'
+                          ? 'Files'
+                          : 'Result Content')}
                 </span>
               </div>
               {renderOutput()}

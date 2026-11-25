@@ -63,6 +63,10 @@ def test_is_multimodal_model():
     # Known multimodal models
     assert _is_multimodal_model("gemini-3.5-flash") is True
     assert _is_multimodal_model("gemini-2.5-pro") is True
+    assert _is_multimodal_model("gemini-4-hydrogen") is True
+    assert _is_multimodal_model("gemini-4-neon") is True
+    assert _is_multimodal_model("gemini-4-carbon") is True
+    assert _is_multimodal_model("google/gemini-4-neon-preview") is True
     assert _is_multimodal_model("gpt-4o") is True
     assert _is_multimodal_model("claude-sonnet-4-5-20250929") is True
     assert _is_multimodal_model("grok-4-0709") is True

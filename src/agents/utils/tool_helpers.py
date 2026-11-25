@@ -322,6 +322,31 @@ def handle_analyze_image_status(
 # Detailed Tool Status Handlers (merged from operator_status.py)
 # ============================================================================
 
+def _format_multi_path_output(
+    paths: list,
+    *,
+    is_directory: bool = False,
+    pattern: Optional[str] = None,
+) -> Optional[str]:
+    """Format a list of file or directory paths as a markdown bullet list for collapsible UI panels."""
+    if not isinstance(paths, list) or not paths:
+        return None
+    suffix = f" ({pattern})" if (is_directory and pattern and pattern != "*") else ""
+    lines = []
+    for item in paths:
+        if item is None:
+            continue
+        raw = str(item).strip().rstrip("/")
+        if raw in ("", "."):
+            display = "workspace"
+        else:
+            if raw.startswith("./"):
+                raw = raw[2:]
+            display = raw
+        lines.append(f"- `{display}`{suffix}")
+    return "\n".join(lines) if lines else None
+
+
 def _handle_read_file_status(agent: str, tool_args: Dict[str, Any], target_name: Optional[str], is_complete: bool, tool_result: Optional[str]) -> None:
     """Handle read_file status updates with special context awareness."""
     if_pdf = tool_args.get('if_pdf', False) if isinstance(tool_args, dict) else False
@@ -378,7 +403,8 @@ def _handle_read_file_status(agent: str, tool_args: Dict[str, Any], target_name:
         
         idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
         if is_complete:
-            send_agent_event(agent, "step_complete", base_complete, is_error=is_error)
+            multi_output = _format_multi_path_output(file_path_arg, is_directory=False)
+            send_agent_event(agent, "step_complete", base_complete, is_error=is_error, output=multi_output)
             send_agent_event(agent, "update", idle_status)
         else:
             send_agent_event(agent, "update", base_status)
@@ -733,7 +759,12 @@ def _handle_list_directory_status(agent: str, tool_args: Dict[str, Any], target_
         
         idle_status = AGENT_IDLE_STATUS.get(agent, "Idle")
         if is_complete:
-            send_agent_event(agent, "step_complete", base_complete, is_error=is_error)
+            multi_output = _format_multi_path_output(
+                directory_path,
+                is_directory=True,
+                pattern=pattern if isinstance(pattern, str) else None,
+            )
+            send_agent_event(agent, "step_complete", base_complete, is_error=is_error, output=multi_output)
             send_agent_event(agent, "update", idle_status)
         else:
             send_agent_event(agent, "update", base_status)

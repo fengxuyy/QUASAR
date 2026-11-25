@@ -80,6 +80,44 @@ class TestInitializeLLM:
             assert llm == mock_llm
             assert model == "gemini-2.5-pro"
             mock_gemini.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "model_name",
+        ["gemini-4-hydrogen", "gemini-4-neon", "gemini-4-carbon"],
+    )
+    @patch('src.llm_config.ChatGoogleGenerativeAI')
+    def test_initialize_llm_gemini_4_family_and_thinking_level(self, mock_gemini, model_name):
+        """Test Gemini 4 Neon/Carbon/Hydrogen initialization and optional THINKING_LEVEL."""
+        mock_llm = MagicMock()
+        mock_gemini.return_value = mock_llm
+
+        with patch.dict(
+            os.environ,
+            {
+                "MODEL": model_name,
+                "MODEL_API_KEY": "test-key",
+                "THINKING_LEVEL": "xhigh",
+            },
+            clear=True,
+        ):
+            llm, model = initialize_llm()
+
+            assert llm == mock_llm
+            assert model == model_name
+            mock_gemini.assert_called_once_with(
+                model=model_name,
+                google_api_key="test-key",
+                include_thoughts=True,
+                thinking_level="xhigh",
+            )
+
+    def test_gemini_4_pricing_rates(self):
+        from src.usage_tracker import _get_cost_rates_for_model
+
+        assert _get_cost_rates_for_model("gemini-4-hydrogen") == (1.50, 7.50, 0.075)
+        assert _get_cost_rates_for_model("gemini-4-neon") == (3.00, 15.00, 0.15)
+        assert _get_cost_rates_for_model("gemini-4-carbon") == (4.00, 20.00, 0.20)
+        assert _get_cost_rates_for_model("google/gemini-4-neon-preview") == (3.00, 15.00, 0.15)
     
     @patch('src.llm_config.ChatAnthropic')
     def test_initialize_llm_claude(self, mock_claude):

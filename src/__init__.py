@@ -2,7 +2,7 @@
 Source modules for the Computational Materials Science Agent.
 """
 
-__version__ = "0.5.3"
+__version__ = "0.5.4"
 
 # from . import rag, tools, state, agents
 

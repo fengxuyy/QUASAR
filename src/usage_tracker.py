@@ -152,6 +152,9 @@ _GEMINI_PRICING = {
     "gemini-3.5-flash": (1.50, 9.00, 0.15),
     "gemini-3-flash-preview": (0.50, 3.00, 0.05),
     "gemini-3.1-pro-preview": (2.00, 12.00, 0.20),
+    "gemini-4-hydrogen": (1.50, 7.50, 0.075),
+    "gemini-4-neon": (3.00, 15.00, 0.15),
+    "gemini-4-carbon": (4.00, 20.00, 0.20),
 }
 
 

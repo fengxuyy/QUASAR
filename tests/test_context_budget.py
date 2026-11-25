@@ -57,9 +57,23 @@ class TestRestrictedContextLimit:
         assert max_context == 1_048_576
         assert get_restricted_context_limit("gemini-3.5-flash", level) == int(max_context * expected_ratio)
 
-    def test_unknown_models_have_no_limit(self):
-        assert get_model_max_context("gpt-4o") is None
-        assert get_restricted_context_limit("gpt-4o", "medium") is None
+    @pytest.mark.parametrize(
+        "model_name",
+        [
+            "gemini-4-hydrogen",
+            "gemini-4-neon",
+            "gemini-4-carbon",
+            "gemini-4-neon-preview",
+            "google/gemini-4-carbon",
+        ],
+    )
+    def test_gemini_4_models_use_1m_context(self, model_name):
+        assert get_model_max_context(model_name) == 1_048_576
+        assert get_restricted_context_limit(model_name, "medium") == int(1_048_576 * 0.40)
+
+    def test_unknown_models_use_default_limit(self):
+        assert get_model_max_context("gpt-4o") == 400_000
+        assert get_restricted_context_limit("gpt-4o", "medium") == int(400_000 * 0.40)
 
     @pytest.mark.parametrize(
         ("level", "ratio"),
@@ -108,7 +122,7 @@ class TestContextUsageSnapshot:
         assert snapshot["remaining_tokens"] == 0
         assert snapshot["is_over_limit"] is True
 
-    def test_snapshot_for_unknown_model_marks_usage_unavailable(self):
+    def test_snapshot_for_unknown_model_uses_default_400k_window(self):
         snapshot = build_context_usage_snapshot(
             input_tokens=123_456,
             model_name="gpt-4o",
@@ -116,11 +130,9 @@ class TestContextUsageSnapshot:
             threshold_level="hard",
         )
 
-        assert snapshot["is_supported_model"] is False
-        assert snapshot["threshold_tokens"] is None
-        assert snapshot["usage_percent"] is None
-        assert snapshot["remaining_tokens"] is None
-        assert snapshot["max_context_percent"] is None
+        assert snapshot["is_supported_model"] is True
+        assert snapshot["max_context_tokens"] == 400_000
+        assert snapshot["threshold_tokens"] == 240_000
         assert snapshot["threshold_percent"] == 60
 
     def test_snapshot_reads_level_from_environment(self):

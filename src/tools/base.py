@@ -23,6 +23,9 @@ MULTIMODAL_MODELS = {
     "gemini-3.5-flash",
     "gemini-3.1-pro-preview",
     "gemini-3-flash-preview",
+    "gemini-4-hydrogen",
+    "gemini-4-neon",
+    "gemini-4-carbon",
     "gpt-5.1",
     "gpt-5",
     "gpt-5-mini",
@@ -44,7 +47,12 @@ MULTIMODAL_MODELS = {
 
 def _is_multimodal_model(model_name: str) -> bool:
     """Return True if the given model name is in the known multimodal set."""
-    return model_name in MULTIMODAL_MODELS
+    normalized = (model_name or "").strip().lower()
+    if not normalized:
+        return False
+    if normalized in MULTIMODAL_MODELS:
+        return True
+    return any(known in normalized for known in MULTIMODAL_MODELS)
 
 
 def _resolve_path(file_path: str) -> Path:

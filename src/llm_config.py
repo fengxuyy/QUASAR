@@ -75,6 +75,28 @@ def _infer_provider_from_model(model_name: str) -> str:
 
 
 
+VALID_THINKING_LEVELS = frozenset({"low", "medium", "high", "xhigh"})
+
+
+def _normalize_thinking_level(value: str | None) -> str | None:
+    normalized = (value or "").strip().lower()
+    if normalized in VALID_THINKING_LEVELS:
+        return normalized
+    return None
+
+
+def _build_gemini_kwargs(model: str, api_key: str, thinking_level: str | None = None) -> dict:
+    kwargs: dict = {
+        "model": model,
+        "google_api_key": api_key,
+        "include_thoughts": True,
+    }
+    level = _normalize_thinking_level(thinking_level)
+    if level:
+        kwargs["thinking_level"] = level
+    return kwargs
+
+
 def initialize_llm():
     """Initialize the LLM by inferring the provider from the model name.
     
@@ -112,9 +134,7 @@ def initialize_llm():
     if provider == "gemini":
         ChatGoogleGenerativeAI = _load_gemini_chat_model()
         llm = ChatGoogleGenerativeAI(
-            model=model,
-            google_api_key=api_key,
-            include_thoughts=True,
+            **_build_gemini_kwargs(model, api_key, os.getenv("THINKING_LEVEL"))
         )
         return llm, model
     
@@ -139,7 +159,12 @@ def initialize_llm():
     )
 
 
-def _create_llm_for_model(model: str, api_key: str, base_url: str = None):
+def _create_llm_for_model(
+    model: str,
+    api_key: str,
+    base_url: str = None,
+    thinking_level: str = None,
+):
     """Create an LLM instance for a given model name, api key, and optional base URL.
     
     If base_url is provided, always uses ChatOpenAI (OpenAI-compatible mode)
@@ -159,9 +184,7 @@ def _create_llm_for_model(model: str, api_key: str, base_url: str = None):
     if provider == "gemini":
         ChatGoogleGenerativeAI = _load_gemini_chat_model()
         return ChatGoogleGenerativeAI(
-            model=model,
-            google_api_key=api_key,
-            include_thoughts=True,
+            **_build_gemini_kwargs(model, api_key, thinking_level)
         )
     
     if provider == "claude":
@@ -217,5 +240,6 @@ def initialize_llm_for_agent(agent_name: str, fallback_llm=None, fallback_model_
         or os.getenv("OPENAI_API_BASE")
     )
     
-    llm = _create_llm_for_model(model, api_key, base_url)
+    thinking_level = os.getenv(f"{prefix}_THINKING_LEVEL") or os.getenv("THINKING_LEVEL")
+    llm = _create_llm_for_model(model, api_key, base_url, thinking_level=thinking_level)
     return llm, model

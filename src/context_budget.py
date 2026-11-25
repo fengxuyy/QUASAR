@@ -14,6 +14,9 @@ MODEL_MAX_CONTEXT: dict[str, int] = {
     "gemini-3.5-flash": 1_048_576,
     "gemini-3.1-pro-preview": 1_048_576,
     "gemini-3-flash-preview": 1_048_576,
+    "gemini-4-hydrogen": 1_048_576,
+    "gemini-4-neon": 1_048_576,
+    "gemini-4-carbon": 1_048_576,
 }
 
 CONTEXT_THRESHOLD_RATIOS: dict[str, float] = {
@@ -47,7 +50,15 @@ def get_context_threshold_ratio(value: Optional[str] = None) -> float:
 
 def get_model_max_context(model_name: str) -> int:
     """Return the max context length for a model, defaulting to 400,000 if not registered."""
-    return MODEL_MAX_CONTEXT.get((model_name or "").lower(), 400_000)
+    normalized = (model_name or "").strip().lower()
+    if not normalized:
+        return 400_000
+    if normalized in MODEL_MAX_CONTEXT:
+        return MODEL_MAX_CONTEXT[normalized]
+    for key, max_context in MODEL_MAX_CONTEXT.items():
+        if key in normalized:
+            return max_context
+    return 400_000
 
 
 def get_restricted_context_limit(model_name: str, threshold_level: Optional[str] = None) -> int:
