@@ -57,6 +57,8 @@ pip.conf
 .netrc
 .codex/
 .agents/
+app-cred-*.sh
+*-openrc.sh
 *.pem
 *.key
 *.p12
@@ -68,8 +70,15 @@ pip.conf
 /workspace
 workspace/
 
-# Local assets not used by container builds
+# Local assets and build artifacts not used by container builds
 logos/
+dist/
+web/release/
+web/quasar_cloud.sqlite*
+web/worker-runtime/
+web/worker-engine-cache/
+web/worker-resource-cache/
+orca/*macosx*
 
 # Documentation (large, but needed for RAG - keep it)
 # rag_documentation/
