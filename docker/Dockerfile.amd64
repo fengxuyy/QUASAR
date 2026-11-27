@@ -235,7 +235,7 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/*
 
-ARG PRECACHE_RESOURCES=all
+ARG PRECACHE_RESOURCES=none
 ENV QUASAR_RESOURCE_CACHE=/opt/quasar/resource-cache
 RUN --mount=type=bind,source=src/rag,target=/tmp/precache-src/src/rag,readonly \
     --mount=type=bind,source=src/utils,target=/tmp/precache-src/src/utils,readonly \

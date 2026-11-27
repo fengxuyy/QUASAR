@@ -2,8 +2,7 @@
 # ==========================================
 # STAGE 1: Quantum ESPRESSO Builder
 # ==========================================
-ARG ROCM_BASE_PLATFORM=linux/amd64
-FROM --platform=${ROCM_BASE_PLATFORM} rocm/dev-ubuntu-24.04:6.4.4-complete@sha256:31418ac10a3769a71eaef330c07280d1d999d7074621339b8f93c484c35f6078 AS qe-builder
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b AS qe-builder
 
 ARG QE_SHA256=7e1f7a9a21b63192f5135218bee20a5321b66582e4756536681b76e9c59b3cc8
 
@@ -148,7 +147,7 @@ RUN apt-get update && \
 # ==========================================
 # STAGE 5: Runtime
 # ==========================================
-FROM --platform=${ROCM_BASE_PLATFORM} rocm/dev-ubuntu-24.04:6.4.4-complete@sha256:31418ac10a3769a71eaef330c07280d1d999d7074621339b8f93c484c35f6078
+FROM ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
 
 ARG DEB_ARCH=x86_64-linux-gnu
 ARG TORCH_PACKAGES="torch"
@@ -185,12 +184,19 @@ RUN apt-get update && \
     libomp5-18 \
     libc++1 libc++abi1 \
     ocl-icd-libopencl1 \
+    libnuma1 \
+    libdrm2 \
+    libdrm-amdgpu1 \
+    libdrm-common \
+    libelf1t64 \
     ca-certificates \
     wget \
     curl \
     git \
     xz-utils \
     procps && \
+    mkdir -p /opt/amdgpu/share/libdrm && \
+    if [ -f /usr/share/libdrm/amdgpu.ids ]; then ln -sf /usr/share/libdrm/amdgpu.ids /opt/amdgpu/share/libdrm/amdgpu.ids; fi && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info /usr/share/lintian /usr/share/locale
 
@@ -236,7 +242,7 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/* /tmp/* /var/tmp/*
 
-ARG PRECACHE_RESOURCES=all
+ARG PRECACHE_RESOURCES=none
 ENV QUASAR_RESOURCE_CACHE=/opt/quasar/resource-cache
 RUN --mount=type=bind,source=src/rag,target=/tmp/precache-src/src/rag,readonly \
     --mount=type=bind,source=src/utils,target=/tmp/precache-src/src/utils,readonly \

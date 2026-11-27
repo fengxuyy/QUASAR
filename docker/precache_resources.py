@@ -23,11 +23,17 @@ def _mode() -> str:
 
 
 def main() -> None:
+    mode = _mode()
     cache_root = Path(
         os.environ.get("QUASAR_RESOURCE_CACHE", "/opt/quasar/resource-cache")
     ).resolve()
-    hf_cache = cache_root / ".hf_cache"
     cache_root.mkdir(parents=True, exist_ok=True)
+    print(f"Pre-caching QUASAR resources in {cache_root} (mode={mode})", flush=True)
+    if mode == "none":
+        print("Skipping resource pre-cache (mode=none).", flush=True)
+        return
+
+    hf_cache = cache_root / ".hf_cache"
     hf_cache.mkdir(parents=True, exist_ok=True)
 
     os.environ["HF_HOME"] = str(hf_cache)
@@ -36,12 +42,6 @@ def main() -> None:
     os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
     os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-    mode = _mode()
-    print(f"Pre-caching QUASAR resources in {cache_root} (mode={mode})", flush=True)
-    if mode == "none":
-        print("Skipping resource pre-cache (mode=none).", flush=True)
-        return
 
     from src.rag.docs_downloader import download_docs, is_docs_complete
 
@@ -67,12 +67,15 @@ def main() -> None:
         raise RuntimeError("Embedding model pre-cache failed.")
     print("Embedding model weights are ready.", flush=True)
 
-    # Remove downloaded rag_index.tar.gz blob from HF hub cache after extraction
-    # to avoid duplicating the compressed archive in the final image layer.
+    # Remove downloaded rag_index.tar.gz blob and Xet staging from HF hub cache
+    # after extraction to avoid duplicating the compressed archive in the image.
     import shutil
 
     for dataset_cache in (hf_cache / "hub").glob("datasets--*"):
         shutil.rmtree(dataset_cache, ignore_errors=True)
+    if (hf_cache / "hub").is_dir() and not any((hf_cache / "hub").glob("models--*")):
+        shutil.rmtree(hf_cache / "hub", ignore_errors=True)
+    shutil.rmtree(hf_cache / "xet", ignore_errors=True)
 
     print("QUASAR resource cache is ready (docs + RAG + embeddings).", flush=True)
 
